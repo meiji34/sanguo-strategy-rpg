@@ -32197,13 +32197,14 @@ window.MANUAL_MAP_DATA = {
         draftBattle: null,
         draftTransfer: null,
         pendingDefense: null,
+        militaryPlanner: { sourceId: null, targetId: null, route: 'official' },
         tutorial: {
           skipped: false,
           guideSeen: { introStart: false, cityMilitary: false, liubiao: false, inner: false, transfer: false, scheme: false, diplomacy: false },
           tasks: [
             { id: 'inspectGuiyang', label: '查看桂阳局势', completed: false, description: '点击桂阳城，查看人口、驻军、粮食与治安概况。', nextHint: '完成后将开启城政教学。' },
-            { id: 'firstCityOrder', label: '完成一次城政', completed: false, description: '在城政面板下达任意城政命令（屯田、赈济或整顿治安）。', nextHint: '完成城政后需再做一次军事调整。' },
-            { id: 'firstMilitaryOrder', label: '完成一次军事调整', completed: false, description: '在桂阳下达任意军事命令（征兵、练兵或修城防）。', nextHint: '完成后刘表 tab 将解锁。' },
+            { id: 'firstCityOrder', label: '完成一次城政', completed: false, description: '在城政面板下达任意城政命令（征兵、练兵、修城防、屯田、赈济或整顿治安）。', nextHint: '完成城政后需再做一次军事调整。' },
+            { id: 'firstMilitaryOrder', label: '完成一次军事调整', completed: false, description: '在军事面板下达任意军事命令。', nextHint: '完成后刘表 tab 将解锁。' },
             { id: 'visitLiuBiao', label: '查看刘表密令', completed: false, description: '打开刘表 tab，了解庇护、信任与荆州关系。', nextHint: '查看后亲信系统将解锁。' },
             { id: 'organizeRetinue', label: '整肃亲信班底', completed: false, description: '在亲信面板执行至少一次亲信行动（整肃亲兵、安插府衙亲信等）。', nextHint: '亲信稳固后调兵与谋略将逐步解锁。' },
             { id: 'unlockTransfer', label: '解锁调兵', completed: false, description: '条件：完成整肃亲信班底后，调兵 tab 将解锁。', nextHint: '解锁后可尝试在己方城池间调兵。' },
@@ -34501,16 +34502,10 @@ window.MANUAL_MAP_DATA = {
         panel.innerHTML = renderCharacterPanel();
         return;
       }
-      if (gameState.activePanel === 'military' && gameState.draftBattle) {
-        rightTitle.textContent = '战斗部署';
-        rightTag.textContent = gameState.cities[gameState.draftBattle.target].name;
-        panel.innerHTML = renderBattlePlanner();
-        return;
-      }
       if (gameState.activePanel === 'military') {
-        rightTitle.textContent = '军令队列';
+        rightTitle.textContent = '军府';
         rightTag.textContent = activeCampaignSlotCount() + ' / ' + gameState.player.commandSlots + ' 战役槽';
-        panel.innerHTML = renderCampaignPanel();
+        panel.innerHTML = renderMilitaryPanel();
         return;
       }
       if (gameState.activePanel === 'transfer') {
@@ -34596,21 +34591,129 @@ window.MANUAL_MAP_DATA = {
       <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>`;
     }
 
-    function renderCampaignPanel() {
-      const active = gameState.campaigns.filter(campaign => !['complete', 'cancelled'].includes(campaign.status));
-      const queued = gameState.orders.filter(order => ['battle', 'transfer'].includes(order.type));
+    function renderMilitaryPanel() {
+      normalizeMilitaryPlannerSelection();
+      const hasDraft = !!gameState.draftBattle;
+      return [
+        renderMilitaryOverviewCard(),
+        hasDraft ? renderBattlePlanner() : renderAttackPlannerCard(),
+        renderGarrisonStatusCard(),
+        renderMilitaryPrepCard(),
+        `<div class="card"><div class="button-grid"><button data-tab="transfer">前往调兵</button></div></div>`,
+        renderMilitaryOrdersCard(),
+        renderCampaignsCard(),
+        renderUrgentMattersCard()
+      ].join('');
+    }
+
+    function renderMilitaryOverviewCard() {
+      const sourceCities = controlledCities().filter(c => realTroops(c.garrison) > 100);
+      const queuedCount = gameState.orders.filter(order => ['battle', 'transfer'].includes(order.type)).length;
+      const activeCount = gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status)).length;
       return `<div class="card">
-        <h2>军令与长期战役</h2>
+        <h2>军府总览</h2>
         <div class="kv-grid">
           <div class="kv"><span>本回合军令点</span><strong>${gameState.actionPoints.mil} / ${getMaxActionPoints().mil}</strong></div>
           <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${gameState.player.commandSlots}</strong></div>
+          <div class="kv"><span>可用出兵城</span><strong>${sourceCities.length}</strong></div>
+          <div class="kv"><span>待出发军令</span><strong>${queuedCount}</strong></div>
+          <div class="kv"><span>进行中战役</span><strong>${activeCount}</strong></div>
         </div>
         <p>出征需要经过道路与地形，抵达之后还要围城。远征不会在一个回合内瞬间结束。</p>
-      </div>
-      <div class="card"><h3>待出发军令</h3>${queued.length ? queued.map(order => `<div class="campaign-item">${escapeHtml(order.label)}</div>`).join('') : '<div class="campaign-item">暂无待出发军令。</div>'}</div>
-      <div class="card"><h3>进行中战役</h3>${active.length ? active.map(renderCampaignItem).join('') : '<div class="campaign-item">当前没有长期战役。</div>'}</div>
-      ${gameState.urgentMatters.filter(item => !item.resolved).length ? `<div class="card"><h3>紧急事务</h3>${gameState.urgentMatters.filter(item => !item.resolved).map(item => `<div class="campaign-item"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p></div>`).join('')}</div>` : ''}`;
+      </div>`;
     }
+
+    function renderAttackPlannerCard() {
+      const sourceId = getMilitaryPlannerSourceId();
+      if (!sourceId) return `<div class="card"><h3>部署进攻</h3><p>当前无可出兵城池。请先发展城市兵力。</p></div>`;
+      const routeMode = (gameState.militaryPlanner && gameState.militaryPlanner.route) || 'official';
+      const targets = getAttackableTargetsFrom(sourceId, routeMode);
+      const targetId = getMilitaryPlannerTargetId(sourceId, targets);
+      const targetData = targets.find(t => t.city.id === targetId);
+      const sourceCities = controlledCities().filter(c => realTroops(c.garrison) > 100);
+      return `<div class="card">
+        <h3>部署进攻</h3>
+        <p>选择出兵城与目标城，先生成作战草案，再进入详细部署。</p>
+        <div class="form-row"><span>出兵城</span><select data-military-planner-field="sourceId">
+          ${sourceCities.map(c => selectOption(c.id, c.name + '（兵 ' + fmt(realTroops(c.garrison)) + '）', sourceId)).join('')}
+        </select></div>
+        <div class="form-row"><span>目标城</span><select data-military-planner-field="targetId">
+          ${targets.length ? targets.map(t => selectOption(t.city.id, t.city.name + '（距 ' + t.distance + '｜ETA ' + t.eta + '）', targetId)).join('') : `<option value="">无可攻击目标</option>`}
+        </select></div>
+        <div class="form-row"><span>预设路线</span><select data-military-planner-field="route">
+          ${selectOption('official', '正面官道', routeMode)}
+          ${selectOption('river', '沿河推进', routeMode)}
+          ${selectOption('raid', '绕路奇袭', routeMode)}
+          ${selectOption('night', '夜袭', routeMode)}
+          ${selectOption('cut', '断粮道', routeMode)}
+        </select></div>
+        ${targetData ? `
+        <div class="kv-grid" style="margin-top:8px">
+          <div class="kv"><span>目标势力</span><strong>${factionName(cityController(targetData.city.id))}</strong></div>
+          <div class="kv"><span>守军</span><strong>${fmt(realTroops(targetData.city.garrison))}</strong></div>
+          <div class="kv"><span>城防</span><strong>${targetData.city.defense}</strong></div>
+          <div class="kv"><span>民心</span><strong>${targetData.city.publicSupport}</strong></div>
+          <div class="kv"><span>粮食</span><strong>${fmt(targetData.city.food)}</strong></div>
+          <div class="kv"><span>距离 / ETA</span><strong>${targetData.distance} / ${targetData.eta} 回合</strong></div>
+        </div>` : '<p style="margin-top:8px">所选出兵城在当前路线模式下无可攻击目标。</p>'}
+        <div class="button-grid" style="margin-top:8px">
+          <button data-start-attack-plan="1" ${targets.length ? '' : 'disabled'}>进入详细部署</button>
+        </div>
+      </div>`;
+    }
+
+    function renderGarrisonStatusCard() {
+      const cities = controlledCities();
+      if (!cities.length) return '';
+      return `<div class="card">
+        <h3>驻军状态</h3>
+        ${cities.map(city => {
+          const total = realTroops(city.garrison);
+          const pending = pendingTroopsFrom(city.id);
+          const available = Math.max(0, total - 300 - pending);
+          return `<div class="campaign-item">
+            <strong>${escapeHtml(city.name)}</strong>
+            <div>驻军 ${fmt(total)}｜可调 ${fmt(available)}｜士气 ${city.morale}｜城防 ${city.defense}｜粮 ${fmt(city.food)}</div>
+            <div class="button-grid" style="margin-top:4px">
+              <button class="ghost-btn" data-set-source-city="${city.id}">设为出兵城</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    function renderMilitaryPrepCard() {
+      const selectedCity = gameState.cities[gameState.militaryPlanner?.sourceId || gameState.selectedCityId];
+      const cityId = selectedCity && isControlledBy(selectedCity.id, 'player') ? selectedCity.id : (controlledCities()[0]?.id || '');
+      return `<div class="card">
+        <h3>军事整备</h3>
+        <p>对选中的己方城市执行军事整备命令，消耗 1 点军令点。</p>
+        <div class="button-grid">
+          <button data-military-order="drill" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>整军（士气 +5｜粮 -80）</button>
+          <button data-military-order="defense" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>加固防线（城防 +4｜府库 -80）</button>
+          <button data-military-order="reserve" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>预备队（城防 +2 士气 +2）</button>
+        </div>
+      </div>`;
+    }
+
+    function renderMilitaryOrdersCard() {
+      const queued = gameState.orders.filter(order => ['battle', 'transfer'].includes(order.type));
+      return `<div class="card"><h3>待出发军令</h3>${queued.length ? queued.map(order => `<div class="campaign-item">${escapeHtml(order.label)}</div>`).join('') : '<div class="campaign-item">暂无待出发军令。</div>'}</div>`;
+    }
+
+    function renderCampaignsCard() {
+      const active = gameState.campaigns.filter(campaign => !['complete', 'cancelled'].includes(campaign.status));
+      return `<div class="card"><h3>进行中战役</h3>${active.length ? active.map(renderCampaignItem).join('') : '<div class="campaign-item">当前没有长期战役。</div>'}</div>`;
+    }
+
+    function renderUrgentMattersCard() {
+      const matters = gameState.urgentMatters.filter(item => !item.resolved);
+      if (!matters.length) return '';
+      return `<div class="card"><h3>紧急事务</h3>${matters.map(item => `<div class="campaign-item"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p></div>`).join('')}</div>`;
+    }
+
+    // 保留旧 renderCampaignPanel 为兼容别名
+    function renderCampaignPanel() { return renderMilitaryPanel(); }
 
     function renderCampaignItem(campaign) {
       const progress = campaign.status === 'marching' ? Math.round((1 - campaign.travelRemaining / Math.max(1, campaign.eta)) * 100) : campaign.status === 'siege' ? Math.round((1 - campaign.siegeRemaining / 2) * 100) : 100;
@@ -34749,15 +34852,12 @@ window.MANUAL_MAP_DATA = {
         <div class="card">
           <h3>城政命令</h3>
           <div class="button-grid city-order-grid">
-            <button data-city-order="tuntian" data-city="${city.id}" data-help-key="cityOrder:tuntian">屯田</button>
-            <button data-city-order="relief" data-city="${city.id}" data-help-key="cityOrder:relief">赈济</button>
-            <button data-city-order="security" data-city="${city.id}" data-help-key="cityOrder:security">整顿治安</button>
-          </div>
-          <h3>军事命令</h3>
-          <div class="button-grid city-order-grid">
             <button data-city-order="recruit" data-city="${city.id}" data-help-key="cityOrder:recruit">征兵</button>
             <button data-city-order="train" data-city="${city.id}" data-help-key="cityOrder:train">练兵</button>
             <button data-city-order="fortify" data-city="${city.id}" data-help-key="cityOrder:fortify">修城防</button>
+            <button data-city-order="tuntian" data-city="${city.id}" data-help-key="cityOrder:tuntian">屯田</button>
+            <button data-city-order="relief" data-city="${city.id}" data-help-key="cityOrder:relief">赈济</button>
+            <button data-city-order="security" data-city="${city.id}" data-help-key="cityOrder:security">整顿治安</button>
           </div>
         </div>
         <div class="card policy-control-card">
@@ -34793,7 +34893,7 @@ window.MANUAL_MAP_DATA = {
           <h3>可执行行动</h3>
           <p>${canAttack ? '可规划进攻路线。远方目标将经过多段道路，并按 ETA 逐回合推进。' : lockedReason}</p>
           <div class="button-grid">
-            <button data-open-battle="${city.id}" ${canAttack ? '' : 'disabled'}>部署进攻</button>
+            <button data-open-battle="${city.id}" ${canAttack ? '' : 'disabled'}>转入军事部署</button>
             <button data-scheme-action="scout" data-target="${city.id}" ${canInteract ? '' : 'disabled'}>刺探兵力</button>
             <button data-scheme-action="cutSupply" data-target="${city.id}" ${canInteract ? '' : 'disabled'}>查粮道 / 断粮</button>
             <button data-diplomacy-action="lobby" data-target="${city.id}" ${canInteract ? '' : 'disabled'}>拉拢势力</button>
@@ -35070,7 +35170,8 @@ window.MANUAL_MAP_DATA = {
     function queueCityOrder(cityId, action) {
       const city = gameState.cities[cityId];
       if (!city || !isControlledBy(cityId, 'player')) return toast('只有实际控制城池才能下城政命令');
-      if (gameState.orders.some(order => order.type === 'city' && order.payload.cityId === cityId)) return toast(city.name + '本回合已有城池命令');
+      if (gameState.orders.some(order => order.type === 'city' && order.payload.cityId === cityId)) return toast(city.name + '本回合已有城政命令');
+      if (!spendPoint('gov')) return;
       const labelMap = {
         recruit: '征兵',
         train: '练兵',
@@ -35079,20 +35180,17 @@ window.MANUAL_MAP_DATA = {
         relief: '赈济',
         security: '整顿治安'
       };
-      const militaryActions = new Set(['recruit', 'train', 'fortify']);
-      const pointKind = militaryActions.has(action) ? 'mil' : 'gov';
-      if (!spendPoint(pointKind)) return;
       gameState.orders.push({
         id: uid(),
         type: 'city',
-        point: pointKind,
+        point: 'gov',
         label: city.name + '：' + labelMap[action],
         payload: { cityId, action }
       });
       toast('已加入指令：' + city.name + ' ' + labelMap[action]);
-      const taskId = militaryActions.has(action) ? 'firstMilitaryOrder' : 'firstCityOrder';
-      if (gameState.tutorial && !getTutorialTask(taskId)?.completed) {
-        completeTutorialTask(taskId);
+      // 完成 firstCityOrder 任务
+      if (gameState.tutorial && !getTutorialTask('firstCityOrder')?.completed) {
+        completeTutorialTask('firstCityOrder');
       }
       render();
     }
@@ -35139,6 +35237,24 @@ window.MANUAL_MAP_DATA = {
       if (gameState.tutorial && !getTutorialTask('firstMilitaryOrder')?.completed) {
         completeTutorialTask('firstMilitaryOrder');
       }
+      render();
+    }
+
+    function queueMilitaryOrder(cityId, action) {
+      if (!cityId || !action) return;
+      const city = gameState.cities[cityId];
+      if (!city || !isControlledBy(cityId, 'player')) return toast('只能对自己控制的城池下达军事整备命令');
+      if (!spendPoints('mil', 1)) return;
+      const labelMap = { drill: '整军', defense: '加固防线', reserve: '预备队' };
+      gameState.orders.push({
+        id: uid(),
+        type: 'military',
+        point: 'mil',
+        pointCost: 1,
+        label: city.name + '：' + (labelMap[action] || action),
+        payload: { cityId, action }
+      });
+      toast((labelMap[action] || action) + '命令已加入队列');
       render();
     }
 
@@ -35380,6 +35496,7 @@ window.MANUAL_MAP_DATA = {
         if (order.type === 'city') resolveCityOrder(order, reports);
         if (order.type === 'transfer') createMilitaryOrder(order, reports);
         if (order.type === 'battle') createMilitaryOrder(order, reports);
+        if (order.type === 'military') resolveMilitaryOrder(order, reports);
         if (order.type === 'scheme') resolveScheme(order, reports);
         if (order.type === 'diplomacy') resolveDiplomacy(order, reports);
         if (order.type === 'inner') resolveInner(order, reports);
@@ -35441,6 +35558,37 @@ window.MANUAL_MAP_DATA = {
         city.order = clamp(city.order + clamp(city.level + 4, 4, 10), 0, 100);
         city.publicSupport = clamp(city.publicSupport + 1.2, 0, 100);
         reports.push({ tone: 'good', text: city.name + '整顿治安，豪强私斗暂歇，商路恢复。' });
+      }
+    }
+
+    function resolveMilitaryOrder(order, reports) {
+      const city = gameState.cities[order.payload.cityId];
+      const action = order.payload.action;
+      if (!city || !isControlledBy(city.id, 'player')) {
+        reports.push({ tone: 'bad', text: '军事整备失败：目标城池不存在或已失守。' });
+        return;
+      }
+      if (action === 'drill') {
+        if (city.food < 80) {
+          reports.push({ tone: 'bad', text: city.name + '粮草不足，无法整军。' });
+          return;
+        }
+        city.food = Math.max(0, city.food - 80);
+        city.morale = clamp(city.morale + 5, 0, 100);
+        reports.push({ tone: 'good', text: city.name + '整军完成，士气 +5，消耗粮草 80。' });
+      } else if (action === 'defense') {
+        if (city.money < 80) {
+          reports.push({ tone: 'bad', text: city.name + '府库不足，无法加固防线。' });
+          return;
+        }
+        city.money = Math.max(0, city.money - 80);
+        city.defense = clamp(city.defense + 4, 0, 100);
+        reports.push({ tone: 'good', text: city.name + '防线加固，城防 +4，府库支出 80。' });
+      } else if (action === 'reserve') {
+        city.defense = clamp(city.defense + 2, 0, 100);
+        city.morale = clamp(city.morale + 2, 0, 100);
+        city.reserveReady = true;
+        reports.push({ tone: 'good', text: city.name + '预备队已部署，城防 +2、士气 +2，本城部分兵力转为防守预备。' });
       }
     }
 
@@ -35951,16 +36099,24 @@ window.MANUAL_MAP_DATA = {
       render();
     }
 
-    function openBattlePlanner(targetId) {
+    function openBattlePlanner(targetId, preferredSourceId, preferredRoute = 'official') {
       if (!canAttackCity(targetId)) return toast('无法进攻此目标');
-      const sourceId = getCampaignSource(targetId);
+      let sourceId = preferredSourceId;
+      // 如果指定了 preferredSourceId，验证路线可用
+      if (sourceId && findCampaignRoute(sourceId, targetId, preferredRoute)) {
+        // 优先使用传入的 sourceId
+      } else {
+        sourceId = null;
+      }
+      // fallback 到自动选择
+      if (!sourceId) sourceId = getCampaignSource(targetId);
       if (!sourceId) return toast('没有通往目标的可用出兵路线');
       const source = gameState.cities[sourceId];
       gameState.draftBattle = {
         source: sourceId,
         target: targetId,
         troops: Math.min(1200, Math.max(300, realTroops(source.garrison) - 300)),
-        route: 'official',
+        route: preferredRoute || 'official',
         tactic: 'balanced',
         objective: 'capture'
       };
@@ -35970,6 +36126,63 @@ window.MANUAL_MAP_DATA = {
 
     function getAttackSource(targetId) {
       return getCampaignSource(targetId);
+    }
+
+    function getAttackableTargetsFrom(sourceId, routeMode = 'official') {
+      const source = gameState.cities[sourceId];
+      if (!source || !isControlledBy(sourceId, 'player')) return [];
+      return Object.values(gameState.cities)
+        .filter(city => city.id !== sourceId && !isControlledBy(city.id, 'player'))
+        .map(city => {
+          const route = findCampaignRoute(sourceId, city.id, routeMode);
+          if (!route) return null;
+          const eta = calculateTravelTurns(route, { troops: 500, supply: 6 });
+          return { city, route, eta, distance: route.distance };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.distance - b.distance || a.eta - b.eta);
+    }
+
+    function getMilitaryPlannerSourceId() {
+      const planner = gameState.militaryPlanner || {};
+      if (planner.sourceId && isControlledBy(planner.sourceId, 'player') && realTroops(gameState.cities[planner.sourceId]?.garrison || troops(0,0,0,0)) > 100) {
+        return planner.sourceId;
+      }
+      const sel = gameState.cities[gameState.selectedCityId];
+      if (sel && isControlledBy(sel.id, 'player') && realTroops(sel.garrison) > 100) return sel.id;
+      const controlled = controlledCities();
+      const withTroops = controlled.filter(c => realTroops(c.garrison) > 100);
+      return withTroops.length ? withTroops[0].id : (controlled.length ? controlled[0].id : null);
+    }
+
+    function getMilitaryPlannerTargetId(sourceId, targets) {
+      const planner = gameState.militaryPlanner || {};
+      if (planner.targetId && targets.some(t => t.city.id === planner.targetId)) return planner.targetId;
+      if (targets.length) {
+        const firstId = targets[0].city.id;
+        gameState.militaryPlanner = gameState.militaryPlanner || {};
+        gameState.militaryPlanner.targetId = firstId;
+        return firstId;
+      }
+      return null;
+    }
+
+    function normalizeMilitaryPlannerSelection() {
+      const planner = gameState.militaryPlanner;
+      if (!planner) return;
+      if (!planner.sourceId || !isControlledBy(planner.sourceId, 'player') || realTroops(gameState.cities[planner.sourceId]?.garrison || troops(0,0,0,0)) <= 100) {
+        planner.sourceId = getMilitaryPlannerSourceId();
+      }
+      if (planner.sourceId) {
+        const targets = getAttackableTargetsFrom(planner.sourceId, planner.route || 'official');
+        if (!planner.targetId || !targets.some(t => t.city.id === planner.targetId)) {
+          planner.targetId = targets.length ? targets[0].city.id : null;
+        }
+      }
+    }
+
+    function resetMilitaryPlanner() {
+      gameState.militaryPlanner = { sourceId: null, targetId: null, route: 'official' };
     }
 
     function getCampaignSource(targetId) {
@@ -36183,6 +36396,7 @@ window.MANUAL_MAP_DATA = {
       migrated.turnSummaries ||= [];
       migrated.visualEffects ||= [];
       migrated.tutorial ||= null;
+      migrated.militaryPlanner ||= { sourceId: null, targetId: null, route: 'official' };
       migrated.schemaVersion = GAME_SCHEMA_VERSION;
       return migrated;
     }
@@ -36218,7 +36432,8 @@ window.MANUAL_MAP_DATA = {
         diplomacy: Object.assign(fresh.diplomacy, loaded.diplomacy || {}),
         storyFlags: Object.assign(fresh.storyFlags, loaded.storyFlags || {}),
         aiMemory: Object.assign(fresh.aiMemory, loaded.aiMemory || {}),
-        mapState: Object.assign(fresh.mapState, loaded.mapState || {})
+        mapState: Object.assign(fresh.mapState, loaded.mapState || {}),
+        militaryPlanner: Object.assign(fresh.militaryPlanner, loaded.militaryPlanner || { sourceId: null, targetId: null, route: 'official' })
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
       ensureCityLink(normalized.cities.guiyang, 'yuzhang', { road: true });
@@ -36329,7 +36544,7 @@ window.MANUAL_MAP_DATA = {
       if (!gameState.tutorial) return;
       if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
         gameState.tutorial.unlockedTabs.push(tabId);
-        toast('解锁新功能：' + (getTabUnlockHint(tabId).name || tabId));
+        showToast('解锁新功能：' + (getTabUnlockHint(tabId).name || tabId));
         maybeShowNewGuideAfterUnlock(tabId);
       }
     }
@@ -36805,9 +37020,7 @@ window.MANUAL_MAP_DATA = {
     }
 
     function handleHelpHover(event) {
-      const target = event.target instanceof Element
-        ? event.target.closest('[data-help], [data-help-key]')
-        : null;
+      const target = event.target.closest('[data-help], [data-help-key]');
       if (!target) {
         hideTooltip();
         return;
@@ -37099,6 +37312,28 @@ window.MANUAL_MAP_DATA = {
           openBattlePlanner(openBattle.getAttribute('data-open-battle'));
           return;
         }
+        const startAttackPlan = event.target.closest('[data-start-attack-plan]');
+        if (startAttackPlan) {
+          const planner = gameState.militaryPlanner || {};
+          if (planner.targetId) {
+            openBattlePlanner(planner.targetId, planner.sourceId, planner.route);
+          }
+          return;
+        }
+        const militaryOrder = event.target.closest('[data-military-order]');
+        if (militaryOrder) {
+          queueMilitaryOrder(militaryOrder.getAttribute('data-military-city'), militaryOrder.getAttribute('data-military-order'));
+          return;
+        }
+        const setSourceCity = event.target.closest('[data-set-source-city]');
+        if (setSourceCity) {
+          const cityId = setSourceCity.getAttribute('data-set-source-city');
+          gameState.militaryPlanner = gameState.militaryPlanner || {};
+          gameState.militaryPlanner.sourceId = cityId;
+          normalizeMilitaryPlannerSelection();
+          renderRightPanel();
+          return;
+        }
         if (event.target.closest('[data-queue-battle]')) {
           queueBattle();
           return;
@@ -37252,6 +37487,17 @@ window.MANUAL_MAP_DATA = {
           gameState.draftTransfer[transferField.getAttribute('data-transfer-field')] = transferField.value;
           renderRightPanel();
         }
+        const plannerField = event.target.closest('[data-military-planner-field]');
+        if (plannerField) {
+          gameState.militaryPlanner = gameState.militaryPlanner || {};
+          const fieldName = plannerField.getAttribute('data-military-planner-field');
+          gameState.militaryPlanner[fieldName] = plannerField.value;
+          // 如果 source 改变后 target 不可达，自动选择第一个可达目标
+          if (fieldName === 'sourceId' || fieldName === 'route') {
+            normalizeMilitaryPlannerSelection();
+          }
+          renderRightPanel();
+        }
       });
 
       const svg = document.getElementById('mapStage');
@@ -37324,10 +37570,7 @@ window.MANUAL_MAP_DATA = {
     // 长悬停 tooltip 事件
     document.addEventListener('mouseover', event => { handleHelpHover(event); });
     document.addEventListener('mouseleave', event => {
-      const target = event.target instanceof Element
-        ? event.target.closest('[data-help], [data-help-key]')
-        : null;
-      if (!target) hideTooltip();
+      if (!event.target.closest('[data-help]')) hideTooltip();
     }, true);
     document.addEventListener('click', () => { hideTooltip(); });
     document.addEventListener('scroll', () => { hideTooltip(); }, true);
