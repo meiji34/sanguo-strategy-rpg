@@ -31385,6 +31385,12 @@ window.MANUAL_MAP_DATA = {
         suspicionOfPlayer: Number(data.suspicionOfPlayer ?? 28),
         relationshipTags: Array.isArray(data.relationshipTags) ? data.relationshipTags : [],
         memory: Array.isArray(data.memory) ? data.memory : [],
+        values: Array.isArray(data.values) ? data.values : [],
+        boundaries: Array.isArray(data.boundaries) ? data.boundaries : [],
+        longTermGoal: data.longTermGoal || '',
+        privateAgenda: data.privateAgenda || '',
+        speechStyle: Object.assign({ register: '平实', rhythm: '平衡', habit: '', metaphor: '' }, data.speechStyle || {}),
+        initiative: Object.assign({ lastTurn: -99, cooldown: 4, urgency: 0 }, data.initiative || {}),
         currentPlan: data.currentPlan || '观望局势',
         specialSchemes: Array.isArray(data.specialSchemes) ? data.specialSchemes : [],
         passiveBonuses: Array.isArray(data.passiveBonuses) ? data.passiveBonuses : [],
@@ -31418,6 +31424,108 @@ window.MANUAL_MAP_DATA = {
     const RANDOM_TALENT_NAMES = ['杜景', '韩绍', '程钧', '陆旻', '沈玠', '顾韬', '许岱', '钟仪', '谢衡', '苏靖', '林越', '赵宁'];
     const RANDOM_TALENT_TYPES = ['武将', '谋士', '政务', '豪强', '医者', '商人', '游侠'];
     const RANDOM_TALENT_LOCATIONS = ['guiyang', 'changsha', 'jiangling', 'jiangxia', 'xiangyang'];
+
+    const NPC_PERSONA_OVERRIDES = {
+      liuBiao: {
+        values: ['荆州稳定', '名分', '缓进'],
+        boundaries: ['不容桂阳公开越权', '不喜冒进征伐'],
+        longTermGoal: '稳住荆州门户，借桂阳牵制荆南而不让局势失控。',
+        privateAgenda: '观察你是否只是可用亲信，还是会变成新的割据风险。',
+        speechStyle: { register: '含蓄官样', rhythm: '缓慢', habit: '常把话放到荆州全局里说', metaphor: '舟楫与门户' },
+        initiative: { lastTurn: -99, cooldown: 4, urgency: 8 }
+      },
+      caiMao: {
+        values: ['士族利益', '军权', '门第'],
+        boundaries: ['不接受外来者快速染指荆州军权'],
+        longTermGoal: '维护蔡氏在襄阳军政中的位置，防止桂阳坐大。',
+        privateAgenda: '试探你是否会绕过襄阳直接收买荆南士族。',
+        speechStyle: { register: '冷硬士族', rhythm: '短句', habit: '喜欢把礼法和军纪挂在嘴边', metaphor: '门墙与兵符' },
+        initiative: { lastTurn: -99, cooldown: 5, urgency: 6 }
+      },
+      kuaiYue: {
+        values: ['审势', '可持续的利益', '谋定后动'],
+        boundaries: ['厌恶无后手的蛮干'],
+        longTermGoal: '判断谁能真正稳住荆南，并把自己的判断押在最有前途的一边。',
+        privateAgenda: '用一次次问答校准你的野心、耐心和用人尺度。',
+        speechStyle: { register: '谋臣式', rhythm: '层层递进', habit: '常先退半步再点破要害', metaphor: '棋路与余地' },
+        initiative: { lastTurn: -99, cooldown: 3, urgency: 10 }
+      },
+      huangZu: {
+        values: ['江夏防务', '水路', '军中威信'],
+        boundaries: ['不愿被当作只会听命的边将'],
+        longTermGoal: '守住江夏水口，同时判断桂阳是否值得军事配合。',
+        privateAgenda: '希望你证明自己懂军务，而不是只懂文书和权谋。',
+        speechStyle: { register: '老将口吻', rhythm: '粗短', habit: '先问兵粮，再谈虚名', metaphor: '水口与营寨' },
+        initiative: { lastTurn: -99, cooldown: 5, urgency: 6 }
+      },
+      wenPin: {
+        values: ['军令', '信用', '守备'],
+        boundaries: ['最忌承诺后不执行'],
+        longTermGoal: '建立一套能守住荆南的军令秩序。',
+        privateAgenda: '想看你是否尊重军令，是否愿意给将领明确目标。',
+        speechStyle: { register: '军人直言', rhythm: '利落', habit: '句句落到军令和期限', metaphor: '营门与军令' },
+        initiative: { lastTurn: -99, cooldown: 4, urgency: 9 }
+      },
+      guiyangClans: {
+        values: ['乡里利益', '族产', '生存空间'],
+        boundaries: ['不容官府一次性夺尽地方利益'],
+        longTermGoal: '保住桂阳乡里的实际影响力，在新主官手下争取可谈的余地。',
+        privateAgenda: '表面恭顺，暗中比较你和旧秩序谁更可依靠。',
+        speechStyle: { register: '地方豪强', rhythm: '绕弯', habit: '常以乡里安生作借口谈条件', metaphor: '田界与宗祠' },
+        initiative: { lastTurn: -99, cooldown: 3, urgency: 12 }
+      },
+      jingnanGentry: {
+        values: ['名声', '士林秩序', '长远安定'],
+        boundaries: ['不愿与残暴或失信者深交'],
+        longTermGoal: '为荆南士族寻找一个既能安民又不轻慢士林的靠山。',
+        privateAgenda: '通过荐才和舆论试探你是否值得士林背书。',
+        speechStyle: { register: '士人雅言', rhythm: '委婉', habit: '常把人心和名望连在一起', metaphor: '清议与门生' },
+        initiative: { lastTurn: -99, cooldown: 4, urgency: 8 }
+      },
+      localOfficials: {
+        values: ['府衙秩序', '饭碗', '少出乱子'],
+        boundaries: ['害怕频繁清洗与背锅'],
+        longTermGoal: '在新主官治下保住府衙运转，并避免成为豪强与官府夹缝中的牺牲品。',
+        privateAgenda: '向你透露可控的实情，同时给自己留退路。',
+        speechStyle: { register: '小吏谨慎', rhythm: '细碎', habit: '常说账册、名册和旧例', metaphor: '文书与印绶' },
+        initiative: { lastTurn: -99, cooldown: 3, urgency: 7 }
+      }
+    };
+
+    function uniqueTextList(items) {
+      return Array.from(new Set((items || []).filter(Boolean).map(item => String(item)))).slice(0, 6);
+    }
+
+    function inferNpcPersona(record) {
+      const type = record.type || '政务';
+      const faction = record.faction || 'local';
+      const isRecruited = record.status === 'recruited' || faction === 'player';
+      const base = {
+        values: isRecruited ? ['主从信义', '立功'] : faction === 'local' ? ['地方利益', '自保'] : ['势力利益', '审时度势'],
+        boundaries: isRecruited ? ['不愿被长期忽视'] : ['不愿轻易交出筹码'],
+        longTermGoal: isRecruited ? '在你麾下找到自己的位置，并证明自身价值。' : '在乱局中保住自身利益，等待更明确的局势。',
+        privateAgenda: isRecruited ? '希望你兑现用人承诺。' : '先观察你的实力、信誉和底线。',
+        speechStyle: { register: '平实', rhythm: '平衡', habit: '先看事实再表态', metaphor: '局势' },
+        initiative: { lastTurn: -99, cooldown: 4, urgency: 4 }
+      };
+      if (type === '武将') {
+        base.values = uniqueTextList(base.values.concat(['军功', '军令']));
+        base.longTermGoal = isRecruited ? '争取军功与明确军令，在战事中证明自己。' : '判断谁能给自己可靠的军令和战场。';
+        base.speechStyle = { register: '军伍口吻', rhythm: '短促', habit: '先问兵粮军令', metaphor: '营寨' };
+      } else if (type === '谋士') {
+        base.values = uniqueTextList(base.values.concat(['审势', '谋定后动']));
+        base.longTermGoal = isRecruited ? '把判断化成可执行的谋略，提升自己在幕府中的分量。' : '寻找值得下注的主君或盟友。';
+        base.speechStyle = { register: '谋臣式', rhythm: '递进', habit: '先摆风险再说机会', metaphor: '棋路' };
+      } else if (type === '豪强') {
+        base.values = uniqueTextList(base.values.concat(['族产', '乡里']));
+        base.longTermGoal = '保住地方根基，在官府与乡里之间争取最大余地。';
+        base.speechStyle = { register: '乡里口吻', rhythm: '绕弯', habit: '常以百姓和族产作话头', metaphor: '田界' };
+      } else if (type === '政务') {
+        base.values = uniqueTextList(base.values.concat(['秩序', '名分']));
+        base.longTermGoal = isRecruited ? '让政务有章可循，减少府衙和地方的反噬。' : '判断桂阳新政是否可长期合作。';
+      }
+      return base;
+    }
 
     const TAX_POLICIES = {
       light: { name: '轻税养民', tax: 0.72, public: 2.2, order: 0.6, growth: 1.18, commerce: 0.8 },
@@ -32163,6 +32271,7 @@ window.MANUAL_MAP_DATA = {
         selectedCharacterId: 'liuBiao',
         characterFilter: 'all',
         conversations: [],
+        npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
         specialEventState: { triggered: {}, cooldowns: {}, queue: [] },
         letters: [],
         militaryOrders: [],
@@ -32228,13 +32337,22 @@ window.MANUAL_MAP_DATA = {
 
     function normalizeCharacterRecord(record) {
       const base = characterBlueprint(record.id || uid(), record.name || '无名之士', record);
+      const inferredPersona = inferNpcPersona(base);
+      const personaOverride = NPC_PERSONA_OVERRIDES[base.id] || {};
       base.stats = Object.assign({}, base.stats, record.stats || {});
       base.personality = Object.assign({}, base.personality, record.personality || {});
       base.memory = Array.isArray(record.memory) ? record.memory : [];
       base.relationshipTags = Array.isArray(record.relationshipTags) ? record.relationshipTags : [];
+      base.values = uniqueTextList([...(inferredPersona.values || []), ...(personaOverride.values || []), ...(Array.isArray(record.values) ? record.values : [])]);
+      base.boundaries = uniqueTextList([...(inferredPersona.boundaries || []), ...(personaOverride.boundaries || []), ...(Array.isArray(record.boundaries) ? record.boundaries : [])]);
+      base.longTermGoal = record.longTermGoal || personaOverride.longTermGoal || inferredPersona.longTermGoal;
+      base.privateAgenda = record.privateAgenda || personaOverride.privateAgenda || inferredPersona.privateAgenda;
+      base.speechStyle = Object.assign({}, inferredPersona.speechStyle || {}, personaOverride.speechStyle || {}, record.speechStyle || {});
+      base.initiative = Object.assign({}, inferredPersona.initiative || {}, personaOverride.initiative || {}, record.initiative || {});
       base.specialSchemes = Array.isArray(record.specialSchemes) ? record.specialSchemes : [];
       base.passiveBonuses = Array.isArray(record.passiveBonuses) ? record.passiveBonuses : [];
       base.weaknesses = Array.isArray(record.weaknesses) ? record.weaknesses : [];
+      base.currentPlan = record.currentPlan || personaOverride.currentPlan || '观望局势';
       return base;
     }
 
@@ -32292,6 +32410,9 @@ window.MANUAL_MAP_DATA = {
       }
       state.characterDiscovery ||= {};
       state.conversations ||= [];
+      state.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
+      state.npcInitiativeState.lastTurnByNpc ||= {};
+      state.npcInitiativeState.recent ||= [];
       state.specialEventState ||= { triggered: {}, cooldowns: {}, queue: [] };
       state.specialEventState.triggered ||= {};
       state.specialEventState.cooldowns ||= {};
@@ -32804,29 +32925,247 @@ window.MANUAL_MAP_DATA = {
       character.memory = character.memory.slice(0, 18);
     }
 
+    function hashText(text) {
+      return String(text || '').split('').reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
+    }
+
+    function pickByNpcSeed(npc, key, lines) {
+      const pool = lines.filter(Boolean);
+      if (!pool.length) return '';
+      const seed = hashText([npc.id, key, gameState?.turn || 0, npc.memory?.length || 0, Math.floor((npc.trustPlayer || 0) / 10)].join('|'));
+      return pool[seed % pool.length];
+    }
+
+    function getNpcStrategicContext(npc) {
+      const state = typeof gameState !== 'undefined' ? gameState : null;
+      const guiyang = state?.cities?.guiyang || {};
+      return {
+        turn: state?.turn || 1,
+        protection: clamp(state?.player?.protection ?? 60, 0, 100),
+        ambition: clamp(state?.player?.ambition ?? 20, 0, 100),
+        prestige: clamp(state?.player?.prestige ?? 0, 0, 100),
+        citySupport: clamp(guiyang.publicSupport ?? 55, 0, 100),
+        cityOrder: clamp(guiyang.order ?? 55, 0, 100),
+        foodPressure: Number(guiyang.food || 0) < Math.max(900, Number(guiyang.population || 0) / 35),
+        activeCampaigns: state?.campaigns?.filter(campaign => !['complete', 'cancelled'].includes(campaign.status)).length || 0,
+        playerName: state?.player?.name || '主公'
+      };
+    }
+
+    function getNpcMemoryProfile(npc) {
+      const recent = (npc.memory || []).slice(0, 8);
+      let warmth = 0;
+      let wounds = 0;
+      let pressure = 0;
+      let opportunism = 0;
+      recent.forEach(memory => {
+        const effects = memory.effects || {};
+        warmth += Math.max(0, Number(effects.trustPlayer || 0)) + Math.max(0, Number(effects.respectPlayer || 0));
+        wounds += Math.max(0, -Number(effects.trustPlayer || 0)) + Math.max(0, Number(effects.suspicionOfPlayer || 0));
+        pressure += Math.max(0, Number(effects.fearPlayer || 0));
+        if (['gift', 'promiseOffice', 'ally'].includes(memory.type)) opportunism += 1;
+      });
+      const last = recent[0];
+      const repeatedType = recent.length >= 2 && recent[0].type === recent[1].type ? recent[0].type : '';
+      return {
+        recent,
+        last,
+        warmth,
+        wounds,
+        pressure,
+        opportunism,
+        repeatedType,
+        lastSummary: last?.summary || '',
+        hasThreatMemory: recent.some(memory => memory.type === 'threaten'),
+        hasGiftMemory: recent.some(memory => memory.type === 'gift' || memory.type === 'promiseOffice')
+      };
+    }
+
+    function getNpcAttitudeLabel(npc, memoryProfile = getNpcMemoryProfile(npc)) {
+      if (npc.trustPlayer >= 70 && npc.respectPlayer >= 58 && npc.suspicionOfPlayer <= 32) return '愿意靠近';
+      if (npc.respectPlayer >= 68 && npc.suspicionOfPlayer <= 48) return '敬而观之';
+      if (npc.fearPlayer >= 58 && npc.trustPlayer < 48) return '受压戒备';
+      if (npc.suspicionOfPlayer >= 64) return '深怀疑虑';
+      if (memoryProfile.wounds > memoryProfile.warmth + 5) return '记着旧账';
+      if (npc.trustPlayer >= 55) return '试探信任';
+      return '观望';
+    }
+
+    function buildNpcDialoguePersona(npc) {
+      return {
+        id: npc.id,
+        name: npc.name,
+        role: npc.role,
+        values: npc.values,
+        boundaries: npc.boundaries,
+        longTermGoal: npc.longTermGoal,
+        privateAgenda: npc.privateAgenda,
+        speechStyle: npc.speechStyle,
+        currentPlan: npc.currentPlan,
+        attitude: getNpcAttitudeLabel(npc),
+        memoryProfile: getNpcMemoryProfile(npc)
+      };
+    }
+
+    function generateNpcCurrentPlan(npc) {
+      const ctx = getNpcStrategicContext(npc);
+      const attitude = getNpcAttitudeLabel(npc);
+      if (npc.id === 'liuBiao') {
+        if (ctx.protection < 55) return '准备收紧对桂阳的授权，要求你用政绩重新证明忠诚。';
+        if (ctx.ambition >= 55) return '表面继续庇护，暗中观察你是否有脱离荆州的苗头。';
+        return '维持庇护，同时要求桂阳稳住民心与豪强。';
+      }
+      if (npc.id === 'caiMao') {
+        return ctx.ambition >= 45 || npc.suspicionOfPlayer >= 58
+          ? '联络襄阳士族，准备限制桂阳向军权伸手。'
+          : '暂不翻脸，继续查探你在荆南的人脉。';
+      }
+      if (npc.id === 'kuaiYue') {
+        if (npc.respectPlayer >= 62) return '整理一套荆南缓进之策，等待你主动询问代价。';
+        return '继续旁观你的用人和治政，寻找值得押注的信号。';
+      }
+      if (npc.id === 'wenPin') {
+        return ctx.activeCampaigns > 0 ? '关注战役后勤，准备提醒你守住军令和粮道。' : '催促桂阳建立更清楚的军备秩序。';
+      }
+      if (npc.id === 'guiyangClans') {
+        if (ctx.cityOrder < 45 || npc.fearPlayer >= 48) return '暂时低头，私下评估是否要联合乡里自保。';
+        return '以乡里安定为名，试图换取族产和旧例的余地。';
+      }
+      if (npc.id === 'jingnanGentry') {
+        return ctx.prestige >= 18 && npc.trustPlayer >= 48
+          ? '考虑用荐才和清议为你背书，但仍要看你是否守信。'
+          : '维持礼貌距离，继续观察桂阳风评。';
+      }
+      if (npc.id === 'localOfficials') {
+        return ctx.cityOrder < 50 ? '准备递交府衙旧弊清单，求一个能落地的章程。' : '整理账册和旧例，避免在新政中被豪强拖下水。';
+      }
+      if (npc.faction === 'player') {
+        if (attitude === '记着旧账') return '表面听令，心里等你补一个交代。';
+        return '寻找能证明自己价值的差事。';
+      }
+      if (npc.suspicionOfPlayer >= 62) return '保留筹码，不急着与你深谈。';
+      if (npc.trustPlayer >= 62) return '寻找一次能把合作落到实处的机会。';
+      return npc.longTermGoal || '继续观察局势。';
+    }
+
+    function refreshNpcPlan(npc) {
+      npc.currentPlan = generateNpcCurrentPlan(npc);
+      return npc.currentPlan;
+    }
+
+    function getNpcSignatureOpening(npc, conversationType, attitude) {
+      const style = npc.speechStyle || {};
+      const linesByNpc = {
+        liuBiao: ['荆州如舟，桂阳是舵旁的一枚小钉，小钉松了，整船都要晃。', '卿在桂阳所行，襄阳未必句句过问，却不能不看后果。'],
+        caiMao: ['荆州军政自有门墙，不是谁握了几日印绶就能改规矩。', '礼数我认，兵符我也认；至于人心，还要看你守不守分寸。'],
+        kuaiYue: ['话不必急着说满，先看你愿意把哪条退路留给自己。', '谋事像下棋，最怕只看眼前一手。'],
+        huangZu: ['虚话少些，先说兵粮、路口和谁来担责。', '江夏风浪大，空口许诺压不住船头。'],
+        wenPin: ['军令要清，期限要明；若这两样没有，话说再好也散。', '我听的不是漂亮话，是你下一道令之后能不能兑现。'],
+        guiyangClans: ['乡里人求的不过是祖坟田界能安稳，官府若逼得太急，草木也会扎手。', '主官说的是大义，乡里记的是谁家谷仓被开过。'],
+        jingnanGentry: ['士林不怕新主，怕的是新主轻诺寡信。', '清议虽轻，传到郡县之间，也能压弯许多人的腰。'],
+        localOfficials: ['小吏不敢谈大势，只敢说账册上哪一笔会出事。', '府衙旧例不全是好东西，但全拆了也没人知道明日怎么办。']
+      };
+      const generic = [
+        style.habit ? style.habit + '。' : '',
+        attitude === '愿意靠近' ? '这次我愿意把话说得更明白些。' : '',
+        attitude === '深怀疑虑' ? '有些话我仍要留三分。' : '',
+        '此事我会按自己的利害来判断。'
+      ];
+      return pickByNpcSeed(npc, 'opening:' + conversationType + ':' + attitude, (linesByNpc[npc.id] || []).concat(generic));
+    }
+
+    function getNpcActionLine(npc, conversationType, attitude, memoryProfile) {
+      const plan = refreshNpcPlan(npc);
+      const lines = {
+        talk: [
+          '若只是寒暄，我会听；若要谈合作，就得把底线说清。',
+          '我现在最在意的是：你下一步会先稳人心，还是先扩权。',
+          '你前几次留下的印象还在，我不会只凭这一句话改判断。'
+        ],
+        probe: [
+          npc.personality.cautious >= 58 ? '试探可以，但问得太急，只会让我把门关得更紧。' : '你要探我的底，我也正好看看你敢不敢把话挑明。',
+          memoryProfile.hasThreatMemory ? '上次威压的痕迹还在，今日再试探，味道就不一样了。' : '',
+          '我能说的只有一半，另一半要看你怎么走。'
+        ],
+        gift: [
+          npc.personality.greedy >= 55 ? '礼我收下，情分记一半，另一半还要看事成不成。' : '礼物能润开话头，却买不走我的判断。',
+          npc.personality.proud >= 58 ? '若把礼当作驯服人的绳索，那就轻看我了。' : '',
+          '今日这份心意，会被记进我对你的账里。'
+        ],
+        recruit: [
+          npc.trustPlayer >= npc.recruitmentDifficulty ? '若你真能给我位置和余地，我可以把下一步押在桂阳。' : '现在要我归附还早，我要看的不是名位，是你能否守住承诺。',
+          npc.faction === 'player' ? '我已在你麾下，真正要问的是你打算怎样用我。' : '',
+          '招募不是收一枚棋子，是接下一个人的利害。'
+        ],
+        ally: [
+          '结盟可以，但盟约不能只让一边冒险。',
+          '若要同舟，先说清风浪来时谁掌舵，谁补船。',
+          attitude === '深怀疑虑' ? '我还没看见足够的信用，盟字不能轻落。' : ''
+        ],
+        scheme: [
+          '计策可行，但我更在意失败后谁来收拾残局。',
+          '这事若动手，必须同时准备明线、暗线和退路。',
+          npc.personality.ruthless >= 55 ? '若真要做，就不要留下半截尾巴。' : ''
+        ],
+        threaten: [
+          npc.personality.proud >= 58 ? '威势压得住一时，压不住我心里的账。' : '我听见威胁了，也会按威胁重新估量你。',
+          '你可以让我害怕，但害怕未必会变成忠诚。',
+          '这句话会留下痕迹，日后谈什么都绕不过它。'
+        ],
+        sowDiscord: [
+          '离间像火，烧别人屋梁时也会照亮你自己的手。',
+          '我可以听这些话，但不会替你背这个名声。',
+          '若要用流言，就先想好流言回头咬人时怎么办。'
+        ],
+        promiseOffice: [
+          npc.stats.ambition >= 58 ? '名位有用，但我更看重你能不能兑现。' : '官职不是无用，只是不能替代信义。',
+          '空诺许得越高，日后摔得越重。',
+          memoryProfile.hasGiftMemory ? '你已经不止一次用好处开路，我会记得，也会防着。' : ''
+        ],
+        strategy: [
+          '若谈策略，就不要只谈胜算，也要谈代价。',
+          '我赞成先稳住一处，再让另一处自己露出破绽。',
+          '这一步若和我的长远打算相合，我会更愿意出力。'
+        ]
+      };
+      const chosen = pickByNpcSeed(npc, 'action:' + conversationType + ':' + attitude, lines[conversationType] || lines.talk);
+      return chosen + ' 眼下我的打算是：' + plan;
+    }
+
+    function getNpcMemoryLine(npc, memoryProfile) {
+      if (!memoryProfile.last) return '我们之间还没有多少旧账，所以今日的话分量会格外重。';
+      if (memoryProfile.hasThreatMemory && npc.fearPlayer >= 35) return '你曾经用过威势，这让我会把每个承诺都多称一遍。';
+      if (memoryProfile.warmth > memoryProfile.wounds + 4) return '此前几次接触让气氛松了些，但还没到可以不谈条件的时候。';
+      if (memoryProfile.wounds > memoryProfile.warmth + 4) return '旧话没有散，我还记得哪些地方让我不安。';
+      return '上一次的事我记着，今日先看你是否仍是同一个态度。';
+    }
+
     function generateFallbackDialogue(context) {
       const npc = context.npc;
       const action = CONVERSATION_ACTIONS[context.conversationType] || CONVERSATION_ACTIONS.talk;
-      const cautious = npc.personality.cautious >= 58;
-      const trusted = npc.trustPlayer >= 58;
-      const reactions = {
-        talk: trusted ? '愿闻其详。桂阳若稳，荆南便有转圜余地。' : '局势未明，且先把眼前之事说清。',
-        probe: cautious ? '有些事不宜急问。主官若有诚意，日后自会明白。' : '你问得直接，我也不妨把话挑明。',
-        gift: npc.personality.greedy >= 55 ? '这份心意，我记下了。往后有事，尚可商量。' : '礼物可以收下，真正要看的仍是你如何行事。',
-        recruit: npc.trustPlayer >= npc.recruitmentDifficulty ? '若主官不弃，我愿尽一份心力。' : '此事太重。请容我再看看桂阳会走向何处。',
-        ally: '同舟可以，先把彼此要守的底线说清。',
-        scheme: '此计可议，但动手之前，须把退路和代价一并算进去。',
-        threaten: npc.personality.proud >= 58 ? '威势我看到了，是否值得追随，却是另一回事。' : '我明白主官的意思。只是人心被逼到绝处，也会生变。',
-        sowDiscord: '流言最容易放出去，也最难收回来。此事我会谨慎对待。',
-        promiseOffice: npc.stats.ambition >= 58 ? '官职并非无用。主官若言出必行，我自会记得。' : '名位在后，事情在前。先看你能否兑现承诺。',
-        strategy: '荆南盘根错节。若要出手，先稳粮道，再择一处要害施压。'
+      const memoryProfile = getNpcMemoryProfile(npc);
+      const attitude = getNpcAttitudeLabel(npc, memoryProfile);
+      const opening = getNpcSignatureOpening(npc, context.conversationType, attitude);
+      const actionLine = getNpcActionLine(npc, context.conversationType, attitude, memoryProfile);
+      const memoryLine = getNpcMemoryLine(npc, memoryProfile);
+      const intentMap = {
+        talk: '重新校准彼此的底线',
+        probe: '守住秘密并反向试探你',
+        gift: '衡量这份好处是否值得欠情',
+        recruit: npc.trustPlayer >= npc.recruitmentDifficulty ? '决定是否把前途押给你' : '拖延归附并继续观察',
+        ally: '争取对自己有利的盟约边界',
+        scheme: '确认计策的收益、代价和退路',
+        threaten: '在恐惧与反感之间重新评估你',
+        sowDiscord: '判断流言是否会反噬自身',
+        promiseOffice: '考验你的承诺是否有兑现能力',
+        strategy: '把自己的长远打算嵌入你的战略'
       };
       return {
-        npcText: reactions[context.conversationType] || reactions.talk,
-        npcIntent: action.label,
-        emotionalShift: cautious ? '审慎' : trusted ? '缓和' : '观望',
-        memorySummary: '你与' + npc.name + '进行了一次“' + action.label + '”。',
-        suggestedPlayerChoices: ['继续观察', '记录态度', '日后再谈']
+        npcText: [opening, actionLine, memoryLine].filter(Boolean).join(' '),
+        npcIntent: intentMap[context.conversationType] || action.label,
+        emotionalShift: attitude,
+        memorySummary: npc.name + '把这次“' + action.label + '”记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
+        suggestedPlayerChoices: ['顺着其目标继续谈', '触碰其底线试探', '暂时收束承诺']
       };
     }
 
@@ -32858,22 +33197,80 @@ window.MANUAL_MAP_DATA = {
       return normalizeDialogueResult(fallback, fallback);
     }
 
+    function calculateConversationEffects(npc, conversationType, action) {
+      const effects = {
+        trustPlayer: Number(action.trust || 0),
+        respectPlayer: Number(action.respect || 0),
+        fearPlayer: Number(action.fear || 0),
+        suspicionOfPlayer: Number(action.suspicion || 0),
+        loyalty: 0,
+        ambition: 0
+      };
+      const recent = getNpcMemoryProfile(npc);
+      if (conversationType === 'gift') {
+        if (npc.personality.greedy >= 55) effects.trustPlayer += 3;
+        if (npc.personality.proud >= 58) effects.suspicionOfPlayer += 1;
+      }
+      if (conversationType === 'probe' && npc.personality.cautious >= 56) {
+        effects.suspicionOfPlayer += 2;
+        effects.trustPlayer -= 1;
+      }
+      if (conversationType === 'threaten') {
+        if (npc.personality.proud >= 55) {
+          effects.trustPlayer -= 3;
+          effects.suspicionOfPlayer += 2;
+        }
+        if (npc.personality.brave <= 36) effects.fearPlayer += 2;
+      }
+      if (conversationType === 'promiseOffice') {
+        if (npc.stats.ambition >= 58) effects.trustPlayer += 2;
+        else effects.suspicionOfPlayer += 1;
+      }
+      if (conversationType === 'strategy' && npc.stats.strategy >= 65) {
+        effects.respectPlayer += 2;
+      }
+      if (conversationType === 'recruit' && npc.trustPlayer >= npc.recruitmentDifficulty) {
+        effects.loyalty = 5;
+      }
+      if (recent.repeatedType === conversationType) {
+        effects.suspicionOfPlayer += ['gift', 'promiseOffice', 'threaten', 'sowDiscord'].includes(conversationType) ? 2 : 1;
+      }
+      if (recent.hasThreatMemory && ['gift', 'promiseOffice'].includes(conversationType)) {
+        effects.trustPlayer -= 1;
+        effects.suspicionOfPlayer += 1;
+      }
+      return effects;
+    }
+
+    function updateNpcAttitudeToPlayer(npc) {
+      const factionBonus = npc.faction === 'player' ? 8 : 0;
+      npc.attitudeToPlayer = clamp(Math.round(
+        npc.trustPlayer * 0.42 +
+        npc.respectPlayer * 0.32 +
+        npc.fearPlayer * 0.08 -
+        npc.suspicionOfPlayer * 0.26 +
+        factionBonus
+      ), 0, 100);
+      return npc.attitudeToPlayer;
+    }
+
     function applyConversationResult(context, dialogue) {
       const npc = context.npc;
       const action = CONVERSATION_ACTIONS[context.conversationType] || CONVERSATION_ACTIONS.talk;
-      const loyaltyShift = context.conversationType === 'recruit' && npc.trustPlayer >= npc.recruitmentDifficulty ? 5 : 0;
-      npc.trustPlayer = clamp(npc.trustPlayer + action.trust, 0, 100);
-      npc.respectPlayer = clamp(npc.respectPlayer + action.respect, 0, 100);
-      npc.fearPlayer = clamp(npc.fearPlayer + action.fear, 0, 100);
-      npc.suspicionOfPlayer = clamp(npc.suspicionOfPlayer + action.suspicion, 0, 100);
-      npc.stats.loyalty = clamp(npc.stats.loyalty + loyaltyShift, 0, 100);
+      const effects = calculateConversationEffects(npc, context.conversationType, action);
+      npc.trustPlayer = clamp(npc.trustPlayer + effects.trustPlayer, 0, 100);
+      npc.respectPlayer = clamp(npc.respectPlayer + effects.respectPlayer, 0, 100);
+      npc.fearPlayer = clamp(npc.fearPlayer + effects.fearPlayer, 0, 100);
+      npc.suspicionOfPlayer = clamp(npc.suspicionOfPlayer + effects.suspicionOfPlayer, 0, 100);
+      npc.stats.loyalty = clamp(npc.stats.loyalty + effects.loyalty, 0, 100);
+      updateNpcAttitudeToPlayer(npc);
       if (context.conversationType === 'recruit' && npc.trustPlayer >= npc.recruitmentDifficulty && npc.status !== 'recruited') {
         npc.status = 'recruited';
         npc.faction = 'player';
         npc.recruitedBy = gameState.player.name;
       }
-      const effects = { trustPlayer: action.trust, respectPlayer: action.respect, fearPlayer: action.fear, suspicionOfPlayer: action.suspicion, loyalty: loyaltyShift, ambition: 0 };
-      const memory = { turn: gameState.turn, type: context.conversationType, summary: dialogue.memorySummary, playerTone: action.label, npcReaction: dialogue.emotionalShift, effects };
+      refreshNpcPlan(npc);
+      const memory = { turn: gameState.turn, type: context.conversationType, summary: dialogue.memorySummary, playerTone: action.label, npcReaction: dialogue.emotionalShift, planAfter: npc.currentPlan, effects };
       addCharacterMemory(npc, memory);
       gameState.conversations.unshift({ characterId: npc.id, ...memory });
       gameState.conversations = gameState.conversations.slice(0, 80);
@@ -32893,6 +33290,8 @@ window.MANUAL_MAP_DATA = {
         gameState,
         conversationType,
         recentMemory: npc.memory.slice(0, 6),
+        persona: buildNpcDialoguePersona(npc),
+        strategicContext: getNpcStrategicContext(npc),
         availableIntentions: Object.keys(CONVERSATION_ACTIONS)
       });
       const effects = applyConversationResult({ npc, conversationType }, dialogue);
@@ -32901,7 +33300,7 @@ window.MANUAL_MAP_DATA = {
       render();
     }
 
-    function createLetter({ senderId, title, body, choices, critical = false }) {
+    function createLetter({ senderId, title, body, choices, critical = false, kind = '', meta = null }) {
       const sender = gameState.characterRoster[senderId] || characterBlueprint(senderId, senderId);
       const letter = {
         id: uid(),
@@ -32912,6 +33311,8 @@ window.MANUAL_MAP_DATA = {
         title,
         body,
         choices: choices || [{ id: 'ack', label: '谨遵来意' }],
+        kind,
+        meta: meta || {},
         resolved: false,
         read: false,
         critical
@@ -32929,7 +33330,7 @@ window.MANUAL_MAP_DATA = {
       renderModal();
     }
 
-    function resolveLetterChoice(letterId, choiceId) {
+    async function resolveLetterChoice(letterId, choiceId) {
       const letter = gameState.letters.find(item => item.id === letterId);
       if (!letter || letter.resolved) return;
       letter.resolved = true;
@@ -32940,11 +33341,49 @@ window.MANUAL_MAP_DATA = {
         if (choiceId === 'conceal') applyProtectionDecay(6, '你向刘表隐瞒桂阳实情');
         if (choiceId === 'authority') gameState.player.ambition = clamp(gameState.player.ambition + 4, 0, 100);
       }
+      if (letter.kind === 'npcInitiative') {
+        const result = await resolveNpcInitiativeLetter(letter, choiceId);
+        if (result === 'conversation') return;
+      }
       addNews('good', '你已回复' + letter.senderName + '来信：《' + letter.title + '》。');
       gameState.activeModal = null;
       openNextCriticalModal();
       saveToStorage(false);
       render();
+    }
+
+    async function resolveNpcInitiativeLetter(letter, choiceId) {
+      const npc = gameState.characterRoster[letter.senderId];
+      if (!npc) return false;
+      const effectsByChoice = {
+        meet: { trustPlayer: 2, respectPlayer: 1, suspicionOfPlayer: -1, fearPlayer: 0, loyalty: 0, ambition: 0 },
+        heed: { trustPlayer: 3, respectPlayer: 2, suspicionOfPlayer: -2, fearPlayer: 0, loyalty: 0, ambition: 0 },
+        delay: { trustPlayer: -1, respectPlayer: 0, suspicionOfPlayer: 2, fearPlayer: 0, loyalty: 0, ambition: 0 },
+        reject: { trustPlayer: -3, respectPlayer: -1, suspicionOfPlayer: 3, fearPlayer: 0, loyalty: 0, ambition: 0 }
+      };
+      const effects = effectsByChoice[choiceId] || effectsByChoice.heed;
+      npc.trustPlayer = clamp(npc.trustPlayer + effects.trustPlayer, 0, 100);
+      npc.respectPlayer = clamp(npc.respectPlayer + effects.respectPlayer, 0, 100);
+      npc.suspicionOfPlayer = clamp(npc.suspicionOfPlayer + effects.suspicionOfPlayer, 0, 100);
+      updateNpcAttitudeToPlayer(npc);
+      refreshNpcPlan(npc);
+      const reaction = choiceId === 'meet' ? '主动求见被接纳' : choiceId === 'delay' ? '请求被搁置' : choiceId === 'reject' ? '来意被拒' : '建议被采纳';
+      addCharacterMemory(npc, {
+        type: 'npcInitiative',
+        summary: npc.name + '主动提出“' + (letter.meta?.reason || '会谈') + '”，你的回应是：' + reaction + '。',
+        playerTone: choiceId,
+        npcReaction: reaction,
+        planAfter: npc.currentPlan,
+        effects
+      });
+      if (choiceId === 'meet') {
+        addNews('good', '你接纳了' + npc.name + '的求见。');
+        gameState.activeModal = null;
+        saveToStorage(false);
+        await startNpcConversation(npc.id, letter.meta?.suggestedConversation || 'talk');
+        return 'conversation';
+      }
+      return false;
     }
 
     function triggerSpecialEvent(eventId) {
@@ -32989,6 +33428,88 @@ window.MANUAL_MAP_DATA = {
       if (gameState.turn >= 4 && gameState.turn % 4 === 0) triggerSpecialEvent('advisor_plan');
       if (gameState.turn >= 5 && gameState.turn % 5 === 0) triggerSpecialEvent('general_request');
       if (gameState.turn >= 6 && gameState.player.prestige >= 16) triggerSpecialEvent('heroes_wine');
+    }
+
+    function getNpcInitiativeScore(npc) {
+      if (!npc || npc.id === 'player' || ['hidden', 'rumored', 'dead', 'captured'].includes(npc.status)) return 0;
+      const state = gameState.npcInitiativeState;
+      const lastTurn = state.lastTurnByNpc[npc.id] ?? npc.initiative?.lastTurn ?? -99;
+      const cooldown = npc.initiative?.cooldown ?? 4;
+      if (gameState.turn - lastTurn < cooldown) return 0;
+      const ctx = getNpcStrategicContext(npc);
+      const memory = getNpcMemoryProfile(npc);
+      let score = npc.initiative?.urgency || 0;
+      score += Math.max(0, npc.trustPlayer - 55) * 0.22;
+      score += Math.max(0, npc.suspicionOfPlayer - 52) * 0.24;
+      score += Math.max(0, npc.fearPlayer - 40) * 0.18;
+      score += Math.max(0, npc.respectPlayer - 58) * 0.16;
+      score += memory.wounds > memory.warmth ? 5 : 0;
+      score += memory.warmth > memory.wounds + 5 ? 4 : 0;
+      if (npc.id === 'liuBiao' && (ctx.protection < 62 || ctx.ambition > 45)) score += 16;
+      if (npc.id === 'guiyangClans' && (ctx.cityOrder < 55 || ctx.citySupport < 52)) score += 12;
+      if (npc.id === 'kuaiYue' && ctx.turn >= 4) score += 8;
+      if (npc.id === 'wenPin' && ctx.activeCampaigns > 0) score += 10;
+      if (npc.id === 'localOfficials' && ctx.cityOrder < 48) score += 9;
+      if (state.recent?.some(item => item.characterId === npc.id && gameState.turn - item.turn <= 2)) score -= 8;
+      return score;
+    }
+
+    function getNpcInitiativeReason(npc) {
+      const ctx = getNpcStrategicContext(npc);
+      if (npc.id === 'liuBiao' && ctx.protection < 62) return '庇护松动';
+      if (npc.id === 'liuBiao' && ctx.ambition > 45) return '野心渐显';
+      if (npc.id === 'guiyangClans' && ctx.cityOrder < 55) return '乡里不安';
+      if (npc.id === 'wenPin' && ctx.activeCampaigns > 0) return '军令后续';
+      if (npc.suspicionOfPlayer >= 62) return '疑虑加深';
+      if (npc.trustPlayer >= 65) return '信任升温';
+      if (npc.respectPlayer >= 65) return '愿意献策';
+      return '另有打算';
+    }
+
+    function composeNpcInitiativeBody(npc, reason) {
+      refreshNpcPlan(npc);
+      const opening = getNpcSignatureOpening(npc, 'talk', getNpcAttitudeLabel(npc));
+      const bodyLines = {
+        '庇护松动': '襄阳近来对桂阳的耐心正在变薄。若你仍要借刘表之名行事，就必须给出能让人安心的凭据。',
+        '野心渐显': '你的声势渐起，旁人会开始区分“能臣”和“异心”。我想听你亲口说明边界。',
+        '乡里不安': '乡里议论已经起了波澜。若官府只求快刀，豪强未必明着反，却会在暗处拖住你。',
+        '军令后续': '军令既出，后勤、期限和退路都要有人盯着。我请见，是怕胜算被琐事磨坏。',
+        '疑虑加深': '此前几件事让我心中生疑。若不把话说开，往后合作只会越来越薄。',
+        '信任升温': '近来我看见一些可取之处。若你愿意当面谈，我可以把手里的筹码摊开一部分。',
+        '愿意献策': '我有一条判断，不宜写得太明。若你愿听，我愿当面说清利害。',
+        '另有打算': '局势走到这里，我不想再只做旁观者。此信是求一个当面说话的机会。'
+      };
+      return opening + '\n\n' + (bodyLines[reason] || bodyLines['另有打算']) + '\n\n我眼下的打算是：' + npc.currentPlan;
+    }
+
+    function evaluateNpcInitiatives() {
+      if (gameState.turn < 2) return;
+      const candidates = Object.values(gameState.characterRoster)
+        .map(npc => ({ npc, score: getNpcInitiativeScore(npc) }))
+        .filter(item => item.score >= 18)
+        .sort((a, b) => b.score - a.score);
+      const chosen = candidates[0];
+      if (!chosen) return;
+      const npc = chosen.npc;
+      const reason = getNpcInitiativeReason(npc);
+      gameState.npcInitiativeState.lastTurnByNpc[npc.id] = gameState.turn;
+      npc.initiative.lastTurn = gameState.turn;
+      gameState.npcInitiativeState.recent.unshift({ characterId: npc.id, turn: gameState.turn, reason });
+      gameState.npcInitiativeState.recent = gameState.npcInitiativeState.recent.slice(0, 12);
+      createLetter({
+        senderId: npc.id,
+        title: npc.name + '求见：' + reason,
+        body: composeNpcInitiativeBody(npc, reason),
+        choices: [
+          { id: 'meet', label: '当面听他说' },
+          { id: 'heed', label: '采纳其来意' },
+          { id: 'delay', label: '暂且搁置' },
+          { id: 'reject', label: '回绝此事' }
+        ],
+        kind: 'npcInitiative',
+        meta: { reason, suggestedConversation: chosen.score >= 28 ? 'strategy' : 'talk' },
+        critical: chosen.score >= 30
+      });
     }
 
     function resolveSpecialEventChoice(eventId, choiceId) {
@@ -34569,6 +35090,10 @@ window.MANUAL_MAP_DATA = {
     function renderCharacterDetail(character) {
       if (!character) return '';
       const canTalk = !['hidden', 'rumored', 'dead', 'captured'].includes(character.status);
+      const attitude = getNpcAttitudeLabel(character);
+      refreshNpcPlan(character);
+      const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
+      const style = character.speechStyle || {};
       return `<div class="card">
         <h2>${escapeHtml(character.name)}</h2>
         <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
@@ -34586,6 +35111,13 @@ window.MANUAL_MAP_DATA = {
         <div class="button-grid">
           ${Object.entries(CONVERSATION_ACTIONS).map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`).join('')}
         </div>
+      </div>
+      <div class="card">
+        <h3>目标与自我判断</h3>
+        <p><strong>长期目标：</strong>${escapeHtml(character.longTermGoal || '尚未显露。')}</p>
+        <p><strong>当前计划：</strong>${escapeHtml(character.currentPlan || '观望局势。')}</p>
+        <p><strong>私下盘算：</strong>${escapeHtml(character.privateAgenda || '仍在隐藏真实打算。')}</p>
+        <div class="tag-row"><span class="tag">态度：${escapeHtml(attitude)}</span>${valueTags}<span class="tag">${escapeHtml(style.register || '平实')}</span><span class="tag">${escapeHtml(style.rhythm || '平衡')}</span></div>
       </div>
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
       <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>`;
@@ -35472,6 +36004,7 @@ window.MANUAL_MAP_DATA = {
       runFactionAI(reports);
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
+      evaluateNpcInitiatives();
       unlockTabsByTutorialProgress();
       advanceDate(TURN_DAYS);
       gameState.turn += 1;
@@ -36387,6 +36920,7 @@ window.MANUAL_MAP_DATA = {
       migrated.characterRoster ||= {};
       migrated.characterDiscovery ||= {};
       migrated.conversations ||= [];
+      migrated.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
       migrated.specialEventState ||= { triggered: {}, cooldowns: {}, queue: [] };
       migrated.letters ||= [];
       migrated.militaryOrders ||= [];
