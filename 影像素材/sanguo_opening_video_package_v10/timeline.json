@@ -1,0 +1,102 @@
+{
+  "title": "乱世执棋",
+  "subtitle": "第一章：荆南立足",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 29.1,
+  "final_black_start": 26.9,
+  "text_exit": {
+    "main_dissolve": 1.34,
+    "main_scale_end": 0.88,
+    "main_blur_end": 7.2,
+    "main_drift_y": 0,
+    "main_line_exit_stagger": 0.22,
+    "subtitle_dissolve": 1.08,
+    "subtitle_scale_end": 0.97,
+    "subtitle_blur_end": 4.2,
+    "subtitle_drift_y": 0,
+    "title_main_dissolve": 1.78,
+    "title_subtitle_dissolve": 1.34
+  },
+  "paper_path": "assets/textures/Paper001/Paper001_1K-JPG_Color.jpg",
+  "main_font_path": "assets/fonts/LongCang-Regular.ttf",
+  "subtitle_font_path": "/System/Library/Fonts/Supplemental/Songti.ttc",
+  "background_paths": [
+    "assets/paintings/met-36131.jpg",
+    "assets/paintings/met-45650.jpg",
+    "assets/paintings/met-72710.jpg",
+    "assets/paintings/met-49454.jpg"
+  ],
+  "scenes": [
+    {
+      "id": "dynasty",
+      "start": 0.55,
+      "end": 5.0,
+      "lines": ["汉祚将倾", "群雄并起"],
+      "subtitle": "公元190年，董卓乱政，群雄并起。",
+      "background": 0,
+      "focus": [0.44, 0.52],
+      "zoom": [1.05, 1.14],
+      "text_position": [0.50, 0.39],
+      "font_size": 138,
+      "board": 0.08,
+      "drum": 0.34
+    },
+    {
+      "id": "jingzhou",
+      "start": 6.6,
+      "end": 11.0,
+      "lines": ["中原烽火未歇", "荆州暗流已生"],
+      "subtitle": "中原烽火未歇，荆州仍守着危险的平静。",
+      "background": 1,
+      "focus": [0.58, 0.54],
+      "zoom": [1.04, 1.15],
+      "text_position": [0.50, 0.39],
+      "font_size": 126,
+      "board": 0.18,
+      "drum": 0.42
+    },
+    {
+      "id": "secret_order",
+      "start": 12.2,
+      "end": 16.9,
+      "lines": ["襄阳夜召", "一纸密令南下"],
+      "subtitle": "某夜，刘表密召一名亲信，命其赴任桂阳。",
+      "background": 2,
+      "focus": [0.48, 0.56],
+      "zoom": [1.08, 1.18],
+      "text_position": [0.50, 0.39],
+      "font_size": 132,
+      "drum": 0.50
+    },
+    {
+      "id": "stakes",
+      "start": 17.55,
+      "end": 22.55,
+      "lines": ["稳则州安", "乱则州失"],
+      "subtitle": "桂阳偏远，却是荆南门户。此地若稳，才有资格落下第一子。",
+      "background": 1,
+      "focus": [0.54, 0.52],
+      "zoom": [1.16, 1.25],
+      "text_position": [0.50, 0.40],
+      "font_size": 146,
+      "board": 0.30,
+      "drum": 0.64
+    },
+    {
+      "id": "title",
+      "start": 22.55,
+      "end": 26.9,
+      "lines": ["乱世执棋"],
+      "subtitle": "第一章：荆南立足",
+      "background": 0,
+      "focus": [0.56, 0.48],
+      "zoom": [1.20, 1.25],
+      "text_position": [0.50, 0.48],
+      "font_size": 172,
+      "seal": "棋",
+      "drum": 0.78
+    }
+  ]
+}
