@@ -30857,6 +30857,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     let gameState = ensureCharacterSystemState(loadedGameState || createInitialState());
     let characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
     let launchScreen = 'menu';
+    let characterCreationStep = 'arrival';
+    let openingTransitionMode = 'audience';
+    let openingTransitionTimer = null;
     let isComposingPlayerName = false;
     FACTIONS.player.name = gameState.player.name || '玩家';
     let mapData = createMapData();
@@ -33373,9 +33376,51 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const valid = length === 0 || (length >= 2 && length <= 6);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? (length ? '姓名有效。' : '姓名留空时，将自动生成一个中文名。')
+        ? (length ? '主簿已经记下。' : '姓名留空时，将由主簿代拟。')
         : '姓名需为 2 到 6 个中文字符。';
       start.disabled = !valid;
+
+      const steps = ['arrival', 'name', 'identity', 'confirm'];
+      const currentIndex = steps.indexOf(characterCreationStep);
+      document.querySelectorAll('[data-creation-step]').forEach(step => {
+        step.classList.toggle('active', step.getAttribute('data-creation-step') === characterCreationStep);
+      });
+      document.querySelectorAll('[data-dialogue-progress]').forEach(step => {
+        const stepIndex = steps.indexOf(step.getAttribute('data-dialogue-progress'));
+        step.classList.toggle('current', stepIndex === currentIndex);
+        step.classList.toggle('done', stepIndex < currentIndex);
+      });
+
+      const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
+      const draftName = characterDraft.name || '名册待录';
+      const speaker = document.getElementById('creationSpeaker');
+      const line = document.getElementById('creationLine');
+      const commissionName = document.getElementById('commissionName');
+      const commissionIdentity = document.getElementById('commissionIdentity');
+      if (commissionName) commissionName.textContent = draftName;
+      if (commissionIdentity) commissionIdentity.textContent = identity.name;
+
+      const dialogue = {
+        arrival: {
+          speaker: '荆州牧 · 刘表',
+          line: '“荆南门户，久不得安。今夜召你来，是要托付一件不能写在公文上的差事。”'
+        },
+        name: {
+          speaker: '州府主簿',
+          line: '“赴任文牒已经备好。还请留下姓名，待主公亲自用印。”'
+        },
+        identity: {
+          speaker: '荆州牧 · 刘表',
+          line: '“' + draftName + '，桂阳兵、粮、民心皆不可偏废。你愿先执哪一柄？”'
+        },
+        confirm: {
+          speaker: '荆州牧 · 刘表',
+          line: '“便依你所请。自今日起，你以' + identity.name + '之职赴桂阳。先稳门户，再谈天下。”'
+        }
+      };
+      const currentDialogue = dialogue[characterCreationStep] || dialogue.arrival;
+      if (speaker) speaker.textContent = currentDialogue.speaker;
+      if (line) line.textContent = currentDialogue.line;
     }
 
     function getStoredSaveSummary() {
@@ -33416,12 +33461,16 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
       document.getElementById('characterCreate')?.classList.toggle('show', launchScreen === 'character');
       document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
+      const transition = document.getElementById('openingTransition');
+      transition?.classList.toggle('show', launchScreen === 'transition' || launchScreen === 'commissioning');
+      transition?.classList.toggle('departure', launchScreen === 'commissioning');
       updateMainMenu();
     }
 
     function resetRuntimeForNewGame() {
       gameState = createInitialState();
       characterDraft = { name: '', identity: 'commandant' };
+      characterCreationStep = 'arrival';
       FACTIONS.player.name = '玩家';
       manualMapRegions = null;
       mapData = createMapData();
@@ -33432,6 +33481,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function beginNewGameFlow() {
+      stopOpeningTransition();
       resetRuntimeForNewGame();
       launchScreen = 'intro';
       render();
@@ -33439,6 +33489,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function resumeSavedGame(show = true) {
+      stopOpeningTransition();
       const loaded = loadFromStorage(show);
       if (!loaded || !loaded.storyFlags?.characterCreated) {
         if (show) toast('没有可继续的游戏进度');
@@ -33460,6 +33511,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function returnToMainMenu() {
       stopIntroVideo();
+      stopOpeningTransition();
       launchScreen = 'menu';
       render();
     }
@@ -37625,6 +37677,57 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       hideIntroPlayButton();
     }
 
+    function stopOpeningTransition() {
+      if (openingTransitionTimer) clearTimeout(openingTransitionTimer);
+      openingTransitionTimer = null;
+      document.getElementById('openingTransition')?.classList.remove('playing');
+    }
+
+    function completeOpeningTransition() {
+      if (openingTransitionTimer) clearTimeout(openingTransitionTimer);
+      openingTransitionTimer = null;
+      document.getElementById('openingTransition')?.classList.remove('playing');
+      if (openingTransitionMode === 'departure') {
+        startNewCharacter();
+        return;
+      }
+      characterCreationStep = 'arrival';
+      launchScreen = 'character';
+      render();
+    }
+
+    function beginOpeningTransition(mode = 'audience') {
+      stopOpeningTransition();
+      openingTransitionMode = mode;
+      launchScreen = mode === 'departure' ? 'commissioning' : 'transition';
+      const kicker = document.getElementById('transitionKicker');
+      const title = document.getElementById('transitionTitle');
+      const copy = document.getElementById('transitionCopy');
+      if (kicker) kicker.textContent = mode === 'departure' ? '密令已下｜南赴桂阳' : '襄阳夜召｜州府内堂';
+      if (title) title.textContent = mode === 'departure' ? '赴桂阳' : '一纸密令';
+      if (copy) copy.textContent = mode === 'departure'
+        ? '朱印已落，晨雾未开。荆南门户，自此由你执掌。'
+        : '墨色未散，州府的灯火已在夜雨中亮起。';
+      render();
+      const transition = document.getElementById('openingTransition');
+      if (transition) {
+        void transition.offsetWidth;
+        transition.classList.add('playing');
+      }
+      openingTransitionTimer = setTimeout(completeOpeningTransition, mode === 'departure' ? 2600 : 3600);
+    }
+
+    function beginCommissioningTransition() {
+      const name = characterDraft.name || randomChineseName();
+      if (name.length < 2 || name.length > 6) {
+        updateCharacterCreation();
+        return toast('姓名需为 2 到 6 个中文字符');
+      }
+      characterDraft.name = name;
+      updateCharacterCreation();
+      beginOpeningTransition('departure');
+    }
+
     function beginIntro() {
       if (launchScreen !== 'intro') return;
       const intro = document.getElementById('intro');
@@ -37639,8 +37742,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function finishIntro() {
       stopIntroVideo();
       gameState.storyFlags.introSeen = true;
-      launchScreen = 'character';
-      render();
+      beginOpeningTransition('audience');
     }
 
     function bindEvents() {
@@ -37651,6 +37753,20 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           if (action === 'continue' || action === 'load') resumeSavedGame(true);
           if (action === 'new') beginNewGameFlow();
           if (action === 'back') returnToMainMenu();
+          return;
+        }
+        const creationAdvance = event.target.closest('[data-creation-advance]');
+        if (creationAdvance) {
+          const targetStep = creationAdvance.getAttribute('data-creation-advance');
+          if (targetStep === 'identity' && !characterDraft.name) characterDraft.name = randomChineseName();
+          characterCreationStep = targetStep;
+          updateCharacterCreation();
+          return;
+        }
+        const creationRetreat = event.target.closest('[data-creation-retreat]');
+        if (creationRetreat) {
+          characterCreationStep = creationRetreat.getAttribute('data-creation-retreat');
+          updateCharacterCreation();
           return;
         }
         const identity = event.target.closest('[data-identity]');
@@ -37671,7 +37787,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           return;
         }
         if (event.target.closest('[data-start-game]')) {
-          startNewCharacter();
+          beginCommissioningTransition();
+          return;
+        }
+        if (event.target.closest('[data-complete-transition]')) {
+          completeOpeningTransition();
           return;
         }
         const tutorial = event.target.closest('[data-tutorial-next]');

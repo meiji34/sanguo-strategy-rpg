@@ -11,7 +11,12 @@
   <img id="mapPreload" alt="三国战略地图">
 
   <section class="main-menu" id="mainMenu">
-    <div class="main-menu-backdrop"></div>
+    <div class="main-menu-backdrop" aria-hidden="true">
+      <div class="menu-scene menu-scene-one"></div>
+      <div class="menu-scene menu-scene-two"></div>
+      <div class="menu-scene menu-scene-three"></div>
+      <div class="menu-paper"></div>
+    </div>
     <div class="main-menu-smoke smoke-one"></div>
     <div class="main-menu-smoke smoke-two"></div>
     <div class="main-menu-content">
@@ -29,36 +34,108 @@
     <div class="menu-footer">第一章｜荆南立足</div>
   </section>
 
+  <section class="opening-transition" id="openingTransition" aria-live="polite">
+    <div class="transition-backdrop" aria-hidden="true"></div>
+    <div class="transition-ink transition-ink-one" aria-hidden="true"></div>
+    <div class="transition-ink transition-ink-two" aria-hidden="true"></div>
+    <div class="transition-content">
+      <div class="transition-kicker" id="transitionKicker">襄阳夜召</div>
+      <div class="transition-rule"></div>
+      <h2 id="transitionTitle">一纸密令</h2>
+      <p id="transitionCopy">墨色未散，州府的灯火已在夜雨中亮起。</p>
+      <div class="transition-seal" aria-hidden="true">荆<br>州</div>
+    </div>
+    <button class="transition-continue" data-complete-transition="1">继续</button>
+  </section>
+
   <section class="character-create" id="characterCreate">
+    <div class="audience-backdrop" aria-hidden="true">
+      <div class="audience-painting"></div>
+      <div class="audience-paper"></div>
+      <div class="audience-lantern lantern-one"></div>
+      <div class="audience-lantern lantern-two"></div>
+    </div>
     <div class="creation-panel">
-      <div class="intro-kicker">密令南下｜荆南初任</div>
-      <h1>赴桂阳</h1>
-      <p>襄阳夜召，一纸密令南下。刘表将荆南门户托付于你。定下姓名与初任身份，自此入局。</p>
-      <div class="creation-field">
-        <strong>请输入姓名</strong>
-        <div class="creation-name-row">
-          <input id="playerNameInput" autocomplete="off" placeholder="留空将自动生成中文名">
-          <button data-random-name="1">随机姓名</button>
+      <div class="audience-heading">
+        <div class="intro-kicker">襄阳州府｜夜雨将歇</div>
+        <div class="audience-location">荆州牧府 · 内堂</div>
+      </div>
+      <div class="dialogue-progress" aria-label="夜召进度">
+        <span data-dialogue-progress="arrival">入府</span>
+        <span data-dialogue-progress="name">报姓名</span>
+        <span data-dialogue-progress="identity">陈所长</span>
+        <span data-dialogue-progress="confirm">接密令</span>
+      </div>
+      <div class="dialogue-frame">
+        <div class="dialogue-speaker" id="creationSpeaker">荆州牧 · 刘表</div>
+        <p class="dialogue-line" id="creationLine">“荆南门户，久不得安。今夜召你来，是要托付一件不能写在公文上的差事。”</p>
+      </div>
+
+      <div class="creation-step active" data-creation-step="arrival">
+        <p class="audience-narration">堂外檐雨渐稀。案上一封密令尚未落印，刘表抬眼望向你。</p>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-primary" data-creation-advance="name">上前听命</button>
         </div>
-        <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可自动生成。</div>
       </div>
-      <div class="creation-field">
-        <strong>出生地</strong>
-        <div class="tag-row"><span class="tag">桂阳｜固定</span></div>
+
+      <div class="creation-step" data-creation-step="name">
+        <p class="audience-narration">主簿摊开名册，执笔候在一旁。你向前半步，堂中只余纸页轻响。</p>
+        <div class="creation-field">
+          <strong>向主公回禀姓名</strong>
+          <div class="creation-name-row">
+            <input id="playerNameInput" autocomplete="off" placeholder="留空时由主簿代拟">
+            <button data-random-name="1">请主簿代拟</button>
+          </div>
+          <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可由主簿代拟。</div>
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="arrival">暂且不报</button>
+          <button class="dialogue-response response-primary" data-creation-advance="identity">禀明姓名</button>
+        </div>
       </div>
-      <div class="creation-field">
-        <strong>初始身份</strong>
+
+      <div class="creation-step" data-creation-step="identity">
+        <p class="audience-narration">刘表没有立即落印，只将三枚调任木牍推到案前。桂阳的根基未稳，你只能先执一柄。</p>
         <div class="identity-grid">
-          <button class="identity-option selected" data-identity="commandant"><strong>桂阳都尉</strong><span>偏军事。郡兵与军令较强，地方士族起初更谨慎。</span></button>
-          <button class="identity-option" data-identity="granary"><strong>桂阳督粮官</strong><span>偏经济后勤。粮草与屯田起步更稳，正面军力略弱。</span></button>
-          <button class="identity-option" data-identity="magistrate"><strong>桂阳县令</strong><span>偏治理。民心、治安与政务能力更强，军事起步较弱。</span></button>
+          <button class="identity-option selected" data-identity="commandant">
+            <span class="response-prefix">“臣请</span>
+            <strong>持节整军</strong>
+            <span>领桂阳都尉，先稳郡兵与军令。地方士族会更谨慎。</span>
+          </button>
+          <button class="identity-option" data-identity="granary">
+            <span class="response-prefix">“臣请</span>
+            <strong>督运粮秣</strong>
+            <span>领桂阳督粮官，以屯田和粮草扎稳根基。正面军力略弱。</span>
+          </button>
+          <button class="identity-option" data-identity="magistrate">
+            <span class="response-prefix">“臣请</span>
+            <strong>抚民理政</strong>
+            <span>领桂阳县令，先安民心、治安与郡中政务。军事起步略弱。</span>
+          </button>
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="name">容臣再想</button>
+          <button class="dialogue-response response-primary" data-creation-advance="confirm">回禀主公</button>
         </div>
       </div>
-      <div class="creation-actions">
-        <button class="ghost-btn" data-menu-action="back">返回主菜单</button>
-        <button data-random-identity="1">随机身份</button>
-        <button class="creation-start" data-start-game="1">领命赴任</button>
+
+      <div class="creation-step" data-creation-step="confirm">
+        <p class="audience-narration">朱印落下。密令合起时，堂外夜色已经转淡。桂阳在南，你将带着这份托付入局。</p>
+        <div class="commission-summary">
+          <span>奉命者</span>
+          <strong id="commissionName">待定</strong>
+          <span>初任</span>
+          <strong id="commissionIdentity">桂阳都尉</strong>
+          <span>赴任地</span>
+          <strong>桂阳</strong>
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="identity">容臣改口</button>
+          <button class="dialogue-response response-primary creation-start" data-start-game="1">接令赴桂阳</button>
+        </div>
       </div>
+
+      <button class="audience-exit" data-menu-action="back">返回主菜单</button>
     </div>
   </section>
 
