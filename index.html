@@ -10,11 +10,30 @@
 <body>
   <img id="mapPreload" alt="三国战略地图">
 
+  <section class="main-menu" id="mainMenu">
+    <div class="main-menu-backdrop"></div>
+    <div class="main-menu-smoke smoke-one"></div>
+    <div class="main-menu-smoke smoke-two"></div>
+    <div class="main-menu-content">
+      <div class="menu-era">公元一九〇年｜汉祚将倾</div>
+      <h1>乱世执棋</h1>
+      <p class="menu-subtitle">稳则州安，乱则州失</p>
+      <div class="menu-rule"></div>
+      <div class="menu-actions">
+        <button class="menu-action menu-action-primary" id="continueGame" data-menu-action="continue">继续游戏</button>
+        <button class="menu-action" data-menu-action="new">开始新游戏</button>
+        <button class="menu-action" id="loadGame" data-menu-action="load">读取存档</button>
+      </div>
+      <div class="menu-save-status" id="menuSaveStatus"></div>
+    </div>
+    <div class="menu-footer">第一章｜荆南立足</div>
+  </section>
+
   <section class="character-create" id="characterCreate">
     <div class="creation-panel">
-      <div class="intro-kicker">公元190年｜荆南初任</div>
+      <div class="intro-kicker">密令南下｜荆南初任</div>
       <h1>赴桂阳</h1>
-      <p>董卓乱政，群雄并起。刘表镇守荆州，密召一名亲信前往桂阳。先定下你的姓名与初任身份。</p>
+      <p>襄阳夜召，一纸密令南下。刘表将荆南门户托付于你。定下姓名与初任身份，自此入局。</p>
       <div class="creation-field">
         <strong>请输入姓名</strong>
         <div class="creation-name-row">
@@ -36,29 +55,19 @@
         </div>
       </div>
       <div class="creation-actions">
+        <button class="ghost-btn" data-menu-action="back">返回主菜单</button>
         <button data-random-identity="1">随机身份</button>
-        <button class="creation-start" data-start-game="1">开始乱世</button>
+        <button class="creation-start" data-start-game="1">领命赴任</button>
       </div>
     </div>
   </section>
 
   <section class="intro" id="intro">
-    <div class="intro-map" id="introMap"></div>
-    <div class="intro-flare"></div>
+    <video class="intro-video" id="introVideo" preload="auto" playsinline>
+      <source src="./影像素材/sanguo_opening_video_package_v10/sanguo_opening_oppressive_game_v10.mp4" type="video/mp4">
+    </video>
     <button class="skip-intro" data-skip-intro="1">跳过开场</button>
-    <div class="intro-content">
-      <div class="intro-kicker">乱世执棋</div>
-      <div class="intro-line" id="introLine">公元190年，董卓乱政，天下崩裂。</div>
-      <div class="intro-letter" id="introLetter">
-        <strong>刘表密令</strong>
-        <p>“桂阳偏远，却是荆南门户。”</p>
-        <p>“此地若稳，荆州可安。此地若乱，荆州必失。”</p>
-        <p>“吾欲托付于卿。”</p>
-      </div>
-      <div class="intro-choice" id="introChoice">
-        <button data-intro-choice="accept">领命，赴任桂阳</button>
-      </div>
-    </div>
+    <button class="intro-play" id="introPlay" data-play-intro="1">播放开场</button>
   </section>
 
   <div class="app">

@@ -30856,6 +30856,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     const loadedGameState = loadFromStorage(false);
     let gameState = ensureCharacterSystemState(loadedGameState || createInitialState());
     let characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
+    let launchScreen = 'menu';
     let isComposingPlayerName = false;
     FACTIONS.player.name = gameState.player.name || '玩家';
     let mapData = createMapData();
@@ -33377,6 +33378,92 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       start.disabled = !valid;
     }
 
+    function getStoredSaveSummary() {
+      const candidates = [SAVE_KEY, SAVE_KEY_BACKUP];
+      for (const key of candidates) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const stored = JSON.parse(raw);
+          if (!sanitizeLoadedData(stored) || !stored.storyFlags?.characterCreated) continue;
+          return {
+            turn: stored.turn || 1,
+            playerName: stored.player?.name || '无名之士',
+            savedAt: Number(localStorage.getItem(SAVE_KEY + ':lastSavedAt')) || null
+          };
+        } catch (_) {
+          // 损坏的候选存档会由读取流程尝试回退。
+        }
+      }
+      return null;
+    }
+
+    function updateMainMenu() {
+      const summary = getStoredSaveSummary();
+      const continueButton = document.getElementById('continueGame');
+      const status = document.getElementById('menuSaveStatus');
+      if (continueButton) continueButton.disabled = !summary;
+      if (!status) return;
+      if (!summary) {
+        status.textContent = '尚无可继续的本地进度。开始新游戏后，序章将从头播放。';
+        return;
+      }
+      const savedAt = summary.savedAt ? new Date(summary.savedAt).toLocaleString('zh-CN') : '时间未知';
+      status.textContent = '最近进度｜' + summary.playerName + '｜第 ' + summary.turn + ' 回合｜' + savedAt;
+    }
+
+    function renderLaunchLayers() {
+      document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
+      document.getElementById('characterCreate')?.classList.toggle('show', launchScreen === 'character');
+      document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
+      updateMainMenu();
+    }
+
+    function resetRuntimeForNewGame() {
+      gameState = createInitialState();
+      characterDraft = { name: '', identity: 'commandant' };
+      FACTIONS.player.name = '玩家';
+      manualMapRegions = null;
+      mapData = createMapData();
+      syncMapDataFromGameState();
+      if (autosaveTimer) clearInterval(autosaveTimer);
+      autosaveTimer = null;
+      updateAutosaveDisplay();
+    }
+
+    function beginNewGameFlow() {
+      resetRuntimeForNewGame();
+      launchScreen = 'intro';
+      render();
+      beginIntro();
+    }
+
+    function resumeSavedGame(show = true) {
+      const loaded = loadFromStorage(show);
+      if (!loaded || !loaded.storyFlags?.characterCreated) {
+        if (show) toast('没有可继续的游戏进度');
+        return false;
+      }
+      gameState = loaded;
+      gameState.storyFlags.introSeen = true;
+      characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
+      FACTIONS.player.name = gameState.player.name || '玩家';
+      mapData = createMapData();
+      syncMapDataFromGameState();
+      normalizeActionPointsAfterLoad();
+      launchScreen = 'game';
+      startAutosaveTimer();
+      updateAutosaveDisplay();
+      render();
+      return true;
+    }
+
+    function returnToMainMenu() {
+      stopIntroVideo();
+      launchScreen = 'menu';
+      render();
+    }
+
     function startNewCharacter() {
       if (gameState.storyFlags.characterCreated) return;
       const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
@@ -33411,9 +33498,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const center = getRegion('guiyang')?.center || guiyang;
       setMapFocusOn(center.x, center.y, 2.55);
       resetActionPoints();
+      gameState.storyFlags.introSeen = true;
+      gameState.currentGoal = '稳定桂阳：整顿治安，安抚士族，备粮并训练郡兵。';
+      addNews('good', '刘表密令：桂阳实际控制权交予' + gameState.player.name + '。第一阶段目标：稳定桂阳。');
+      launchScreen = 'game';
+      updateTabLockStates();
       saveToStorage(false);
+      startAutosaveTimer();
+      updateAutosaveDisplay();
       render();
-      beginIntro();
+      gameState.activeModal = { type: 'tutorialGuide', guideId: 'introStart' };
+      render();
     }
 
     function renderTutorialCard() {
@@ -33489,10 +33584,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       renderRightPanel();
       renderStrategyDock();
       updateTabLockStates();
-      renderModal();
+      if (launchScreen === 'game') {
+        renderModal();
+      } else {
+        const modalRoot = document.getElementById('gameModalRoot');
+        modalRoot?.classList.remove('show');
+        if (modalRoot) modalRoot.innerHTML = '';
+      }
       document.getElementById('playerRank').textContent = gameState.player.title;
-      document.getElementById('characterCreate').classList.toggle('show', !gameState.storyFlags.characterCreated);
-      document.getElementById('intro').classList.toggle('show', gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen);
+      renderLaunchLayers();
       updateCharacterCreation();
     }
 
@@ -36813,19 +36913,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function resetGame() {
       if (!confirm('确定重开？当前未保存进度会丢失。')) return;
-      gameState = createInitialState();
-      characterDraft = { name: '', identity: 'commandant' };
-      FACTIONS.player.name = '玩家';
-      manualMapRegions = null;
-      mapData = createMapData();
-      syncMapDataFromGameState();
       localStorage.removeItem(SAVE_KEY);
       localStorage.removeItem(SAVE_KEY_BACKUP);
       localStorage.removeItem(SAVE_KEY + ':lastSavedAt');
-      if (autosaveTimer) clearInterval(autosaveTimer);
-      autosaveTimer = null;
-      updateAutosaveDisplay();
-      render();
+      beginNewGameFlow();
     }
 
     // ===================== 分阶段新手引导系统 =====================
@@ -37502,64 +37593,66 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       toast('mapData JSON 已生成');
     }
 
+    function showIntroPlayButton(label = '播放开场', fallback = false) {
+      const button = document.getElementById('introPlay');
+      if (!button) return;
+      button.textContent = label;
+      button.dataset.introFallback = fallback ? '1' : '0';
+      button.classList.add('show');
+    }
+
+    function hideIntroPlayButton() {
+      document.getElementById('introPlay')?.classList.remove('show');
+    }
+
+    function playIntroVideo() {
+      const video = document.getElementById('introVideo');
+      if (!video) return;
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback
+          .then(hideIntroPlayButton)
+          .catch(() => showIntroPlayButton());
+      }
+    }
+
+    function stopIntroVideo() {
+      const video = document.getElementById('introVideo');
+      if (video) {
+        video.pause();
+        video.currentTime = 0;
+      }
+      hideIntroPlayButton();
+    }
+
     function beginIntro() {
-      if (!gameState.storyFlags.characterCreated || gameState.storyFlags.introSeen) return;
-      const lines = [
-        '公元190年，董卓乱政，群雄并起。',
-        '荆州表面安定，宗族、豪强与士族却各有盘算。',
-        '某夜，襄阳。荆州牧刘表召见了你。',
-        '“桂阳偏远，却是荆南门户。”',
-        '“此地若稳，荆州可安。此地若乱，荆州必失。”',
-        '“吾欲托付于卿。”'
-      ];
-      let index = 0;
+      if (launchScreen !== 'intro') return;
       const intro = document.getElementById('intro');
-      const line = document.getElementById('introLine');
-      const introMap = document.getElementById('introMap');
-      const letter = document.getElementById('introLetter');
-      const choice = document.getElementById('introChoice');
+      const video = document.getElementById('introVideo');
       intro.classList.add('show');
-      introMap.classList.remove('focus');
-      line.textContent = lines[0];
-      letter.classList.remove('show');
-      choice.classList.remove('show');
-      clearInterval(beginIntro.timer);
-      beginIntro.timer = setInterval(() => {
-        index += 1;
-        if (index < lines.length) {
-          line.textContent = lines[index];
-          if (index >= 2) introMap.classList.add('focus');
-          if (index === 2) letter.classList.add('show');
-        } else {
-          clearInterval(beginIntro.timer);
-          choice.classList.add('show');
-        }
-      }, 2600);
+      if (!video) return showIntroPlayButton('视频未能加载，继续创建角色', true);
+      video.currentTime = 0;
+      hideIntroPlayButton();
+      playIntroVideo();
     }
 
     function finishIntro() {
-      clearInterval(beginIntro.timer);
-      captureRegion('guiyang', 'player', null, { render: false, select: false, skipProtectionDecay: true });
-      gameState.player.protection = 100;
+      stopIntroVideo();
       gameState.storyFlags.introSeen = true;
-      gameState.selectedCityId = 'guiyang';
-      gameState.currentGoal = '稳定桂阳：整顿治安，安抚士族，备粮并训练郡兵。';
-      addNews('good', '刘表密令：桂阳实际控制权交予' + gameState.player.name + '。第一阶段目标：稳定桂阳。');
-      document.getElementById('intro').classList.remove('show');
-      const center = getRegion('guiyang')?.center || gameState.cities.guiyang;
-      setMapFocusOn(center.x, center.y, 2.55);
-      updateTabLockStates();
-      saveToStorage(false);
-      startAutosaveTimer();
-      updateAutosaveDisplay();
-      render();
-      // 开局第一段引导弹窗
-      gameState.activeModal = { type: 'tutorialGuide', guideId: 'introStart' };
+      launchScreen = 'character';
       render();
     }
 
     function bindEvents() {
       document.addEventListener('click', event => {
+        const menuAction = event.target.closest('[data-menu-action]');
+        if (menuAction) {
+          const action = menuAction.getAttribute('data-menu-action');
+          if (action === 'continue' || action === 'load') resumeSavedGame(true);
+          if (action === 'new') beginNewGameFlow();
+          if (action === 'back') returnToMainMenu();
+          return;
+        }
         const identity = event.target.closest('[data-identity]');
         if (identity) {
           characterDraft.identity = identity.getAttribute('data-identity');
@@ -37716,17 +37809,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             }
           }
           if (action === 'load') {
-            const loaded = loadFromStorage(true);
-            if (loaded) {
-              gameState = loaded;
-              characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
-              FACTIONS.player.name = gameState.player.name || '玩家';
-              mapData = createMapData();
-              syncMapDataFromGameState();
-              startAutosaveTimer();
-              updateAutosaveDisplay();
-              render();
-            }
+            resumeSavedGame(true);
           }
           if (action === 'reset') resetGame();
           return;
@@ -37835,13 +37918,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           clearOrders();
           return;
         }
-        const introChoice = event.target.closest('[data-intro-choice]');
-        if (introChoice) {
-          finishIntro(introChoice.getAttribute('data-intro-choice'));
+        const introPlay = event.target.closest('[data-play-intro]');
+        if (introPlay) {
+          if (introPlay.dataset.introFallback === '1') finishIntro();
+          else playIntroVideo();
           return;
         }
         if (event.target.closest('[data-skip-intro]')) {
-          finishIntro('accept');
+          finishIntro();
           return;
         }
         const mapClick = event.target.closest('#mapStage');
@@ -37849,6 +37933,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           selectNearestCityFromMapEvent(event);
         }
       });
+
+      const introVideo = document.getElementById('introVideo');
+      if (introVideo) {
+        introVideo.addEventListener('play', hideIntroPlayButton);
+        introVideo.addEventListener('ended', finishIntro);
+        introVideo.addEventListener('error', () => {
+          showIntroPlayButton('视频未能加载，继续创建角色', true);
+        });
+      }
 
       document.addEventListener('keydown', event => {
         if (event.altKey && event.key.toLowerCase() === 'm') {
@@ -38030,16 +38123,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     document.addEventListener('scroll', () => { hideTooltip(); }, true);
     if (loadedGameState) normalizeActionPointsAfterLoad();
     else resetActionPoints();
-    if (gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen) beginIntro();
     render();
     validateCityData();
-    if (gameState.turn > 1) {
-      toast('已自动读取存档，欢迎回来。当前第' + gameState.turn + '回合');
-    }
-    if (gameState.storyFlags.introSeen) {
-      startAutosaveTimer();
-      updateAutosaveDisplay();
-    }
     }
 
     initGame();
