@@ -15,12 +15,13 @@ V10 素材来源与许可说明
 - ambientCG 许可说明：https://docs.ambientcg.com/license/
 - 用途：纸张纹理叠层。
 
-3. The Metropolitan Museum of Art Open Access 中国山水作品
-- 文件：assets/paintings/met-*.jpg
-- 来源清单：assets/paintings/met-open-access-manifest.json
+3. The Metropolitan Museum of Art Open Access 中国山水与汉代实物素材
+- 文件：assets/paintings/met-*.jpg、assets/artifacts/met-*.jpg
+- 来源清单：assets/paintings/met-open-access-manifest.json、assets/artifacts/met-open-access-manifest.json
 - 许可证：The Met Open Access，公共领域作品图像按 CC0 提供。
 - 许可说明：https://www.metmuseum.org/about-the-met/policies-and-documents/open-access
-- 用途：压暗后的水墨背景。
+- 用途：压暗后的水墨背景、军令与政务界面装饰。
+- 新增素材采用官方 web-large 版本，在保留网页展示质量的同时控制仓库体积。
 
 4. 程序生成内容
 - 烟尘、颗粒、横向划痕、棋盘叠影、墨迹浮现与消散。

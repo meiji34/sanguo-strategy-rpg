@@ -33,3 +33,4 @@
 
 素材来源与许可证
 - 详见 LICENSE_ASSETS.txt。
+- 可用素材与推荐场景详见 ASSET_CATALOG.md。
