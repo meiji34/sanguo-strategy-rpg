@@ -2,7 +2,7 @@ Update/
 origin/
 .env
 node_modules/
-data/
+/data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

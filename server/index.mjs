@@ -128,6 +128,10 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && serveStaticAsset(route, response)) {
+      return;
+    }
+
     if (route === '/api/health' && request.method === 'GET') {
       sendJson(response, 200, {
         ok: true,
@@ -328,6 +332,42 @@ function serveIndex(response) {
     'Cache-Control': 'no-store'
   });
   response.end(readFileSync(filePath));
+}
+
+function serveStaticAsset(route, response) {
+  const [, publicDir] = route.split('/');
+  if (!['assets', 'css', 'js'].includes(publicDir)) return false;
+
+  const staticRoot = path.join(rootDir, publicDir);
+  const filePath = path.resolve(rootDir, ...route.split('/').filter(Boolean));
+  if (!filePath.startsWith(staticRoot + path.sep)) return false;
+  if (!existsSync(filePath)) return false;
+
+  const stat = statSync(filePath);
+  if (!stat.isFile()) return false;
+
+  response.writeHead(200, {
+    'Content-Type': contentTypeFor(filePath),
+    'Content-Length': stat.size,
+    'Cache-Control': 'public, max-age=3600'
+  });
+  response.end(readFileSync(filePath));
+  return true;
+}
+
+function contentTypeFor(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  const contentTypes = {
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.svg': 'image/svg+xml',
+    '.webp': 'image/webp'
+  };
+  return contentTypes[extension] || 'application/octet-stream';
 }
 
 function sendJson(response, status, payload) {
