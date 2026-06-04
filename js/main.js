@@ -33376,7 +33376,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const valid = length === 0 || (length >= 2 && length <= 6);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? (length ? '主簿已经记下。' : '姓名留空时，将由主簿代拟。')
+        ? (length ? '主簿已经记下，等你应答。' : '姓名留空时，将由主簿代拟。')
         : '姓名需为 2 到 6 个中文字符。';
       start.disabled = !valid;
 
@@ -33395,6 +33395,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const draftName = characterDraft.name || '名册待录';
       const speaker = document.getElementById('creationSpeaker');
       const line = document.getElementById('creationLine');
+      const voiceMark = document.getElementById('dialogueVoiceMark');
       const commissionName = document.getElementById('commissionName');
       const commissionIdentity = document.getElementById('commissionIdentity');
       if (commissionName) commissionName.textContent = draftName;
@@ -33403,24 +33404,29 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const dialogue = {
         arrival: {
           speaker: '荆州牧 · 刘表',
+          mark: '刘',
           line: '“荆南门户，久不得安。今夜召你来，是要托付一件不能写在公文上的差事。”'
         },
         name: {
           speaker: '州府主簿',
+          mark: '簿',
           line: '“赴任文牒已经备好。还请留下姓名，待主公亲自用印。”'
         },
         identity: {
           speaker: '荆州牧 · 刘表',
+          mark: '刘',
           line: '“' + draftName + '，桂阳兵、粮、民心皆不可偏废。你愿先执哪一柄？”'
         },
         confirm: {
           speaker: '荆州牧 · 刘表',
+          mark: '令',
           line: '“便依你所请。自今日起，你以' + identity.name + '之职赴桂阳。先稳门户，再谈天下。”'
         }
       };
       const currentDialogue = dialogue[characterCreationStep] || dialogue.arrival;
       if (speaker) speaker.textContent = currentDialogue.speaker;
       if (line) line.textContent = currentDialogue.line;
+      if (voiceMark) voiceMark.textContent = currentDialogue.mark || currentDialogue.speaker.slice(0, 1);
     }
 
     function getStoredSaveSummary() {
