@@ -31457,6 +31457,564 @@ window.MANUAL_MAP_DATA = {
       return character && !isInternalPlayerCharacterId(character.id);
     }
 
+    function normalizeAppointments(state) {
+      state.appointments ||= {};
+      state.appointments.cityOfficials ||= {};
+      state.appointments.campaignCommanders ||= {};
+      state.appointments.autoTasks ||= {};
+      state.appointments.autoGovSpentThisTurn ||= 0;
+      state.appointments.autoMilSpentThisTurn ||= 0;
+
+      Object.values(state.appointments.cityOfficials || {}).forEach(slots => {
+        if (!slots || typeof slots !== 'object') return;
+        if (!Array.isArray(slots.administratorIds)) {
+          slots.administratorIds = slots.administratorId ? [slots.administratorId] : [];
+        }
+        if (!Array.isArray(slots.militaryOfficerIds)) {
+          slots.militaryOfficerIds = slots.militaryOfficerId ? [slots.militaryOfficerId] : [];
+        }
+        slots.administratorIds = [...new Set(slots.administratorIds.filter(Boolean))];
+        slots.militaryOfficerIds = [...new Set(slots.militaryOfficerIds.filter(Boolean))];
+        slots.administratorId = slots.administratorIds[0] || slots.administratorId || null;
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || slots.militaryOfficerId || null;
+        slots.policyOfficerId ||= null;
+      });
+
+      Object.values(state.appointments.autoTasks || {}).forEach(task => {
+        if (!task || typeof task !== 'object') return;
+        task.enabled = task.enabled === true;
+        task.militaryMode ||= 'none';
+        task.civilMode ||= 'none';
+        task.policyMode ||= 'none';
+        task.militaryPrepMode ||= 'none';
+        if (!Array.isArray(task.civilModes)) {
+          task.civilModes = task.civilMode && task.civilMode !== 'none' ? [task.civilMode] : [];
+        }
+        if (!Array.isArray(task.militaryPrepModes)) {
+          task.militaryPrepModes = task.militaryPrepMode && task.militaryPrepMode !== 'none' ? [task.militaryPrepMode] : [];
+        }
+        task.civilModes = [...new Set(task.civilModes.filter(mode => mode && mode !== 'none'))];
+        task.militaryPrepModes = [...new Set(task.militaryPrepModes.filter(mode => mode && mode !== 'none'))];
+      });
+      return state.appointments;
+    }
+
+    function getCityAdministratorLimit(city) {
+      if (!city) return 1;
+      let limit = 2;
+      if (Number(city.level || 1) >= 3) limit += 1;
+      if (Number(city.population || 0) >= 90000) limit += 1;
+      return clamp(limit, 2, 4);
+    }
+
+    function getCityMilitaryOfficerLimit(city) {
+      if (!city) return 1;
+      let limit = 1;
+      if (Number(city.level || 1) >= 3) limit += 1;
+      if (realTroops(city.garrison) >= 5000) limit += 1;
+      return clamp(limit, 1, 3);
+    }
+
+    function getCityOfficials(cityId, role) {
+      normalizeAppointments(gameState);
+      const slots = gameState.appointments?.cityOfficials?.[cityId] || {};
+
+      if (role === 'administratorId') {
+        const ids = Array.isArray(slots.administratorIds)
+          ? slots.administratorIds
+          : (slots.administratorId ? [slots.administratorId] : []);
+        return ids
+          .map(id => gameState.characterRoster?.[id])
+          .filter(c => c && c.status === 'recruited' && canManageCity(c));
+      }
+
+      if (role === 'militaryOfficerId') {
+        const ids = Array.isArray(slots.militaryOfficerIds)
+          ? slots.militaryOfficerIds
+          : (slots.militaryOfficerId ? [slots.militaryOfficerId] : []);
+        return ids
+          .map(id => gameState.characterRoster?.[id])
+          .filter(c => c && c.status === 'recruited' && canLeadArmy(c));
+      }
+
+      if (role === 'policyOfficerId') {
+        const c = gameState.characterRoster?.[slots.policyOfficerId];
+        return c && c.status === 'recruited' && canManageCity(c) ? [c] : [];
+      }
+
+      return [];
+    }
+
+    function getCityOfficialEffect(cityId, role) {
+      const character = getCityOfficials(cityId, role)[0] || null;
+
+      if (!character || character.status !== 'recruited') {
+        return { character: null, multiplier: 1 };
+      }
+
+      const s = character.stats || {};
+      let multiplier = 1;
+
+      if (role === 'militaryOfficerId') {
+        multiplier = clamp(1 + (Number(s.command || 50) - 50) * 0.005, 0.9, 1.25);
+      } else if (role === 'administratorId') {
+        multiplier = clamp(1 + (Number(s.politics || 50) - 50) * 0.005, 0.9, 1.25);
+      } else if (role === 'policyOfficerId') {
+        multiplier = clamp(
+          1 + (Number(s.politics || 50) - 50) * 0.004 + (Number(s.charm || 50) - 50) * 0.003,
+          0.9,
+          1.25
+        );
+      }
+
+      return { character, multiplier };
+    }
+
+    function setCityAutoTask(cityId, field, value) {
+      const city = gameState.cities?.[cityId];
+      if (!city || !isControlledBy(city.id, 'player')) return;
+      const allowed = ['enabled', 'militaryMode', 'civilMode', 'civilModes', 'policyMode', 'militaryPrepMode', 'militaryPrepModes'];
+      if (!allowed.includes(field)) return;
+
+      normalizeAppointments(gameState);
+      gameState.appointments.autoTasks[cityId] ||= {
+        enabled: false,
+        militaryMode: 'none',
+        civilMode: 'none',
+        civilModes: [],
+        policyMode: 'none',
+        militaryPrepMode: 'none',
+        militaryPrepModes: []
+      };
+      if (field === 'civilModes' || field === 'militaryPrepModes') {
+        const values = Array.isArray(value) ? value : String(value || '').split(',');
+        gameState.appointments.autoTasks[cityId][field] = [...new Set(values.map(v => String(v).trim()).filter(v => v && v !== 'none'))];
+      } else {
+        gameState.appointments.autoTasks[cityId][field] = value;
+      }
+      saveToStorage(false);
+      render();
+    }
+
+    function toggleCityAutoTaskMode(cityId, field, mode) {
+      if (!['civilModes', 'militaryPrepModes'].includes(field)) return;
+      const city = gameState.cities?.[cityId];
+      if (!city || !isControlledBy(city.id, 'player')) return;
+      normalizeAppointments(gameState);
+      const task = gameState.appointments.autoTasks[cityId] ||= {};
+      const list = Array.isArray(task[field]) ? task[field] : [];
+
+      if (list.includes(mode)) {
+        task[field] = list.filter(x => x !== mode);
+      } else if (mode && mode !== 'none') {
+        task[field] = [...list, mode];
+      }
+
+      saveToStorage(false);
+      render();
+    }
+
+    function canBeAppointed(character) {
+      return character
+        && isExternalCharacter(character)
+        && character.status === 'recruited'
+        && !['dead', 'captured'].includes(character.status);
+    }
+
+    function canLeadArmy(character) {
+      return canBeAppointed(character)
+        && ['武将', '谋士'].includes(character.type);
+    }
+
+    function canManageCity(character) {
+      return canBeAppointed(character)
+        && ['政务', '谋士', '名士'].includes(character.type);
+    }
+
+    function getAppointedCharacter(id) {
+      return gameState.characterRoster?.[id] || null;
+    }
+
+    function getCampaignCommander(campaign) {
+      if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack') return null;
+
+      const commanderId = gameState.appointments?.campaignCommanders?.[campaign.id];
+      const commander = gameState.characterRoster?.[commanderId];
+
+      if (!commander) return null;
+      if (!canLeadArmy(commander)) return null;
+
+      return commander;
+    }
+
+    function getCommanderBattleModifier(campaign) {
+      const commander = getCampaignCommander(campaign);
+      if (!commander) return { attack: 1, morale: 0, supply: 0, text: '' };
+
+      const s = commander.stats || {};
+      const command = Number(s.command || 50);
+      const strategy = Number(s.strategy || 50);
+      const loyalty = Number(s.loyalty || 50);
+      const ambition = Number(s.ambition || 30);
+
+      const attack = clamp(
+        1 + (command - 50) * 0.006 + (strategy - 50) * 0.003 - Math.max(0, ambition - 80) * 0.002,
+        0.9,
+        1.35
+      );
+
+      const morale = Math.round((command - 50) / 12 + (loyalty - 50) / 20);
+      const supply = Math.max(0, Math.round((strategy - 60) / 15));
+
+      return {
+        commander,
+        attack,
+        morale,
+        supply,
+        text: commander.name + '统军，攻势修正 x' + attack.toFixed(2)
+      };
+    }
+
+    function shouldCommanderSaveSupply(campaign) {
+      if (Number(campaign.supply || 0) <= 0) return false;
+
+      const commander = getCampaignCommander(campaign);
+      if (!commander) return false;
+
+      const strategy = Number(commander.stats?.strategy || 50);
+      let interval = 0;
+
+      if (strategy >= 90) interval = 3;
+      else if (strategy >= 78) interval = 4;
+      else if (strategy >= 68) interval = 5;
+
+      if (!interval) return false;
+
+      campaign.commanderSupplyTick = (campaign.commanderSupplyTick || 0) + 1;
+
+      if (campaign.commanderSupplyTick >= interval) {
+        campaign.commanderSupplyTick = 0;
+        return true;
+      }
+
+      return false;
+    }
+
+    function processCommanderCampaignActions(campaign, reports) {
+      if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || campaign.status !== 'siege') {
+        return { triggered: false, reason: 'not-player-siege' };
+      }
+
+      const commander = getCampaignCommander(campaign);
+      if (!commander) {
+        return { triggered: false, reason: 'no-commander' };
+      }
+
+      if (Number(campaign.commanderActionCooldown || 0) > 0) {
+        return { triggered: false, reason: 'cooldown' };
+      }
+
+      const target = gameState.cities?.[campaign.target];
+      if (!target) {
+        return { triggered: false, reason: 'no-target' };
+      }
+
+      const stats = commander.stats || {};
+      const command = Number(stats.command || 50);
+      const strategy = Number(stats.strategy || 50);
+      const charm = Number(stats.charm || 50);
+      const loyalty = Number(stats.loyalty || 50);
+
+      let chance = 20;
+      if (strategy >= 70) chance += 10;
+      if (command >= 70) chance += 8;
+      if (['名将', '传奇'].includes(commander.rarity)) chance += 8;
+      chance = clamp(chance, 15, 45);
+
+      if (Math.random() * 100 >= chance) {
+        return { triggered: false, reason: 'chance-failed', chance };
+      }
+
+      const actions = [];
+
+      if (strategy >= 65) {
+        actions.push({
+          id: 'cutSupply',
+          text: commander.name + '遣细作绕袭粮道，' + target.name + '粮草受损，守军士气动摇。',
+          run: function() {
+            target.food = Math.max(0, Number(target.food || 0) - Math.round(120 + strategy * 2));
+            target.morale = clamp(Number(target.morale || 0) - 2, 0, 100);
+          }
+        });
+      }
+
+      if (strategy >= 60 || charm >= 65) {
+        actions.push({
+          id: 'disturbDefenders',
+          text: commander.name + '散布虚实消息，扰乱' + target.name + '守军。',
+          run: function() {
+            target.morale = clamp(Number(target.morale || 0) - 4, 0, 100);
+            target.defense = clamp(Number(target.defense || 0) - 1, 0, 100);
+          }
+        });
+      }
+
+      if (command >= 70) {
+        actions.push({
+          id: 'stormOuterCamp',
+          text: commander.name + '亲督锐卒强攻外营，敌城防线受损，我军亦有折损。',
+          run: function() {
+            target.defense = clamp(Number(target.defense || 0) - 2, 0, 100);
+
+            const loss = Math.max(20, Math.round(realTroops(campaign.army) * 0.08));
+            removeTroops(campaign.army, loss);
+
+            if (Math.random() < 0.5) {
+              campaign.siegeRemaining = Math.max(0, Number(campaign.siegeRemaining || 0) - 1);
+            }
+          }
+        });
+      }
+
+      if (loyalty >= 65 || command >= 65) {
+        actions.push({
+          id: 'steadyArmy',
+          text: commander.name + '巡营整伍，稳定军心，前线补给得以维持。',
+          run: function() {
+            campaign.supply = Math.max(0, Number(campaign.supply || 0) + 1);
+          }
+        });
+      }
+
+      if (!actions.length) {
+        return { triggered: false, reason: 'no-available-action', chance };
+      }
+
+      const action = actions[Math.floor(Math.random() * actions.length)];
+      action.run();
+
+      campaign.commanderActionCooldown = 2;
+
+      if (reports) {
+        reports.push({
+          tone: 'good',
+          text: '主将谋划：' + action.text
+        });
+      }
+
+      return {
+        triggered: true,
+        action: action.id,
+        commanderId: commander.id,
+        commanderName: commander.name,
+        chance
+      };
+    }
+
+    function findCharacterAppointment(characterId) {
+      const app = normalizeAppointments(gameState);
+
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        if ((slots.administratorIds || []).includes(characterId) || slots.administratorId === characterId) {
+          return { type: 'city', cityId, slot: 'administratorId' };
+        }
+        if ((slots.militaryOfficerIds || []).includes(characterId) || slots.militaryOfficerId === characterId) {
+          return { type: 'city', cityId, slot: 'militaryOfficerId' };
+        }
+        if (slots.policyOfficerId === characterId) {
+          return { type: 'city', cityId, slot: 'policyOfficerId' };
+        }
+      }
+
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        if (id === characterId) return { type: 'campaign', campaignId };
+      }
+
+      return null;
+    }
+
+    function appointmentCityControllerFromState(state, cityId) {
+      const city = state.cities?.[cityId];
+      return city?.controller || city?.actual || city?.faction || city?.owner || 'local';
+    }
+
+    function cleanupInvalidAppointments(state = gameState) {
+      const app = normalizeAppointments(state);
+
+      // 清理 cityOfficials 和 autoTasks
+      for (const cityId of Object.keys(app.cityOfficials)) {
+        const city = state.cities?.[cityId];
+        const controller = appointmentCityControllerFromState(state, cityId);
+
+        if (!city || city.isActive === false || controller !== 'player') {
+          delete app.cityOfficials[cityId];
+          delete app.autoTasks?.[cityId];
+          continue;
+        }
+        const slots = app.cityOfficials[cityId];
+        const validAdmin = charId => {
+          const char = state.characterRoster?.[charId];
+          return char && !isInternalPlayerCharacterId(charId) && char.status === 'recruited' && !['dead', 'captured'].includes(char.status) && canManageCity(char);
+        };
+        const validMilitary = charId => {
+          const char = state.characterRoster?.[charId];
+          return char && !isInternalPlayerCharacterId(charId) && char.status === 'recruited' && !['dead', 'captured'].includes(char.status) && canLeadArmy(char);
+        };
+        slots.administratorIds = [...new Set((slots.administratorIds || (slots.administratorId ? [slots.administratorId] : [])).filter(validAdmin))];
+        slots.militaryOfficerIds = [...new Set((slots.militaryOfficerIds || (slots.militaryOfficerId ? [slots.militaryOfficerId] : [])).filter(validMilitary))];
+        slots.administratorId = slots.administratorIds[0] || null;
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+        if (slots.policyOfficerId) {
+          const char = state.characterRoster?.[slots.policyOfficerId];
+          if (!char || isInternalPlayerCharacterId(slots.policyOfficerId) || char.status !== 'recruited' || ['dead', 'captured'].includes(char.status) || !canManageCity(char)) {
+            slots.policyOfficerId = null;
+          }
+        }
+      }
+
+      // 清理 autoTasks 中不属于玩家的城市
+      for (const cityId of Object.keys(app.autoTasks || {})) {
+        const city = state.cities?.[cityId];
+        const controller = appointmentCityControllerFromState(state, cityId);
+        if (!city || city.isActive === false || controller !== 'player') {
+          delete app.autoTasks[cityId];
+        }
+      }
+
+      // 清理 campaignCommanders
+      for (const campaignId of Object.keys(app.campaignCommanders)) {
+        const campaign = (state.campaigns || []).find(c => c.id === campaignId);
+        if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || !isActiveCampaign(campaign)) {
+          delete app.campaignCommanders[campaignId];
+          continue;
+        }
+        const charId = app.campaignCommanders[campaignId];
+        if (charId) {
+          const char = state.characterRoster?.[charId];
+          if (!char || isInternalPlayerCharacterId(charId) || char.status !== 'recruited' || ['dead', 'captured'].includes(char.status)) {
+            delete app.campaignCommanders[campaignId];
+          }
+        }
+      }
+    }
+
+    function appointCityOfficial(cityId, slot, characterId) {
+      if (!['administratorId', 'militaryOfficerId', 'policyOfficerId'].includes(slot)) {
+        return toast('无效的职位类型');
+      }
+      const city = gameState.cities?.[cityId];
+      if (!city || !isActiveMapCity(cityId) || cityController(cityId) !== 'player') {
+        return toast('该城池不属于你');
+      }
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || !canBeAppointed(character)) {
+        return toast('该人物不可被任命');
+      }
+      if (slot === 'administratorId' || slot === 'policyOfficerId') {
+        if (!canManageCity(character)) return toast('主政和政策官只能由政务、谋士、名士担任');
+      }
+      if (slot === 'militaryOfficerId') {
+        if (!canLeadArmy(character)) return toast('军事官只能由武将、谋士担任');
+      }
+      const existing = findCharacterAppointment(characterId);
+      if (existing) return toast('此人已有任命，请先撤任。');
+
+      normalizeAppointments(gameState);
+      gameState.appointments.cityOfficials[cityId] ||= {};
+      const slots = gameState.appointments.cityOfficials[cityId];
+      if (slot === 'administratorId') {
+        slots.administratorIds ||= [];
+        if (slots.administratorIds.length >= getCityAdministratorLimit(city)) return toast('该城主政官已满');
+        slots.administratorIds.push(characterId);
+        slots.administratorId = slots.administratorIds[0] || null;
+      } else if (slot === 'militaryOfficerId') {
+        slots.militaryOfficerIds ||= [];
+        if (slots.militaryOfficerIds.length >= getCityMilitaryOfficerLimit(city)) return toast('该城军事官已满');
+        slots.militaryOfficerIds.push(characterId);
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+      } else {
+        slots.policyOfficerId = characterId;
+      }
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCityOfficialAt(cityId, role, characterId) {
+      normalizeAppointments(gameState);
+      const slots = gameState.appointments.cityOfficials?.[cityId];
+      if (!slots) return;
+
+      if (role === 'administratorId') {
+        slots.administratorIds = (slots.administratorIds || []).filter(id => id !== characterId);
+        slots.administratorId = slots.administratorIds[0] || null;
+      } else if (role === 'militaryOfficerId') {
+        slots.militaryOfficerIds = (slots.militaryOfficerIds || []).filter(id => id !== characterId);
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+      } else if (role === 'policyOfficerId') {
+        slots.policyOfficerId = null;
+      }
+
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCityOfficial(cityId, slot, characterId) {
+      if (!['administratorId', 'militaryOfficerId', 'policyOfficerId'].includes(slot)) {
+        return toast('无效的职位类型');
+      }
+      if (characterId) return removeCityOfficialAt(cityId, slot, characterId);
+      normalizeAppointments(gameState);
+      const officials = gameState.appointments.cityOfficials[cityId];
+      if (officials) {
+        if (slot === 'administratorId') {
+          officials.administratorIds = [];
+          officials.administratorId = null;
+        } else if (slot === 'militaryOfficerId') {
+          officials.militaryOfficerIds = [];
+          officials.militaryOfficerId = null;
+        } else {
+          officials[slot] = null;
+        }
+      }
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function appointCampaignCommander(campaignId, characterId) {
+      const campaign = (gameState.campaigns || []).find(c => c.id === campaignId);
+      if (!campaign) return toast('战役不存在');
+      if (campaign.faction !== 'player') return toast('只能任命我方战役的主将');
+      if (campaign.type !== 'attack') return toast('只能为进攻战役任命主将');
+      if (!isActiveCampaign(campaign)) return toast('该战役已结束或未激活');
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || !canBeAppointed(character)) {
+        return toast('该人物不可被任命');
+      }
+      if (!canLeadArmy(character)) return toast('主将只能由武将、谋士担任');
+      const existing = findCharacterAppointment(characterId);
+      if (existing) return toast('此人已有任命，请先撤任。');
+
+      normalizeAppointments(gameState);
+      gameState.appointments.campaignCommanders[campaignId] = characterId;
+      campaign.commanderSupplyTick = 0;
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCampaignCommander(campaignId) {
+      normalizeAppointments(gameState);
+      delete gameState.appointments.campaignCommanders[campaignId];
+      const campaign = gameState.campaigns?.find(c => c.id === campaignId);
+      if (campaign) campaign.commanderSupplyTick = 0;
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
     const CHARACTER_STATUS_RANK = {
       hidden: 0,
       rumored: 1,
@@ -31499,6 +32057,56 @@ window.MANUAL_MAP_DATA = {
       });
 
       return true;
+    }
+
+    function promoteRumoredCharacter(characterId, reason = '调查传闻') {
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || isInternalPlayerCharacterId(characterId)) return false;
+
+      if (character.status !== 'rumored') {
+        toast('此人不需要调查');
+        return false;
+      }
+
+      character.status = 'discovered';
+      character.discoveredBy = reason;
+
+      gameState.selectedCharacterId = characterId;
+      gameState.characterFilter = 'contactable';
+
+      addCharacterMemory?.(character, {
+        turn: gameState.turn,
+        type: 'discovery',
+        summary: '通过' + reason + '确认其行踪。',
+        text: '通过' + reason + '确认其行踪。'
+      });
+
+      toast(character.name + '的行踪已经确认，可以尝试接触。');
+      saveToStorage(false);
+      render();
+      return true;
+    }
+
+    function investigateCharacter(characterId) {
+      const character = gameState.characterRoster?.[characterId];
+
+      if (!character) return toast('未找到此人');
+      if (isInternalPlayerCharacterId(characterId)) return toast('内部班底不需要调查');
+      if (character.status !== 'rumored') return toast('此人不需要调查');
+
+      if (isTabUnlocked('scheme')) {
+        if (!spendPoint('scheme')) return;
+        promoteRumoredCharacter(characterId, '谋略调查');
+        return;
+      }
+
+      if (isTabUnlocked('inner')) {
+        if (!spendPoint('inner')) return;
+        promoteRumoredCharacter(characterId, '亲信打探');
+        return;
+      }
+
+      toast('需要先解锁亲信或谋略系统，才能调查人物传闻');
     }
 
     function characterRevealPriority(character) {
@@ -32865,6 +33473,11 @@ window.MANUAL_MAP_DATA = {
         letters: [],
         militaryOrders: [],
         campaigns: [],
+        appointments: {
+          cityOfficials: {},
+          campaignCommanders: {},
+          autoTasks: {}
+        },
         urgentMatters: [],
         turnEvents: [],
         turnSummaries: [],
@@ -32924,6 +33537,7 @@ window.MANUAL_MAP_DATA = {
           guideQueue: []
         }
       };
+      normalizeAppointments(state);
       return applyInitialPublicSupportProfiles(state);
     }
 
@@ -33435,6 +34049,15 @@ window.MANUAL_MAP_DATA = {
       return cityController(cityId) === factionId;
     }
 
+    function isPlayerPublicCity(city) {
+      return city && cityController(city.id) === 'player';
+    }
+
+    function isNpcPublicCity(city) {
+      const owner = cityController(city.id);
+      return city && owner && owner !== 'player' && owner !== 'local';
+    }
+
     function cityNeighborIds(cityId) {
       const city = gameState.cities?.[cityId];
       const region = getRegion(cityId);
@@ -33532,6 +34155,121 @@ window.MANUAL_MAP_DATA = {
       const item = { tone: 'warn', text: '刘表庇护 -' + amount + '：' + reason + '。当前 ' + gameState.player.protection + '。' };
       if (reports) reports.push(item);
       else addNews(item.tone, item.text);
+    }
+
+    // ========== 刘表庇护降低后 NPC 攻击玩家系统 ==========
+
+    function getPlayerExposureLevel() {
+      const protection = clamp(gameState.player?.protection || 0, 0, 100);
+
+      if (gameState.player?.independent) {
+        return {
+          level: 'independent',
+          protection,
+          canBeTargeted: true,
+          targetChanceMultiplier: 1.2,
+          hostilityBonus: 45,
+          minRouteMode: 'official'
+        };
+      }
+
+      if (protection >= 70) {
+        return {
+          level: 'protected',
+          protection,
+          canBeTargeted: false,
+          targetChanceMultiplier: 0,
+          hostilityBonus: 0,
+          minRouteMode: 'none'
+        };
+      }
+
+      if (protection >= 40) {
+        return {
+          level: 'wavering',
+          protection,
+          canBeTargeted: true,
+          targetChanceMultiplier: 0.25,
+          hostilityBonus: 12,
+          minRouteMode: 'raid'
+        };
+      }
+
+      if (protection >= 20) {
+        return {
+          level: 'weak',
+          protection,
+          canBeTargeted: true,
+          targetChanceMultiplier: 0.55,
+          hostilityBonus: 25,
+          minRouteMode: 'raid'
+        };
+      }
+
+      return {
+        level: 'collapsed',
+        protection,
+        canBeTargeted: true,
+        targetChanceMultiplier: 1.0,
+        hostilityBonus: 40,
+        minRouteMode: 'official'
+      };
+    }
+
+    function activeNpcCampaignsAgainstPlayer() {
+      return (gameState.campaigns || []).filter(c =>
+        c &&
+        isActiveCampaign(c) &&
+        c.faction !== 'player' &&
+        cityController(c.target) === 'player'
+      );
+    }
+
+    function canNpcTargetPlayerCity(faction, targetId, sourceId, options = {}) {
+      const city = gameState.cities?.[targetId];
+      if (!city || cityController(targetId) !== 'player') return false;
+
+      const exposure = getPlayerExposureLevel();
+      if (!exposure.canBeTargeted) return false;
+
+      // 桂阳开局前几回合不要立刻被围殴（force 时可绕过）
+      if (!options.force && (gameState.turn || 0) < 5 && !gameState.player?.independent) return false;
+
+      // 检查所有路线类型
+      const route =
+        findCampaignRoute(sourceId, targetId, 'official') ||
+        findCampaignRoute(sourceId, targetId, 'raid') ||
+        findCampaignRoute(sourceId, targetId, 'stealth');
+      if (!route) return false;
+
+      // 同一目标不能被无限围攻
+      if (!canCreateAnotherCampaignAgainstTarget(faction, targetId, options)) return false;
+
+      // 同一时间 NPC 攻击玩家的 active campaign 不超过上限
+      const limit = gameState.player?.independent ? 3 : 2;
+      if (activeNpcCampaignsAgainstPlayer().length >= limit) return false;
+
+      return true;
+    }
+
+    function playerTargetScoreForNpc(faction, cityId) {
+      if (cityController(cityId) !== 'player') return 0;
+
+      const exposure = getPlayerExposureLevel();
+      if (!exposure.canBeTargeted) return -999;
+
+      const city = gameState.cities?.[cityId];
+      let score = exposure.hostilityBonus;
+
+      // 玩家民心低、城防低、兵少时更容易被盯上
+      if (Number(city?.publicSupport || 0) < 35) score += 8;
+      if (Number(city?.defense || 0) < 35) score += 8;
+      if (realTroops(city?.garrison) < 1200) score += 10;
+
+      // 激进势力更容易攻击玩家
+      if (['cao', 'yuan', 'sun', 'yuanshu'].includes(faction)) score += 8;
+
+      return score;
     }
 
     const CONVERSATION_ACTIONS = {
@@ -34566,6 +35304,14 @@ window.MANUAL_MAP_DATA = {
       return campaign && !isCampaignFinished(campaign) && campaign.slotOccupied;
     }
 
+    function isCityUnderActiveSiege(cityId) {
+      return (gameState.campaigns || []).some(c =>
+        c.target === cityId &&
+        c.status === 'siege' &&
+        isActiveCampaign(c)
+      );
+    }
+
     function finishCampaign(campaign, status = 'complete', phase = '已结束', reports, text, tone = 'warn') {
       if (!campaign) return;
 
@@ -34806,6 +35552,7 @@ window.MANUAL_MAP_DATA = {
         tactic: order.payload.tactic || 'balanced',
         army: armyTroops,
         commander: order.payload.commander || gameState.player.name,
+        commanderActionCooldown: 0,
         status: 'marching',
         phase: '行军',
         eta: travelTurns,
@@ -34824,25 +35571,54 @@ window.MANUAL_MAP_DATA = {
       return campaign;
     }
 
-    function createNpcCampaign({ faction, source, target, troops: amount }, reports = []) {
-      const route = findCampaignRoute(source, target, 'official');
+    function createNpcCampaign({ faction, source, target, troops: amount, routeMode = 'official' }, reports = []) {
+      const route = findCampaignRoute(source, target, routeMode);
       if (!route) return null;
+      const isHiddenMode = routeMode === 'raid' || routeMode === 'night' || routeMode === 'stealth';
+      const visibility = isHiddenMode ? 'hidden' : 'public';
       const campaign = {
-        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode: 'official',
+        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode, visibility,
         tactic: 'balanced', army: troops(Math.round(amount * 0.66), Math.round(amount * 0.12), Math.round(amount * 0.22), 0),
         commander: factionName(faction) + '军将', status: 'marching', phase: '行军', eta: calculateTravelTurns(route, { troops: amount, supply: 6 }),
         travelRemaining: calculateTravelTurns(route, { troops: amount, supply: 6 }), siegeRemaining: 2, supply: 7, risk: 1, slotOccupied: true, createdTurn: gameState.turn
       };
       gameState.campaigns.push(campaign);
-      if (isControlledBy(target, 'player')) addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '敌军逼近 ' + regionName(target), text: factionName(faction) + '军正向' + regionName(target) + '进军。' });
-      reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
+      // 注意：不要无条件暴露 hidden 攻击玩家
+      if (cityController(target) === 'player') {
+        if (visibility === 'hidden') {
+          addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '边境暗流', text: '刘表庇护衰弱，边境似有不明兵马活动。' });
+          reports.push({ tone: 'warn', text: '刘表庇护衰弱，边境暗流涌动，似有外部势力正在试探我方。' });
+        } else {
+          addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '敌军逼近 ' + regionName(target), text: factionName(faction) + '军正向' + regionName(target) + '进军。' });
+          reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
+        }
+      } else {
+        reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
+      }
       return campaign;
     }
 
     function consumeCampaignSupply(campaign) {
+      if (
+        campaign.faction === 'player' &&
+        campaign.type === 'attack' &&
+        shouldCommanderSaveSupply(campaign)
+      ) {
+        return;
+      }
+
       campaign.supply = Math.max(0, campaign.supply - 1);
+
       if (campaign.supply === 0) {
-        removeTroops(campaign.army, Math.max(20, Math.round(realTroops(campaign.army) * 0.08)));
+        let lossRate = 0.08;
+
+        if (campaign.faction === 'player' && campaign.type === 'attack') {
+          const mod = getCommanderBattleModifier(campaign);
+          const moraleMod = clamp(Number(mod.morale || 0), -3, 5);
+          lossRate = clamp(0.08 - moraleMod * 0.004, 0.04, 0.12);
+        }
+
+        removeTroops(campaign.army, Math.max(20, Math.round(realTroops(campaign.army) * lossRate)));
       }
     }
 
@@ -34873,10 +35649,44 @@ window.MANUAL_MAP_DATA = {
           return;
         }
         if (campaign.status === 'siege') {
+          campaign.commanderActionCooldown = Math.max(0, Number(campaign.commanderActionCooldown || 0) - 1);
+
+          const commanderActionResult = processCommanderCampaignActions(campaign, reports);
+          campaign.lastCommanderActionResult = commanderActionResult?.triggered ? commanderActionResult : null;
+
+          if (campaign.army && realTroops(campaign.army) <= 0) {
+            finishCampaign(
+              campaign,
+              'destroyed',
+              '全军覆没',
+              reports,
+              factionName(campaign.faction) + '军强攻受挫，兵力耗尽，战役结束。',
+              campaign.faction === 'player' ? 'bad' : 'good'
+            );
+            return;
+          }
+
           campaign.siegeRemaining = Math.max(0, campaign.siegeRemaining - 1);
+
           const target = gameState.cities[campaign.target];
+          if (!target) {
+            finishCampaign(campaign, 'failed', '目标失效', reports, '战役目标不存在，战役终止。', 'warn');
+            return;
+          }
+
           target.food = Math.max(0, target.food - Math.max(80, Math.round(realTroops(campaign.army) * 0.08)));
-          target.morale = clamp(target.morale - 3, 0, 100);
+          let moraleDamage = 3;
+
+          if (campaign.faction === 'player' && campaign.type === 'attack') {
+            const commander = getCampaignCommander(campaign);
+            if (commander) {
+              const strategy = Number(commander.stats?.strategy || 50);
+              const siegeBonus = Math.max(0, Math.round((strategy - 50) / 25));
+              moraleDamage = Math.min(6, 3 + siegeBonus);
+            }
+          }
+
+          target.morale = clamp(target.morale - moraleDamage, 0, 100);
           playBattleEffect(campaign.target);
           if (campaign.siegeRemaining <= 0 || target.morale <= 18 || target.defense <= 12) resolveSiege(campaign, reports);
         }
@@ -35105,6 +35915,17 @@ window.MANUAL_MAP_DATA = {
       }
       const draft = { troops: realTroops(campaign.army), route: campaign.routeMode, tactic: campaign.tactic, objective: campaign.objective };
       const power = estimateBattlePower(draft, Object.assign({}, source, { food: Math.max(1, campaign.supply * 220), morale: source.morale }), target);
+
+      // 主将加成
+      if (campaign.faction === 'player' && campaign.type === 'attack') {
+        const commanderMod = getCommanderBattleModifier(campaign);
+        power.attack *= commanderMod.attack;
+
+        if (commanderMod.text) {
+          reports.push({ tone: 'good', text: commanderMod.text });
+        }
+      }
+
       // 情报泄露给进攻方带来攻城优势
       const leakBonus = getActiveIntelligenceLeakBonus(campaign.faction, target.id).siegeAdvantage;
       const ratio = power.attack * (0.86 + Math.random() * 0.28 + leakBonus) / Math.max(1, power.defense * (0.9 + Math.random() * 0.22));
@@ -35396,8 +36217,18 @@ window.MANUAL_MAP_DATA = {
           const targetId = edge.to;
           const controller = cityController(targetId);
           if (controller === faction) continue;
-          // 保护玩家：桂阳开局阶段禁止 NPC 打玩家
-          if (controller === 'player') continue;
+          // 刘表庇护系统：根据庇护等级决定 NPC 能否攻击玩家
+          if (controller === 'player') {
+            if (!canNpcTargetPlayerCity(faction, targetId, sourceId, options)) continue;
+
+            const exposure = getPlayerExposureLevel();
+            const rollChance = protectedNpcChance('npcAttack', 0.5 * exposure.targetChanceMultiplier);
+
+            if (!options.force && Math.random() >= rollChance) continue;
+
+            targets.add(targetId);
+            continue;
+          }
           if (!gameState.cities[targetId] || isRemovedCityId(targetId)) continue;
           const hostility = getFactionHostility(faction, controller);
           if (hostility <= -5 && edge.roadType !== 'water') {
@@ -35430,7 +36261,21 @@ window.MANUAL_MAP_DATA = {
 
     function getFactionHostility(factionA, factionB) {
       if (factionA === factionB) return 100;
-      if (factionA === 'player' || factionB === 'player') return 0;
+
+      if (factionA === 'player' || factionB === 'player') {
+        const exposure = getPlayerExposureLevel();
+        if (!exposure.canBeTargeted) return 0;
+
+        let base = -exposure.hostilityBonus;
+
+        // 激进势力更愿意趁刘表虚弱动手
+        const npcFaction = factionA === 'player' ? factionB : factionA;
+        if (['cao', 'yuan', 'sun', 'yuanshu'].includes(npcFaction)) base -= 8;
+        if (['gongsun', 'mateng', 'zhanglu'].includes(npcFaction)) base -= 4;
+
+        return base;
+      }
+
       const rels = gameState.factionRelations || {};
       const row = rels[factionA] || {};
       return row[factionB] || 0;
@@ -35490,7 +36335,7 @@ window.MANUAL_MAP_DATA = {
       return Math.random() < chance;
     }
 
-    function getNpcCampaignSource(faction, targetId) {
+    function getNpcCampaignSource(faction, targetId, routeMode = 'official') {
       const ownCities = getNpcControlledCities(faction);
       let bestSource = null;
       let bestTroops = 0;
@@ -35498,7 +36343,7 @@ window.MANUAL_MAP_DATA = {
         const city = gameState.cities[cityId];
         const garrison = realTroops(city.garrison);
         if (garrison < 500) continue;
-        const route = findCampaignRoute(cityId, targetId, 'official');
+        const route = findCampaignRoute(cityId, targetId, routeMode);
         if (!route || route.distance === 0) continue;
         if (garrison > bestTroops) {
           bestTroops = garrison;
@@ -35508,7 +36353,9 @@ window.MANUAL_MAP_DATA = {
       return bestSource;
     }
 
-    function shouldNpcLaunchCampaign(faction, reports) {
+    function shouldNpcLaunchCampaign(faction, reports, options = {}) {
+      // options.force 时跳过概率检查
+      if (options.force) return true;
       const warState = gameState.factionWarState;
       const lastAttack = warState.lastAttackTurnByFaction[faction] || 0;
       if (gameState.turn - lastAttack < NPC_WAR_COOLDOWN_TURNS) return false;
@@ -35516,7 +36363,7 @@ window.MANUAL_MAP_DATA = {
         c => !isCampaignFinished(c) && c.faction !== 'player'
       ).length;
       if (activeNpcCampaigns >= MAX_NPC_CAMPAIGNS_PER_TURN) return false;
-      const targets = getNpcAttackTargets(faction);
+      const targets = getNpcAttackTargets(faction, options);
       if (targets.length === 0) return false;
       const hasEnoughTroops = getNpcControlledCities(faction).some(cityId => {
         const city = gameState.cities[cityId];
@@ -35526,7 +36373,17 @@ window.MANUAL_MAP_DATA = {
       const maxHostility = Math.max(...targets.map(t => Math.abs(getFactionHostility(faction, cityController(t)))));
       const baseChance = clamp(0.08 + maxHostility / 300, 0.05, 0.55);
       const aggressionBonus = ['cao', 'yuan', 'gongsun'].includes(faction) ? 0.12 : 0;
-      const chance = baseChance + aggressionBonus;
+
+      // 玩家目标带来的额外压力加成
+      const hasPlayerTarget = targets.some(t => cityController(t) === 'player');
+      let playerPressureBonus = 0;
+      if (hasPlayerTarget) {
+        const exposure = getPlayerExposureLevel();
+        playerPressureBonus = exposure.targetChanceMultiplier * 0.18;
+        if (['cao', 'yuan', 'sun', 'yuanshu'].includes(faction)) playerPressureBonus += 0.05;
+      }
+
+      const chance = clamp(baseChance + aggressionBonus + playerPressureBonus, 0.03, 0.65);
       return Math.random() < chance;
     }
 
@@ -35543,25 +36400,58 @@ window.MANUAL_MAP_DATA = {
         const hb = Math.abs(getFactionHostility(faction, cityController(b)));
         const leakBonusA = getActiveIntelligenceLeakBonus(faction, a).targetScore;
         const leakBonusB = getActiveIntelligenceLeakBonus(faction, b).targetScore;
-        return (hb + publicSupportTargetScore(gameState.cities[b]) + leakBonusB) -
-               (ha + publicSupportTargetScore(gameState.cities[a]) + leakBonusA);
+        const playerScoreA = playerTargetScoreForNpc(faction, a);
+        const playerScoreB = playerTargetScoreForNpc(faction, b);
+        return (hb + publicSupportTargetScore(gameState.cities[b]) + leakBonusB + playerScoreB) -
+               (ha + publicSupportTargetScore(gameState.cities[a]) + leakBonusA + playerScoreA);
       });
-      const topTargets = candidates.slice(0, Math.min(3, candidates.length));
+
+      // 支持 preferredTargetId：将指定目标放到第一位
+      let topTargets;
+      if (options.preferredTargetId && candidates.includes(options.preferredTargetId)) {
+        const pref = options.preferredTargetId;
+        const rest = candidates.filter(id => id !== pref);
+        topTargets = [pref, ...rest].slice(0, Math.min(3, candidates.length));
+      } else {
+        topTargets = candidates.slice(0, Math.min(3, candidates.length));
+      }
+
       for (const targetId of topTargets) {
-        const sourceId = getNpcCampaignSource(faction, targetId);
-        if (!sourceId) continue;
-        const hostility = Math.abs(getFactionHostility(faction, cityController(targetId)));
+        const isPlayerTarget = cityController(targetId) === 'player';
         let troopsAmount, routeMode;
-        if (hostility >= 30) {
-          troopsAmount = 2000 + Math.floor(Math.random() * 1500);
-          routeMode = 'official';
-        } else if (hostility >= 15) {
-          troopsAmount = 1200 + Math.floor(Math.random() * 800);
-          routeMode = Math.random() < 0.6 ? 'official' : 'raid';
+
+        // 先决定 routeMode
+        if (isPlayerTarget) {
+          const exposure = getPlayerExposureLevel();
+          if (exposure.level === 'wavering') {
+            troopsAmount = 700 + Math.floor(Math.random() * 700);
+            routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
+          } else if (exposure.level === 'weak') {
+            troopsAmount = 1200 + Math.floor(Math.random() * 1200);
+            routeMode = Math.random() < 0.55 ? 'raid' : 'official';
+          } else {
+            // collapsed 或 independent
+            troopsAmount = 2000 + Math.floor(Math.random() * 1800);
+            routeMode = 'official';
+          }
         } else {
-          troopsAmount = 600 + Math.floor(Math.random() * 600);
-          routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
+          const hostility = Math.abs(getFactionHostility(faction, cityController(targetId)));
+          if (hostility >= 30) {
+            troopsAmount = 2000 + Math.floor(Math.random() * 1500);
+            routeMode = 'official';
+          } else if (hostility >= 15) {
+            troopsAmount = 1200 + Math.floor(Math.random() * 800);
+            routeMode = Math.random() < 0.6 ? 'official' : 'raid';
+          } else {
+            troopsAmount = 600 + Math.floor(Math.random() * 600);
+            routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
+          }
         }
+
+        // 再按 routeMode 找 source
+        const sourceId = getNpcCampaignSource(faction, targetId, routeMode);
+        if (!sourceId) continue;
+
         const sourceCity = gameState.cities[sourceId];
         const actualTroops = Math.min(troopsAmount, Math.max(0, realTroops(sourceCity.garrison) - 350));
         if (actualTroops < 400) continue;
@@ -35579,14 +36469,11 @@ window.MANUAL_MAP_DATA = {
       const shuffled = [...npcFactions].sort(() => Math.random() - 0.5);
       for (const faction of shuffled) {
         if (campaignsCreated >= MAX_NPC_CAMPAIGNS_PER_TURN) break;
-        if (!shouldNpcLaunchCampaign(faction, reports)) continue;
+        if (!shouldNpcLaunchCampaign(faction, reports, options)) continue;
         const plan = createNpcCampaignPlan(faction, options);
         if (!plan) continue;
         const campaign = createNpcCampaign(plan, reports);
         if (campaign) {
-          campaign.routeMode = plan.routeMode;
-          const isHiddenMode = plan.routeMode === 'raid' || plan.routeMode === 'night' || plan.routeMode === 'stealth';
-          campaign.visibility = isHiddenMode ? 'hidden' : 'public';
           gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
           gameState.factionWarState.recentWars.push({
             attacker: faction,
@@ -35608,8 +36495,13 @@ window.MANUAL_MAP_DATA = {
             rels[faction][defender] = (rels[faction][defender] || 0) - 15;
             rels[defender][faction] = (rels[defender][faction] || 0) - 15;
           }
-          // 注意：reportNpcCampaignEvent 现在接收 campaign 对象，它在内部自动检测多方争城
-          reportNpcCampaignEvent(campaign, 'march', reports);
+          // hidden 玩家目标：不调用 reportNpcCampaignEvent（会暴露势力和目标），只显示模糊威胁
+          if (cityController(plan.target) === 'player' && campaign.visibility === 'hidden') {
+            reportNpcPlayerThreat(campaign, reports);
+          } else {
+            reportNpcCampaignEvent(campaign, 'march', reports);
+            reportNpcPlayerThreat(campaign, reports);
+          }
           maybeRevealCharactersFromWar(faction, campaign);
           campaignsCreated++;
         }
@@ -35670,6 +36562,29 @@ window.MANUAL_MAP_DATA = {
         }
       }
       reports.push({ tone, text, level: hostility >= 25 ? 'important' : 'minor' });
+    }
+
+    function reportNpcPlayerThreat(campaign, reports) {
+      if (!campaign || cityController(campaign.target) !== 'player') return;
+
+      const exposure = getPlayerExposureLevel();
+
+      // hidden 战役只给模糊提示，不暴露具体势力和目标
+      if (campaign.visibility === 'hidden') {
+        reports.push({
+          tone: exposure.protection < 20 ? 'bad' : 'warn',
+          text: '刘表庇护衰弱，边境暗流涌动，似有外部势力正在试探我方。'
+        });
+        return;
+      }
+
+      const attacker = factionName(campaign.faction);
+      const target = gameState.cities?.[campaign.target]?.name || campaign.target;
+
+      reports.push({
+        tone: exposure.protection < 20 ? 'bad' : 'warn',
+        text: '刘表庇护衰弱，' + attacker + '已将目光投向' + target + '，敌军开始向我方领地进发。'
+      });
     }
 
     function validateNpcCampaignSystem() {
@@ -35797,7 +36712,7 @@ window.MANUAL_MAP_DATA = {
       }
 
       const reports = [];
-      const finalSourceId = sourceId || getNpcCampaignSource(faction, targetCityId);
+      const finalSourceId = sourceId || getNpcCampaignSource(faction, targetCityId, routeMode);
       if (!finalSourceId) return toast(factionName(faction) + '没有可行的出兵城通往 ' + regionName(targetCityId));
       const sourceCity = gameState.cities[finalSourceId];
       const garrison = realTroops(sourceCity.garrison);
@@ -35806,9 +36721,6 @@ window.MANUAL_MAP_DATA = {
       const plan = { faction, source: finalSourceId, target: targetCityId, troops, routeMode };
       const campaign = createNpcCampaign(plan, reports);
       if (campaign) {
-        campaign.routeMode = routeMode;
-        const isHiddenMode = routeMode === 'raid' || routeMode === 'night' || routeMode === 'stealth';
-        campaign.visibility = isHiddenMode ? 'hidden' : 'public';
         gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
         gameState.factionWarState.recentWars.push({
           attacker: faction,
@@ -35840,6 +36752,128 @@ window.MANUAL_MAP_DATA = {
       } else {
         return toast('创建战役失败：路线不通或参数无效');
       }
+    }
+
+    // ========== 刘表庇护 NPC 攻击玩家 验证/测试函数 ==========
+
+    function validatePlayerThreatSystem() {
+      const exposure = getPlayerExposureLevel();
+
+      const npcTargets = Object.keys(FACTIONS)
+        .filter(f => f !== 'player')
+        .map(faction => ({
+          faction,
+          targets: getNpcAttackTargets(faction, { force: true }).map(id => ({
+            id,
+            name: gameState.cities?.[id]?.name,
+            controller: cityController(id),
+            score: playerTargetScoreForNpc(faction, id)
+          }))
+        }));
+
+      // 检测 createNpcCampaign 是否支持 routeMode
+      let createNpcCampaignSupportsRouteMode = false;
+      try {
+        const routeModeStr = createNpcCampaign.toString();
+        createNpcCampaignSupportsRouteMode =
+          routeModeStr.includes('routeMode') &&
+          routeModeStr.includes('findCampaignRoute(source, target, routeMode)');
+      } catch (e) { /* ignore */ }
+
+      // 检测 hidden 玩家目标是否会被 reportNpcCampaignEvent 泄漏
+      const activeNpcCampaigns = activeNpcCampaignsAgainstPlayer();
+      const hiddenPlayerCampaigns = activeNpcCampaigns.filter(c => c.visibility === 'hidden');
+      const hiddenPlayerCampaignLeaks = hiddenPlayerCampaigns.map(c => ({
+        id: c.id,
+        faction: c.faction,
+        source: c.source,
+        target: c.target,
+        routeMode: c.routeMode,
+        visibility: c.visibility,
+        note: 'hidden 战役已处理：reportNpcCampaignEvent 不会暴露具体势力和目标'
+      }));
+
+      // 检测旧 AI 绕过风险
+      const legacyAiBypassRisk = (() => {
+        const fn = runFactionAI.toString();
+        const hasCanNpcCheck = fn.includes('canNpcTargetPlayerCity');
+        const hasDirectCreate = fn.includes("faction: 'yuan'") || fn.includes("faction: 'cao'");
+        return {
+          hasCanNpcTargetPlayerCityCheck: hasCanNpcCheck,
+          hasDirectCreateNpcCampaign: hasDirectCreate,
+          note: hasCanNpcCheck
+            ? '旧 runFactionAI 已加入 canNpcTargetPlayerCity 检查，不会绕过新系统'
+            : '警告：runFactionAI 缺少 canNpcTargetPlayerCity 检查！'
+        };
+      })();
+
+      return {
+        protection: gameState.player?.protection,
+        independent: !!gameState.player?.independent,
+        exposure,
+        activeAgainstPlayer: activeNpcCampaigns.map(c => ({
+          id: c.id,
+          faction: c.faction,
+          source: c.source,
+          target: c.target,
+          targetName: gameState.cities?.[c.target]?.name,
+          status: c.status,
+          routeMode: c.routeMode,
+          visibility: c.visibility
+        })),
+        activeHiddenAgainstPlayer: hiddenPlayerCampaigns.map(c => ({
+          id: c.id,
+          faction: c.faction,
+          source: c.source,
+          target: c.target,
+          routeMode: c.routeMode,
+          visibility: c.visibility
+        })),
+        npcTargets,
+        createNpcCampaignSupportsRouteMode,
+        hiddenPlayerCampaignLeaks,
+        legacyAiBypassRisk
+      };
+    }
+
+    function forceNpcAttackPlayer(faction, targetId) {
+      const reports = [];
+      const targets = getNpcAttackTargets(faction, { force: true });
+      if (targetId && !targets.includes(targetId)) {
+        return { ok: false, reason: 'target-not-available', targets };
+      }
+
+      const plan = createNpcCampaignPlan(faction, { force: true, preferredTargetId: targetId });
+      if (!plan) return { ok: false, reason: 'no-plan', targets };
+
+      const campaign = createNpcCampaign(plan, reports);
+      if (campaign) {
+        gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
+        gameState.factionWarState.recentWars.push({
+          attacker: faction,
+          defender: cityController(plan.target),
+          source: plan.source,
+          target: plan.target,
+          turn: gameState.turn,
+          troops: plan.troops,
+          routeMode: plan.routeMode
+        });
+        if (gameState.factionWarState.recentWars.length > 20) {
+          gameState.factionWarState.recentWars.shift();
+        }
+        // hidden 玩家目标：不调用 reportNpcCampaignEvent（会暴露势力和目标），只显示模糊威胁
+        if (cityController(plan.target) === 'player' && campaign.visibility === 'hidden') {
+          reportNpcPlayerThreat(campaign, reports);
+        } else {
+          reportNpcCampaignEvent(campaign, 'march', reports);
+          reportNpcPlayerThreat(campaign, reports);
+        }
+        reports.forEach(r => addNews(r.tone, r.text));
+        render();
+        return { ok: true, campaign, reports };
+      }
+
+      return { ok: false, reason: 'create-failed', plan };
     }
 
     function renderCampaignRoutes() {
@@ -36142,6 +37176,10 @@ window.MANUAL_MAP_DATA = {
       window.runNpcWarAI = runNpcWarAI;
       window.validateNpcCampaignSystem = validateNpcCampaignSystem;
       window.forceNpcCampaign = forceNpcCampaign;
+      window.validatePlayerThreatSystem = validatePlayerThreatSystem;
+      window.forceNpcAttackPlayer = forceNpcAttackPlayer;
+      window.getPlayerExposureLevel = getPlayerExposureLevel;
+      window.activeNpcCampaignsAgainstPlayer = activeNpcCampaignsAgainstPlayer;
       window.reloadMapEditorRegions = () => {
         manualMapRegions = null;
         mapData = createMapData();
@@ -36314,6 +37352,10 @@ window.MANUAL_MAP_DATA = {
 
     function resetActionPoints() {
       gameState.actionPoints = getMaxActionPoints();
+      if (gameState.appointments) {
+        gameState.appointments.autoGovSpentThisTurn = 0;
+        gameState.appointments.autoMilSpentThisTurn = 0;
+      }
     }
 
     function normalizeActionPointsAfterLoad() {
@@ -37070,7 +38112,9 @@ window.MANUAL_MAP_DATA = {
       }
 
       if (filter === 'recruited') return character.status === 'recruited';
-      if (filter === 'contactable') return character.status === 'contactable';
+      if (filter === 'contactable') {
+        return ['discovered', 'contactable'].includes(character.status);
+      }
       if (filter === 'rumored') return character.status === 'rumored';
       if (filter === 'historical') return character.historical;
       if (filter === 'random') return character.randomTalent;
@@ -37085,8 +38129,15 @@ window.MANUAL_MAP_DATA = {
       const filter = gameState.characterFilter || 'all';
       const characters = visibleCharacters().filter(character => characterMatchesFilter(character, filter));
       let selected = gameState.characterRoster?.[gameState.selectedCharacterId];
-      if (!selected || isInternalPlayerCharacterId(selected.id)) {
-        selected = characters[0] || gameState.characterRoster?.liuBiao || null;
+
+      if (
+        !selected ||
+        isInternalPlayerCharacterId(selected.id) ||
+        selected.status === 'hidden' ||
+        selected.status === 'dead' ||
+        !characters.some(c => c.id === selected.id)
+      ) {
+        selected = characters[0] || null;
         gameState.selectedCharacterId = selected?.id || null;
       }
       const filters = [
@@ -37113,9 +38164,67 @@ window.MANUAL_MAP_DATA = {
       `;
     }
 
+    function renderAppointmentCard(character) {
+      if (!character || character.status !== 'recruited' || !isExternalCharacter(character)) return '';
+      const charId = character.id;
+      const existing = findCharacterAppointment(charId);
+      let statusText = '<span class="muted">未任命</span>';
+      if (existing) {
+        if (existing.type === 'city') {
+          const city = gameState.cities?.[existing.cityId];
+          const cityName = city ? city.name : existing.cityId;
+          const slotLabel = { administratorId: '主政', militaryOfficerId: '军事官', policyOfficerId: '政策官' }[existing.slot] || existing.slot;
+          statusText = `<strong>${escapeHtml(cityName)} ${slotLabel}</strong>`;
+        } else if (existing.type === 'campaign') {
+          const campaign = (gameState.campaigns || []).find(c => c.id === existing.campaignId);
+          const targetName = campaign ? regionName(campaign.target) : existing.campaignId;
+          statusText = `<strong>战役主将（${escapeHtml(targetName)}）</strong>`;
+        }
+      }
+
+      const playerCities = controlledCities().filter(c => isActiveMapCity(c.id));
+      const cityOptions = playerCities.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') || '<option value="">暂无城池</option>';
+
+      const playerCampaigns = (gameState.campaigns || []).filter(c =>
+        c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c)
+      );
+      const campaignOptions = playerCampaigns.map(c => {
+        const targetName = regionName(c.target);
+        return `<option value="${c.id}">${escapeHtml(targetName)}（${escapeHtml(c.phase)}）</option>`;
+      }).join('') || '<option value="">暂无进行中战役</option>';
+
+      return `<div class="card appointment-card" data-appointment-character="${charId}">
+        <h3>任命</h3>
+        <p>当前任命：${statusText}</p>
+        <div style="margin-top:8px">
+          <strong>任命到城市</strong>
+          <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+            <select data-appoint-city-select="${charId}" style="flex:1;min-width:120px">${cityOptions}</select>
+            <select data-appoint-slot-select="${charId}" style="flex:1;min-width:100px">
+              <option value="administratorId">主政</option>
+              <option value="militaryOfficerId">军事官</option>
+              <option value="policyOfficerId">政策官</option>
+            </select>
+          </div>
+          <button data-appoint-city-official="${charId}" style="margin-top:6px">确认任命</button>
+        </div>
+        <div style="margin-top:8px">
+          <strong>任命为主将</strong>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <select data-appoint-campaign-select="${charId}" style="flex:1">${campaignOptions}</select>
+          </div>
+          <button data-appoint-campaign-commander="${charId}" style="margin-top:6px">任命为主将</button>
+        </div>
+      </div>`;
+    }
+
     function renderCharacterDetail(character) {
-      if (!character) return '';
+      if (!character) {
+        return `<div class="card"><p style="color:var(--muted)">暂无符合当前筛选的人物。</p></div>`;
+      }
       const canTalk = !['hidden', 'rumored', 'dead', 'captured'].includes(character.status);
+      const canInvestigate = character.status === 'rumored' && (isTabUnlocked('scheme') || isTabUnlocked('inner'));
+      const investigateCost = isTabUnlocked('scheme') ? '谋略点' : '亲信点';
       const attitude = getNpcAttitudeLabel(character);
       refreshNpcPlan(character);
       const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
@@ -37137,6 +38246,13 @@ window.MANUAL_MAP_DATA = {
         <div class="button-grid">
           ${Object.entries(CONVERSATION_ACTIONS).map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`).join('')}
         </div>
+        ${character.status === 'rumored' ? `
+        <div style="margin-top:10px">
+          <button data-investigate-character="${character.id}" ${canInvestigate ? '' : 'disabled'}>
+            调查传闻${canInvestigate ? '（' + investigateCost + '）' : ''}
+          </button>
+          ${canInvestigate ? '' : '<p style="font-size:0.78rem;color:var(--muted);margin-top:4px">需要先解锁亲信或谋略系统。</p>'}
+        </div>` : ''}
       </div>
       <div class="card">
         <h3>目标与自我判断</h3>
@@ -37147,7 +38263,8 @@ window.MANUAL_MAP_DATA = {
       </div>
       <div class="card"><h3>内心状态</h3>${renderNpcAgencyCard(character)}</div>
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
-      <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>`;
+      <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>
+      ${renderAppointmentCard(character)}`;
     }
 
     function renderNpcAgencyCard(character) {
@@ -37328,9 +38445,20 @@ window.MANUAL_MAP_DATA = {
       } else if (campaign.faction !== 'player' && campaign.status === 'siege' && isControlledBy(campaign.target, 'player')) {
         buttons = `<div class="button-grid"><button data-request-relief="${campaign.id}" data-relief-city="${campaign.target}">守城求援</button><button data-diversion="${campaign.id}" data-diversion-target="${campaign.source}" style="display:none">围魏救赵</button></div>`;
       }
+      let commanderLine = '';
+      if (campaign.faction === 'player' && campaign.type === 'attack') {
+        const commander = getCampaignCommander(campaign);
+        if (commander) {
+          const mod = getCommanderBattleModifier(campaign);
+          commanderLine = `<div>主将：<strong>${escapeHtml(commander.name)}</strong> ｜ 攻势修正：x${mod.attack.toFixed(2)} <button class="ghost-btn" data-remove-campaign-commander="${campaign.id}">撤任主将</button></div>`;
+        } else {
+          commanderLine = `<div class="muted">主将：未任命</div>`;
+        }
+      }
       return `<div class="campaign-item">
         <strong>${escapeHtml(regionName(campaign.source))} → ${escapeHtml(regionName(campaign.target))}</strong>
         <div>${escapeHtml(campaign.phase)}｜ETA ${campaign.travelRemaining || 0}｜粮草 ${campaign.supply} 回合｜兵 ${fmt(realTroops(campaign.army))}</div>
+        ${commanderLine}
         <div class="campaign-progress"><i style="--value:${clamp(progress, 0, 100)}%"></i></div>
         ${buttons}
       </div>`;
@@ -37406,6 +38534,7 @@ window.MANUAL_MAP_DATA = {
             ${cityNeighborIds(city.id).map(id => `<button class="ghost-btn" data-select-city="${id}">${regionName(id)}</button>`).join('')}
           </div>
         </div>
+        ${own ? renderCityAppointmentCard(city) : ''}
         ${own ? renderOwnCityActions(city) : renderOtherCityActions(city, canAttack)}
       `;
     }
@@ -37455,6 +38584,70 @@ window.MANUAL_MAP_DATA = {
       renderHud();
       renderLeftPanel();
       renderStrategyDock();
+    }
+
+    function renderCityAppointmentCard(city) {
+      if (cityController(city.id) !== 'player') return '';
+      normalizeAppointments(gameState);
+      const officials = gameState.appointments.cityOfficials[city.id] || {};
+      const adminIds = Array.isArray(officials.administratorIds) ? officials.administratorIds : (officials.administratorId ? [officials.administratorId] : []);
+      const militaryIds = Array.isArray(officials.militaryOfficerIds) ? officials.militaryOfficerIds : (officials.militaryOfficerId ? [officials.militaryOfficerId] : []);
+      const policyId = officials.policyOfficerId || null;
+      const autoTask = gameState.appointments.autoTasks?.[city.id] || { enabled: false, militaryMode: 'none', civilMode: 'none', civilModes: [], policyMode: 'none', militaryPrepMode: 'none', militaryPrepModes: [] };
+      const autoEnabled = autoTask.enabled === true;
+      const selectOpts = (current, options) => options.map(o => `<option value="${o[0]}" ${current === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+      const checked = (list, mode) => Array.isArray(list) && list.includes(mode) ? 'checked' : '';
+      const disabled = !autoEnabled ? 'disabled' : '';
+      const officialName = id => getAppointedCharacter(id) ? getAppointedCharacter(id).name : '<span class="muted">未任命</span>';
+      const renderOfficialSlots = (title, ids, limit, role) => {
+        const rows = [];
+        for (let i = 0; i < limit; i++) {
+          const id = ids[i] || null;
+          const removeBtn = id ? ` <button class="ghost-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="${role}" data-remove-city-official-character="${id}">撤任</button>` : '';
+          rows.push(`<div><strong>${title}${i + 1} / ${limit}：</strong>${id ? officialName(id) : '<span class="muted">未任命</span>'}${removeBtn}</div>`);
+        }
+        return rows.join('');
+      };
+      const policyRemoveBtn = policyId ? ` <button class="ghost-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="policyOfficerId" data-remove-city-official-character="${policyId}">撤任</button>` : '';
+
+      const militaryOpts = [['none','不执行'],['recruit','自动征兵'],['train','自动练兵']];
+      const civilOpts = [['relief','自动赈济'],['farming','自动屯田'],['defense','自动修城防'],['order','自动维护治安']];
+      const policyOpts = [['none','不执行'],['taxLight','税率偏低'],['balanced','税粮平衡'],['grainHeavy','征粮偏高'],['publicFirst','民心优先']];
+      const prepOpts = [['drill','自动整军'],['defense','自动加固防线'],['reserve','自动部署预备队']];
+
+      return `<div class="card">
+        <h3>城政任命</h3>
+        ${renderOfficialSlots('主政官', adminIds, getCityAdministratorLimit(city), 'administratorId')}
+        ${renderOfficialSlots('军事官', militaryIds, getCityMilitaryOfficerLimit(city), 'militaryOfficerId')}
+        <div><strong>政策官：</strong>${policyId ? officialName(policyId) : '<span class="muted">未任命</span>'}${policyRemoveBtn}</div>
+        <hr style="margin:8px 0" />
+        <div style="margin-bottom:6px">
+          <label style="cursor:pointer">
+            <input type="checkbox" data-auto-task-field="enabled" data-auto-task-city="${city.id}" ${autoEnabled ? 'checked' : ''} />
+            自动治理：${autoEnabled ? '开启' : '关闭'}
+          </label>
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em">自动兵务：</span>
+          <select data-auto-task-field="militaryMode" data-auto-task-city="${city.id}" ${disabled}>
+            ${selectOpts(autoTask.militaryMode || 'none', militaryOpts)}
+          </select>
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em;display:block">自动城政：</span>
+          ${civilOpts.map(o => `<label style="display:inline-block;margin-right:8px;cursor:pointer"><input type="checkbox" data-auto-task-city="${city.id}" data-toggle-auto-mode="civilModes" data-auto-mode="${o[0]}" ${checked(autoTask.civilModes, o[0])} ${disabled} /> ${o[1]}</label>`).join('')}
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em">自动政策：</span>
+          <select data-auto-task-field="policyMode" data-auto-task-city="${city.id}" ${disabled}>
+            ${selectOpts(autoTask.policyMode || 'none', policyOpts)}
+          </select>
+        </div>
+        <div>
+          <span style="font-size:0.9em;display:block">自动军事整备：</span>
+          ${prepOpts.map(o => `<label style="display:inline-block;margin-right:8px;cursor:pointer"><input type="checkbox" data-auto-task-city="${city.id}" data-toggle-auto-mode="militaryPrepModes" data-auto-mode="${o[0]}" ${checked(autoTask.militaryPrepModes, o[0])} ${disabled} /> ${o[1]}</label>`).join('')}
+        </div>
+      </div>`;
     }
 
     function renderOwnCityActions(city) {
@@ -37756,6 +38949,10 @@ window.MANUAL_MAP_DATA = {
       `;
     }
 
+    const PUBLIC_SUPPORT_MAX_TURN_DROP = 5;
+    const NPC_PUBLIC_SUPPORT_STABLE_DROP = -0.35;
+    const NPC_PUBLIC_SUPPORT_STABLE_GAIN = 0.35;
+
     function getPublicSupportEconomyModifier(city) {
       const ps = Number(city.publicSupport || 0);
       if (ps >= 70) return { food: 1.08, tax: 1.05, recruit: 1.05, publicDelta: 0.4, orderDelta: 0.4, label: '民心稳固' };
@@ -37783,6 +38980,35 @@ window.MANUAL_MAP_DATA = {
       if (ps < 10) return '产粮、税收、征兵重挫，战时可能开城';
       if (ps < 30) return '产粮、税收、征兵下降，治安持续恶化';
       return mod.label;
+    }
+
+    function getPublicSupportStressInfo(city) {
+      return {
+        warDamage: Number(city.warDamage || 0) >= 15,
+        noFood: Number(city.food || 0) <= 0,
+        highGrain: Number(city.grainRate || 50) >= 80,
+        highTax: Number(city.taxRate || 50) >= 80,
+        underSiege: isCityUnderActiveSiege(city.id)
+      };
+    }
+
+    function hasPublicSupportRealStress(city) {
+      const s = getPublicSupportStressInfo(city);
+      return s.warDamage || s.noFood || s.highGrain || s.highTax || s.underSiege;
+    }
+
+    function normalizeNpcNaturalPublicDelta(city, eco) {
+      let delta = Number(eco.publicDelta || 0);
+
+      if (!isNpcPublicCity(city)) return delta;
+
+      const hasRealStress = hasPublicSupportRealStress(city);
+
+      if (!hasRealStress) {
+        return clamp(delta, NPC_PUBLIC_SUPPORT_STABLE_DROP, NPC_PUBLIC_SUPPORT_STABLE_GAIN);
+      }
+
+      return clamp(delta, -2, 1);
     }
 
     function calculateCityEconomy(city) {
@@ -38101,12 +39327,430 @@ window.MANUAL_MAP_DATA = {
       render();
     }
 
+    function getAutoGovBudgetLimit() {
+      const cityCount = controlledCities().length;
+      return clamp(2 + Math.floor(cityCount / 2), 2, 6);
+    }
+
+    function getAutoMilBudgetLimit() {
+      const cityCount = controlledCities().length;
+      return clamp(1 + Math.floor(cityCount / 3), 1, 4);
+    }
+
+    function canSpendAutoGovPoint(reports, city) {
+      normalizeAppointments(gameState);
+      gameState.appointments.autoGovSpentThisTurn ||= 0;
+
+      if (gameState.appointments.autoGovSpentThisTurn >= getAutoGovBudgetLimit()) {
+        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动治理跳过：本回合自动政务已达上限。' });
+        return false;
+      }
+
+      if ((gameState.actionPoints?.gov || 0) <= 0) {
+        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动治理未执行：政务点不足。' });
+        return false;
+      }
+
+      gameState.actionPoints.gov -= 1;
+      gameState.appointments.autoGovSpentThisTurn += 1;
+      return true;
+    }
+
+    function canSpendAutoMilPoint(reports, city) {
+      normalizeAppointments(gameState);
+      gameState.appointments.autoMilSpentThisTurn ||= 0;
+
+      if (gameState.appointments.autoMilSpentThisTurn >= getAutoMilBudgetLimit()) {
+        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动军事整备跳过：本回合自动军令已达上限。' });
+        return false;
+      }
+
+      if ((gameState.actionPoints?.mil || 0) <= 0) {
+        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动军事整备未执行：军令点不足。' });
+        return false;
+      }
+
+      gameState.actionPoints.mil -= 1;
+      gameState.appointments.autoMilSpentThisTurn += 1;
+      return true;
+    }
+
+    function applyAutoRecruit(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'militaryOfficerId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命军事官，自动征兵未执行。' });
+        return;
+      }
+
+      if (city.publicSupport <= 5) {
+        reports.push({ tone: 'warn', text: city.name + '民心过低，' + character.name + '暂缓征兵。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      const amount = Math.round(city.population * city.recruitBase * 0.45 * multiplier);
+      city.population = Math.max(8000, city.population - Math.round(amount * 1.1));
+      city.garrison.infantry += Math.round(amount * 0.65);
+      city.garrison.archers += Math.round(amount * 0.22);
+      city.garrison.cavalry += Math.round(amount * 0.13);
+      city.publicSupport = clamp(city.publicSupport - 1.5, 0, 100);
+      city.order = clamp(city.order - 0.8, 0, 100);
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持征兵，补充新兵 ' + fmt(amount) + '。' });
+    }
+
+    function applyAutoTrain(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'militaryOfficerId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命军事官，自动练兵未执行。' });
+        return;
+      }
+
+      if (city.food <= 0) {
+        reports.push({ tone: 'warn', text: city.name + '粮草枯竭，自动练兵未执行。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      const foodCost = Math.round(realTroops(city.garrison) * 0.42);
+      const lowFood = city.food < foodCost;
+      const effect = lowFood
+        ? 2
+        : clamp((5 + city.morale / 28 + city.level) * multiplier, 3, 14);
+      city.food = Math.max(0, city.food - foodCost);
+      city.morale = clamp(city.morale + effect, 0, 100);
+
+      if (lowFood) {
+        reports.push({ tone: 'warn', text: character.name + '在' + city.name + '主持练兵，粮草不足，训练效果降低，士气 +' + Math.round(effect) + '。' });
+      } else {
+        reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持练兵，士气 +' + Math.round(effect) + '，消耗粮草 ' + fmt(foodCost) + '。' });
+      }
+    }
+
+    function applyAutoRelief(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动赈济未执行。' });
+        return;
+      }
+
+      const costFood = Math.round(city.population / 85);
+      if (city.food < costFood) {
+        reports.push({ tone: 'warn', text: city.name + '粮草不足，自动赈济未执行。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      const effect = clamp((costFood / Math.max(600, city.population / 120)) * 1.4 + city.order / 45, 2, 9) * multiplier;
+      city.food = Math.max(0, city.food - costFood);
+      city.publicSupport = clamp(city.publicSupport + effect, 0, 100);
+      city.order = clamp(city.order + effect * 0.45, 0, 100);
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持赈济，民心回升，粮草支出 ' + fmt(costFood) + '。' });
+    }
+
+    function applyAutoFarming(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动屯田未执行。' });
+        return;
+      }
+
+      const cost = Math.round(180 + city.population / 1000);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动屯田未执行。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      city.money = Math.max(0, city.money - cost);
+      city.agriculture = clamp(city.agriculture + clamp(city.publicSupport / 24, 1.2, 4.8) * multiplier, 0, 100);
+      city.construction = '屯田';
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持屯田，短期耗费府库，长期粮食产能提高。' });
+    }
+
+    function applyAutoDefense(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动修城防未执行。' });
+        return;
+      }
+
+      const cost = Math.round(130 + city.level * 90 + city.defense * 4);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动修城防未执行。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      const labor = clamp((city.publicSupport + city.order) / 120, 0.45, 1.35);
+      const effect = clamp(city.level * 1.4 * labor * multiplier, 2, 11);
+      city.money = Math.max(0, city.money - cost);
+      city.defense = clamp(city.defense + effect, 0, 100);
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持修城防，城防 +' + Math.round(effect) + '，府库支出 ' + fmt(cost) + '。' });
+    }
+
+    function applyAutoOrder(city, reports) {
+      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动维护治安未执行。' });
+        return;
+      }
+
+      const cost = Math.round(90 + city.population / 1800);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动维护治安未执行。' });
+        return;
+      }
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      city.money = Math.max(0, city.money - cost);
+      city.order = clamp(city.order + clamp((city.level + 4) * multiplier, 3, 12), 0, 100);
+      city.publicSupport = clamp(city.publicSupport + 1.2 * multiplier, 0, 100);
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '整顿治安，豪强私斗暂歇。' });
+    }
+
+    function getCharacterCivilMultiplier(character) {
+      const s = character?.stats || {};
+      return clamp(1 + (Number(s.politics || 50) - 50) * 0.005, 0.9, 1.25);
+    }
+
+    function applyAutoReliefByOfficial(city, character, multiplier, reports) {
+      if (!character) return;
+      const costFood = Math.round(city.population / 85);
+      if (city.food < costFood) {
+        reports.push({ tone: 'warn', text: city.name + '粮草不足，自动赈济未执行。' });
+        return;
+      }
+      if (!canSpendAutoGovPoint(reports, city)) return;
+      const effect = clamp((costFood / Math.max(600, city.population / 120)) * 1.4 + city.order / 45, 2, 9) * multiplier;
+      city.food = Math.max(0, city.food - costFood);
+      city.publicSupport = clamp(city.publicSupport + effect, 0, 100);
+      city.order = clamp(city.order + effect * 0.45, 0, 100);
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动赈济，粮草支出 ' + fmt(costFood) + '。' });
+    }
+
+    function applyAutoFarmingByOfficial(city, character, multiplier, reports) {
+      if (!character) return;
+      const cost = Math.round(180 + city.population / 1000);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动屯田未执行。' });
+        return;
+      }
+      if (!canSpendAutoGovPoint(reports, city)) return;
+      city.money = Math.max(0, city.money - cost);
+      city.agriculture = clamp(city.agriculture + clamp(city.publicSupport / 24, 1.2, 4.8) * multiplier, 0, 100);
+      city.construction = '屯田';
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动屯田。' });
+    }
+
+    function applyAutoDefenseByOfficial(city, character, multiplier, reports) {
+      if (!character) return;
+      const cost = Math.round(130 + city.level * 90 + city.defense * 4);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动修城防未执行。' });
+        return;
+      }
+      if (!canSpendAutoGovPoint(reports, city)) return;
+      const labor = clamp((city.publicSupport + city.order) / 120, 0.45, 1.35);
+      const effect = clamp(city.level * 1.4 * labor * multiplier, 2, 11);
+      city.money = Math.max(0, city.money - cost);
+      city.defense = clamp(city.defense + effect, 0, 100);
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动修城防，城防 +' + Math.round(effect) + '。' });
+    }
+
+    function applyAutoOrderByOfficial(city, character, multiplier, reports) {
+      if (!character) return;
+      const cost = Math.round(90 + city.population / 1800);
+      if (city.money < cost) {
+        reports.push({ tone: 'warn', text: city.name + '府库不足，自动维护治安未执行。' });
+        return;
+      }
+      if (!canSpendAutoGovPoint(reports, city)) return;
+      city.money = Math.max(0, city.money - cost);
+      city.order = clamp(city.order + clamp((city.level + 4) * multiplier, 3, 12), 0, 100);
+      city.publicSupport = clamp(city.publicSupport + 1.2 * multiplier, 0, 100);
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动维护治安。' });
+    }
+
+    function applyAutoCivilMode(city, mode, character, reports) {
+      if (!character) return;
+      const multiplier = getCharacterCivilMultiplier(character);
+      if (mode === 'relief') applyAutoReliefByOfficial(city, character, multiplier, reports);
+      else if (mode === 'farming') applyAutoFarmingByOfficial(city, character, multiplier, reports);
+      else if (mode === 'defense') applyAutoDefenseByOfficial(city, character, multiplier, reports);
+      else if (mode === 'order') applyAutoOrderByOfficial(city, character, multiplier, reports);
+    }
+
+    function getCharacterMilitaryPrepMultiplier(character) {
+      const s = character?.stats || {};
+      return clamp(
+        1 + (Number(s.command || 50) - 50) * 0.005 + (Number(s.strategy || 50) - 50) * 0.002,
+        0.9,
+        1.3
+      );
+    }
+
+    function applyAutoMilitaryPrep(city, mode, character, reports) {
+      if (!character || !['drill', 'defense', 'reserve'].includes(mode)) return;
+      const multiplier = getCharacterMilitaryPrepMultiplier(character);
+
+      if (mode === 'drill') {
+        if (city.food < 80) {
+          reports.push({ tone: 'warn', text: city.name + '粮草不足，' + character.name + '无法自动整军。' });
+          return;
+        }
+        if (!canSpendAutoMilPoint(reports, city)) return;
+        city.food = Math.max(0, city.food - 80);
+        const gain = Math.round(5 * multiplier);
+        city.morale = clamp(city.morale + gain, 0, 100);
+        reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动整军，士气 +' + gain + '。' });
+      }
+
+      if (mode === 'defense') {
+        if (city.money < 80) {
+          reports.push({ tone: 'warn', text: city.name + '府库不足，' + character.name + '无法自动加固防线。' });
+          return;
+        }
+        if (!canSpendAutoMilPoint(reports, city)) return;
+        city.money = Math.max(0, city.money - 80);
+        const gain = Math.round(4 * multiplier);
+        city.defense = clamp(city.defense + gain, 0, 100);
+        reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动加固防线，城防 +' + gain + '。' });
+      }
+
+      if (mode === 'reserve') {
+        if (!canSpendAutoMilPoint(reports, city)) return;
+        const defenseGain = Math.round(2 * multiplier);
+        const moraleGain = Math.round(2 * multiplier);
+        city.defense = clamp(city.defense + defenseGain, 0, 100);
+        city.morale = clamp(city.morale + moraleGain, 0, 100);
+        city.reserveReady = true;
+        reports.push({ tone: 'good', text: character.name + '在' + city.name + '部署预备队，城防 +' + defenseGain + '，士气 +' + moraleGain + '。' });
+      }
+    }
+
+    function applyAutoPolicy(city, policyMode, reports) {
+      const { character } = getCityOfficialEffect(city.id, 'policyOfficerId');
+      if (!character) {
+        reports.push({ tone: 'warn', text: city.name + '未任命政策官，自动政策调整未执行。' });
+        return;
+      }
+
+      let targetTax = null;
+      let targetGrain = null;
+      let actionName = '';
+
+      if (policyMode === 'taxLight') {
+        targetTax = 38; targetGrain = 45;
+        actionName = '降税轻粮';
+      } else if (policyMode === 'balanced') {
+        targetTax = 50; targetGrain = 50;
+        actionName = '税粮平衡';
+      } else if (policyMode === 'grainHeavy') {
+        targetTax = 52; targetGrain = 65;
+        actionName = '征粮偏高';
+      } else if (policyMode === 'publicFirst') {
+        if (city.publicSupport >= 45) return; // 不需要调整
+        targetTax = 35; targetGrain = 38;
+        actionName = '民心优先';
+      }
+
+      if (targetTax === null || targetGrain === null) return;
+
+      // 如果当前值已经接近目标，不扣 gov
+      const taxDiff = Math.abs(city.taxRate - targetTax);
+      const grainDiff = Math.abs(city.grainRate - targetGrain);
+      if (taxDiff <= 2 && grainDiff <= 2) return;
+
+      if (!canSpendAutoGovPoint(reports, city)) return;
+
+      city.taxRate = targetTax;
+      city.grainRate = targetGrain;
+      normalizeCityPolicy(city);
+
+      reports.push({ tone: 'good', text: character.name + '在' + city.name + '调整政策为' + actionName + '。' });
+    }
+
+    function processAppointmentAutoTasks(reports) {
+      normalizeAppointments(gameState);
+      const autoTasks = gameState.appointments.autoTasks || {};
+
+      Object.entries(autoTasks).forEach(([cityId, task]) => {
+        if (!task || task.enabled !== true) return;
+
+        const city = gameState.cities?.[cityId];
+        if (!city || !isControlledBy(city.id, 'player')) return;
+
+        const administrators = getCityOfficials(cityId, 'administratorId');
+        const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
+        const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
+
+        if (task.militaryMode && task.militaryMode !== 'none') {
+          if (!militaryOfficers.length) {
+            reports.push({ tone: 'warn', text: city.name + '自动兵务跳过：未任命军事官。' });
+          } else {
+            if (task.militaryMode === 'recruit') applyAutoRecruit(city, reports);
+            else if (task.militaryMode === 'train') applyAutoTrain(city, reports);
+          }
+        }
+
+        const civilModes = Array.isArray(task.civilModes)
+          ? task.civilModes.filter(m => m && m !== 'none')
+          : (task.civilMode && task.civilMode !== 'none' ? [task.civilMode] : []);
+        const civilLimit = Math.min(civilModes.length, administrators.length, getCityAdministratorLimit(city));
+
+        for (let i = 0; i < civilLimit; i++) {
+          applyAutoCivilMode(city, civilModes[i], administrators[i], reports);
+        }
+        if (civilModes.length > administrators.length) {
+          reports.push({ tone: 'warn', text: city.name + '主政官不足，部分自动城政未执行。' });
+        }
+
+        if (task.policyMode && task.policyMode !== 'none') {
+          if (!policyOfficers.length) {
+            reports.push({ tone: 'warn', text: city.name + '自动政策跳过：未任命政策官。' });
+          } else {
+            applyAutoPolicy(city, task.policyMode, reports);
+          }
+        }
+
+        const militaryPrepModes = Array.isArray(task.militaryPrepModes)
+          ? task.militaryPrepModes.filter(m => m && m !== 'none')
+          : (task.militaryPrepMode && task.militaryPrepMode !== 'none' ? [task.militaryPrepMode] : []);
+        const prepLimit = Math.min(militaryPrepModes.length, militaryOfficers.length, getCityMilitaryOfficerLimit(city));
+
+        for (let i = 0; i < prepLimit; i++) {
+          applyAutoMilitaryPrep(city, militaryPrepModes[i], militaryOfficers[i], reports);
+        }
+        if (militaryPrepModes.length > militaryOfficers.length) {
+          reports.push({ tone: 'warn', text: city.name + '军事官不足，部分自动军事整备未执行。' });
+        }
+      });
+    }
+
     function endTurn() {
       if (gameState.pendingDefense) return toast('敌军来攻，必须先选择防守方针');
       if (gameState.activeModal) return toast('请先处理当前弹窗');
       const before = snapshotPlayerState();
       const reports = [];
       gameState.turnEvents = [];
+      normalizeAppointments(gameState);
+      gameState.appointments.autoGovSpentThisTurn = 0;
+      gameState.appointments.autoMilSpentThisTurn = 0;
+
+      beginPublicSupportTurnAudit();
+
+      processAppointmentAutoTasks(reports);
       processOrders(reports);
       unlockTabsByTutorialProgress();
       advanceCampaigns(reports);
@@ -38120,6 +39764,9 @@ window.MANUAL_MAP_DATA = {
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
       evaluateNpcInitiatives();
+
+      finalizePublicSupportTurnAudit(reports);
+
       unlockTabsByTutorialProgress();
       advanceDate(TURN_DAYS);
       gameState.turn += 1;
@@ -38133,6 +39780,7 @@ window.MANUAL_MAP_DATA = {
       gameState.turnSummaries.unshift(summary);
       gameState.turnSummaries = gameState.turnSummaries.slice(0, 18);
       gameState.pendingTurnSummary = summary;
+      cleanupInvalidAppointments();
       saveToStorage(false);
       gameState.lastAutoSave = Date.now();
       updateAutosaveDisplay();
@@ -38683,6 +40331,18 @@ window.MANUAL_MAP_DATA = {
       Object.values(gameState.cities || {}).forEach(city => {
         if (triggeredCount >= 3) return;
         if (isRemovedCityId(city.id)) return;
+
+        if (isNpcPublicCity(city)) {
+          const npcEligible =
+            Number(city.publicSupport || 0) <= 0 ||
+            Number(city.food || 0) <= 0 ||
+            Number(city.warDamage || 0) >= 30 ||
+            isCityUnderActiveSiege(city.id) ||
+            Number(city.grainRate || 50) >= 90;
+
+          if (!npcEligible) return;
+        }
+
         const level = getPublicUnrestLevel(city);
         if (level === 'stable') return;
         const last = unrest.lastCrisisTurnByCity[city.id] ?? -99;
@@ -38695,20 +40355,74 @@ window.MANUAL_MAP_DATA = {
       });
     }
 
+    function beginPublicSupportTurnAudit() {
+      gameState.publicSupportTurnAudit = {
+        turn: gameState.turn,
+        start: {},
+        end: {},
+        capped: []
+      };
+
+      Object.values(gameState.cities || {}).forEach(city => {
+        if (!city || isRemovedCityId(city.id)) return;
+        gameState.publicSupportTurnAudit.start[city.id] = Number(city.publicSupport || 0);
+      });
+    }
+
+    function finalizePublicSupportTurnAudit(reports) {
+      const audit = gameState.publicSupportTurnAudit;
+      if (!audit || !audit.start) return;
+
+      Object.values(gameState.cities || {}).forEach(city => {
+        if (!city || isRemovedCityId(city.id)) return;
+
+        const start = Number(audit.start[city.id] ?? city.publicSupport ?? 0);
+        const current = Number(city.publicSupport || 0);
+        const minAllowed = Math.max(0, start - PUBLIC_SUPPORT_MAX_TURN_DROP);
+
+        if (current < minAllowed) {
+          audit.capped.push({
+            cityId: city.id,
+            cityName: city.name,
+            controller: cityController(city.id),
+            start,
+            beforeCap: current,
+            afterCap: minAllowed,
+            preventedDrop: Number((minAllowed - current).toFixed(2))
+          });
+
+          city.publicSupport = minAllowed;
+        }
+
+        audit.end[city.id] = Number(city.publicSupport || 0);
+      });
+    }
+
     function processEconomy(reports) {
       Object.values(gameState.cities).filter(city => !isRemovedCityId(city.id)).forEach(city => {
         const eco = calculateCityEconomy(city);
         city.food = Math.max(0, city.food + eco.netFood);
         city.money = Math.max(0, city.money + eco.taxIncome - eco.grainCost);
-        city.publicSupport = clamp(city.publicSupport + eco.publicDelta, 0, 100);
+        let publicDelta = Number(eco.publicDelta || 0);
+
+        if (isNpcPublicCity(city)) {
+          publicDelta = normalizeNpcNaturalPublicDelta(city, eco);
+        }
+
+        city.publicSupport = clamp(city.publicSupport + publicDelta, 0, 100);
         city.order = clamp(city.order + eco.orderDelta, 0, 100);
         city.agriculture = clamp(city.agriculture + (eco.growth - 1) * 0.45 - city.warDamage * 0.006, 0, 100);
         city.commerce = clamp(city.commerce + (eco.commerceFactor - 1) * 0.55 - city.warDamage * 0.008, 0, 100);
         city.warDamage = clamp(city.warDamage - 3, 0, 100);
         if (city.food <= 0) {
           city.morale = clamp(city.morale - 7, 0, 100);
-          city.publicSupport = clamp(city.publicSupport - 4, 0, 100);
-          if (isControlledBy(city.id, 'player')) reports.push({ tone: 'bad', text: city.name + '缺粮，军心与民心同步下降。' });
+
+          const foodPublicLoss = isNpcPublicCity(city) ? 2 : 4;
+          city.publicSupport = clamp(city.publicSupport - foodPublicLoss, 0, 100);
+
+          if (isControlledBy(city.id, 'player')) {
+            reports.push({ tone: 'bad', text: city.name + '缺粮，军心与民心同步下降。' });
+          }
         }
         if (city.publicSupport < 25 && city.order < 35 && Math.random() < 0.18) {
           city.garrison.infantry = Math.max(0, city.garrison.infantry - 120);
@@ -38740,8 +40454,8 @@ window.MANUAL_MAP_DATA = {
         gameState.storyFlags.yuanDisarm = true;
         reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在“袁绍”面板选择表忠、拒绝或起兵。' });
       }
-      if (y.alert >= 84 && !gameState.storyFlags.openConflict && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
-        createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800 }, reports);
+      if (y.alert >= 84 && !gameState.storyFlags.openConflict && canNpcTargetPlayerCity('yuan', 'liyang', 'yecheng', {}) && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
+        createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800, routeMode: 'official' }, reports);
       }
       if (gameState.turn % 3 === 0 && cityController('pingyuan') === 'local') {
         if (Math.random() < 0.5) {
@@ -38752,8 +40466,8 @@ window.MANUAL_MAP_DATA = {
       }
       if (gameState.turn % 2 === 0) {
         cao.threat = clamp(cao.threat + 3, 0, 100);
-        if (isControlledBy('baima', 'player') && Math.random() < protectedNpcChance('npcAttack', 0.22)) {
-          createNpcCampaign({ faction: 'cao', source: 'guandu', target: 'baima', troops: 2100 }, reports);
+        if (isControlledBy('baima', 'player') && canNpcTargetPlayerCity('cao', 'baima', 'guandu', {}) && Math.random() < protectedNpcChance('npcAttack', 0.22)) {
+          createNpcCampaign({ faction: 'cao', source: 'guandu', target: 'baima', troops: 2100, routeMode: 'official' }, reports);
         } else {
           reports.push({ tone: 'warn', text: '曹操稳固许昌与官渡，斥候开始测绘黄河渡口。' });
         }
@@ -39238,6 +40952,34 @@ window.MANUAL_MAP_DATA = {
       return result;
     }
     window.validateNpcPlans = validateNpcPlans;
+
+    function validateCharacterContactUnlocks() {
+      const rows = Object.values(gameState.characterRoster || {})
+        .filter(c => isExternalCharacter(c))
+        .map(c => ({
+          id: c.id,
+          name: c.name,
+          status: c.status,
+          faction: c.faction,
+          canTalk: ['discovered', 'contactable', 'recruited'].includes(c.status),
+          shouldShowInvestigate: c.status === 'rumored',
+          discoveredBy: c.discoveredBy || ''
+        }));
+
+      return {
+        rumoredCharacters: rows.filter(c => c.status === 'rumored'),
+        discoveredCharacters: rows.filter(c => c.status === 'discovered'),
+        contactableStatusCharacters: rows.filter(c => c.status === 'contactable'),
+        contactableCharacters: rows.filter(c => ['discovered', 'contactable'].includes(c.status)),
+        canTalkCharacters: rows.filter(c => c.canTalk),
+        blockedRumoredCharacters: rows.filter(c => c.status === 'rumored' && !c.canTalk),
+        rows
+      };
+    }
+
+    window.promoteRumoredCharacter = promoteRumoredCharacter;
+    window.investigateCharacter = investigateCharacter;
+    window.validateCharacterContactUnlocks = validateCharacterContactUnlocks;
 
     function validateConversationAgency(characterId) {
       if (characterId && isInternalPlayerCharacterId(characterId)) {
@@ -39913,6 +41655,315 @@ window.MANUAL_MAP_DATA = {
 
     window.validateHistoricalCharacterUnlocks = validateHistoricalCharacterUnlocks;
 
+    function validateAppointmentSystem() {
+      normalizeAppointments(gameState);
+      const app = gameState.appointments;
+      const recruitedCharacters = Object.values(gameState.characterRoster || {})
+        .filter(c => c.status === 'recruited' && isExternalCharacter(c))
+        .map(c => ({ id: c.id, name: c.name, type: c.type, stats: c.stats }));
+      const allAppointedIds = new Set();
+      const duplicateAssignments = [];
+      const addAppointed = (id, location) => {
+        if (!id) return;
+        if (allAppointedIds.has(id)) duplicateAssignments.push({ characterId: id, location });
+        allAppointedIds.add(id);
+      };
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        (slots.administratorIds || []).forEach(id => addAppointed(id, 'city:' + cityId + '.administratorId'));
+        (slots.militaryOfficerIds || []).forEach(id => addAppointed(id, 'city:' + cityId + '.militaryOfficerId'));
+        addAppointed(slots.policyOfficerId, 'city:' + cityId + '.policyOfficerId');
+      }
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        addAppointed(id, 'campaign:' + campaignId);
+      }
+      const invalidCityAppointments = [];
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        const city = gameState.cities?.[cityId];
+        if (!city || !isActiveMapCity(cityId) || cityController(cityId) !== 'player') {
+          invalidCityAppointments.push({ cityId, reason: '城池无效或不属于玩家' });
+          continue;
+        }
+        const checks = [
+          ...((slots.administratorIds || []).map(id => ['administratorId', id])),
+          ...((slots.militaryOfficerIds || []).map(id => ['militaryOfficerId', id])),
+          ['policyOfficerId', slots.policyOfficerId]
+        ];
+        checks.forEach(([slot, id]) => {
+          if (!id) return;
+          const char = gameState.characterRoster?.[id];
+          const validRole = slot === 'militaryOfficerId' ? canLeadArmy(char) : canManageCity(char);
+          if (!char || isInternalPlayerCharacterId(id) || char.status !== 'recruited' || !validRole) {
+            invalidCityAppointments.push({ cityId, slot, characterId: id, reason: '人物无效' });
+          }
+        });
+      }
+      const invalidCampaignCommanders = [];
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        const campaign = (gameState.campaigns || []).find(c => c.id === campaignId);
+        if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || !isActiveCampaign(campaign)) {
+          invalidCampaignCommanders.push({ campaignId, characterId: id, reason: '战役无效' });
+          continue;
+        }
+        if (id) {
+          const char = gameState.characterRoster?.[id];
+          if (!char || isInternalPlayerCharacterId(id) || char.status !== 'recruited') {
+            invalidCampaignCommanders.push({ campaignId, characterId: id, reason: '人物无效' });
+          }
+        }
+      }
+      return {
+        appointments: app,
+        cityOfficials: app.cityOfficials,
+        campaignCommanders: app.campaignCommanders,
+        autoTasks: app.autoTasks,
+        recruitedCharacters,
+        duplicateAssignments,
+        invalidCityAppointments,
+        invalidCampaignCommanders
+      };
+    }
+    window.validateAppointmentSystem = validateAppointmentSystem;
+
+    function validateCommanderBattleModifiers() {
+      return (gameState.campaigns || [])
+        .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
+        .map(c => {
+          const commander = getCampaignCommander(c);
+          const mod = getCommanderBattleModifier(c);
+          return {
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            status: c.status,
+            commander: commander ? {
+              id: commander.id,
+              name: commander.name,
+              type: commander.type,
+              stats: commander.stats
+            } : null,
+            attackModifier: mod.attack,
+            moraleModifier: mod.morale,
+            supplyModifier: mod.supply,
+            commanderSupplyTick: c.commanderSupplyTick || 0,
+            supply: c.supply
+          };
+        });
+    }
+
+    window.validateCommanderBattleModifiers = validateCommanderBattleModifiers;
+
+    function validateCommanderCampaignActions() {
+      const active = (gameState.campaigns || [])
+        .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c));
+      return {
+        campaigns: active.map(c => {
+          const commander = getCampaignCommander(c);
+          return {
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            status: c.status,
+            phase: c.phase,
+            siegeRemaining: c.siegeRemaining,
+            supply: c.supply,
+            troops: realTroops(c.army),
+            commanderActionCooldown: c.commanderActionCooldown || 0,
+            lastCommanderActionResult: c.lastCommanderActionResult || null,
+            commander: commander ? {
+              id: commander.id,
+              name: commander.name,
+              rarity: commander.rarity,
+              type: commander.type,
+              stats: commander.stats
+            } : null
+          };
+        }),
+        zeroTroopActiveCampaigns: active
+          .filter(c => c.army && realTroops(c.army) <= 0)
+          .map(c => ({
+            campaignId: c.id,
+            status: c.status,
+            phase: c.phase,
+            troops: realTroops(c.army),
+            commanderActionCooldown: c.commanderActionCooldown || 0,
+            lastCommanderActionResult: c.lastCommanderActionResult || null
+          }))
+      };
+    }
+
+    window.validateCommanderCampaignActions = validateCommanderCampaignActions;
+
+    function validateAppointmentAutoTasks() {
+      normalizeAppointments(gameState);
+      cleanupInvalidAppointments();
+      const autoTasks = gameState.appointments.autoTasks || {};
+      const autoGovSpentThisTurn = gameState.appointments.autoGovSpentThisTurn || 0;
+      const autoMilSpentThisTurn = gameState.appointments.autoMilSpentThisTurn || 0;
+      const govPoints = gameState.actionPoints?.gov || 0;
+      const milPoints = gameState.actionPoints?.mil || 0;
+
+      const enabledCities = [];
+      const invalidAutoTasks = [];
+      const citiesWithAutoTasks = [];
+      const staleAutoTasks = [];
+      const executablePreview = [];
+      const multiCivilPreview = [];
+      const militaryPrepPreview = [];
+      const resourceWarnings = [];
+      const cityOfficialCapacity = [];
+      const invalidOfficials = [];
+      const duplicateAssignments = [];
+      const seen = new Map();
+
+      Object.entries(gameState.appointments.cityOfficials || {}).forEach(([cityId, slots]) => {
+        ['administratorIds', 'militaryOfficerIds'].forEach(field => {
+          (slots[field] || []).forEach(id => {
+            if (seen.has(id)) duplicateAssignments.push({ characterId: id, first: seen.get(id), duplicate: { cityId, field } });
+            else seen.set(id, { cityId, field });
+          });
+        });
+        if (slots.policyOfficerId) {
+          if (seen.has(slots.policyOfficerId)) duplicateAssignments.push({ characterId: slots.policyOfficerId, first: seen.get(slots.policyOfficerId), duplicate: { cityId, field: 'policyOfficerId' } });
+          else seen.set(slots.policyOfficerId, { cityId, field: 'policyOfficerId' });
+        }
+      });
+
+      Object.entries(autoTasks).forEach(([cityId, task]) => {
+        const city = gameState.cities?.[cityId];
+        const playerControlled = city ? isControlledBy(city.id, 'player') : false;
+        citiesWithAutoTasks.push({ cityId, cityName: city ? city.name : '未知', playerControlled, ...task });
+        if (!city || !playerControlled) {
+          staleAutoTasks.push({ cityId, cityName: city ? city.name : '未知', playerControlled, enabled: task.enabled, task });
+          return;
+        }
+
+        const administrators = getCityOfficials(cityId, 'administratorId');
+        const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
+        const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
+        const civilModes = Array.isArray(task.civilModes) ? task.civilModes.filter(m => m && m !== 'none') : [];
+        const militaryPrepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes.filter(m => m && m !== 'none') : [];
+        const executableCivilCount = Math.min(administrators.length, civilModes.length, getCityAdministratorLimit(city));
+        const executableMilitaryPrepCount = Math.min(militaryOfficers.length, militaryPrepModes.length, getCityMilitaryOfficerLimit(city));
+
+        cityOfficialCapacity.push({
+          cityId,
+          cityName: city.name,
+          administratorIds: administrators.map(c => c.id),
+          administratorLimit: getCityAdministratorLimit(city),
+          militaryOfficerIds: militaryOfficers.map(c => c.id),
+          militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+          policyOfficerId: policyOfficers[0]?.id || null
+        });
+
+        if (task.enabled === true) {
+          const info = {
+            cityId,
+            cityName: city.name,
+            militaryMode: task.militaryMode,
+            civilMode: task.civilMode,
+            civilModes,
+            policyMode: task.policyMode,
+            militaryPrepMode: task.militaryPrepMode,
+            militaryPrepModes,
+            administratorIds: administrators.map(c => c.id),
+            administratorLimit: getCityAdministratorLimit(city),
+            militaryOfficerIds: militaryOfficers.map(c => c.id),
+            militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+            executableCivilCount,
+            executableMilitaryPrepCount,
+            issues: []
+          };
+          if (task.militaryMode && task.militaryMode !== 'none' && !militaryOfficers.length) info.issues.push('军事官未任命');
+          if (civilModes.length && !administrators.length) info.issues.push('主政官未任命');
+          if (task.policyMode && task.policyMode !== 'none' && !policyOfficers.length) info.issues.push('政策官未任命');
+          if (militaryPrepModes.length && !militaryOfficers.length) info.issues.push('军事整备缺少军事官');
+          enabledCities.push(info);
+          if (info.issues.length) invalidAutoTasks.push(info);
+
+          executablePreview.push({
+            cityId,
+            cityName: city.name,
+            militaryMode: task.militaryMode,
+            civilModes,
+            policyMode: task.policyMode,
+            militaryPrepModes,
+            govPoints,
+            milPoints,
+            autoGovSpentThisTurn,
+            autoMilSpentThisTurn,
+            willExecute: task.militaryMode !== 'none' || civilModes.length > 0 || task.policyMode !== 'none' || militaryPrepModes.length > 0
+          });
+          multiCivilPreview.push({ cityId, cityName: city.name, civilModes, administrators: administrators.map(c => c.name), executableCivilCount });
+          militaryPrepPreview.push({ cityId, cityName: city.name, militaryPrepModes, militaryOfficers: militaryOfficers.map(c => c.name), executableMilitaryPrepCount });
+
+          civilModes.forEach(mode => {
+            const costFood = Math.round(city.population / 85);
+            const costMoney = mode === 'farming' ? Math.round(180 + city.population / 1000)
+              : mode === 'defense' ? Math.round(130 + city.level * 90 + city.defense * 4)
+              : mode === 'order' ? Math.round(90 + city.population / 1800) : 0;
+            if (mode === 'relief' && city.food < costFood) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
+            if (mode !== 'relief' && city.money < costMoney) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+          });
+          militaryPrepModes.forEach(mode => {
+            if (mode === 'drill' && city.food < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
+            if (mode === 'defense' && city.money < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+          });
+        }
+      });
+
+      return {
+        autoTasks,
+        autoGovBudgetLimit: getAutoGovBudgetLimit(),
+        autoMilBudgetLimit: getAutoMilBudgetLimit(),
+        autoGovSpentThisTurn,
+        autoMilSpentThisTurn,
+        govPoints,
+        milPoints,
+        enabledCities,
+        invalidAutoTasks,
+        staleAutoTasks,
+        executablePreview,
+        cityOfficialCapacity,
+        multiCivilPreview,
+        militaryPrepPreview,
+        resourceWarnings,
+        duplicateAssignments,
+        invalidOfficials,
+        citiesWithAutoTasks
+      };
+    }
+
+    window.validateAppointmentAutoTasks = validateAppointmentAutoTasks;
+
+    function validateMultiOfficialAutomation() {
+      normalizeAppointments(gameState);
+      return Object.values(gameState.cities || {})
+        .filter(city => isControlledBy(city.id, 'player'))
+        .map(city => {
+          const task = gameState.appointments?.autoTasks?.[city.id] || {};
+          const admins = getCityOfficials(city.id, 'administratorId');
+          const officers = getCityOfficials(city.id, 'militaryOfficerId');
+          const civilModes = Array.isArray(task.civilModes) ? task.civilModes : [];
+          const prepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes : [];
+          return {
+            cityId: city.id,
+            cityName: city.name,
+            administratorLimit: getCityAdministratorLimit(city),
+            administrators: admins.map(c => c.name),
+            civilModes,
+            executableCivilCount: Math.min(admins.length, civilModes.length, getCityAdministratorLimit(city)),
+            militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+            militaryOfficers: officers.map(c => c.name),
+            militaryPrepModes: prepModes,
+            executableMilitaryPrepCount: Math.min(officers.length, prepModes.length, getCityMilitaryOfficerLimit(city)),
+            autoGovBudgetLimit: getAutoGovBudgetLimit(),
+            autoMilBudgetLimit: getAutoMilBudgetLimit()
+          };
+        });
+    }
+
+    window.validateMultiOfficialAutomation = validateMultiOfficialAutomation;
+
     function migrateGameState(loaded) {
       const migrated = loaded && typeof loaded === 'object' ? loaded : {};
       migrated.schemaVersion ||= 4;
@@ -39960,6 +42011,7 @@ window.MANUAL_MAP_DATA = {
           c.supply = 0;
         }
       });
+      normalizeAppointments(migrated);
       return purgeRemovedCitiesFromState(migrated);
     }
 
@@ -40030,11 +42082,15 @@ window.MANUAL_MAP_DATA = {
           c.supply = 0;
         }
       });
+      normalizeAppointments(normalized);
+      cleanupInvalidAppointments(normalized);
       return ensureCharacterSystemState(normalized);
     }
 
     function validatePublicSupportSystem() {
       const unrest = gameState.publicUnrestState || {};
+      const audit = gameState.publicSupportTurnAudit || {};
+      const capped = audit.capped || [];
       const rows = Object.values(gameState.cities || {}).map(city => {
         const eco = calculateCityEconomy(city);
         const mod = getPublicSupportEconomyModifier(city);
@@ -40056,6 +42112,14 @@ window.MANUAL_MAP_DATA = {
           taxIncome: eco.taxIncome,
           crisisLevel: getPublicUnrestLevel(city),
           initialCalculatedSupport: calculateInitialPublicSupport(city),
+          turnStartPublicSupport: audit.start?.[city.id] ?? null,
+          turnEndPublicSupport: audit.end?.[city.id] ?? null,
+          turnDelta: audit.start?.[city.id] != null
+            ? Number((Number(city.publicSupport || 0) - Number(audit.start[city.id])).toFixed(2))
+            : null,
+          wasCappedThisTurn: capped.some(x => x.cityId === city.id),
+          stressInfo: getPublicSupportStressInfo(city),
+          hasRealStress: hasPublicSupportRealStress(city),
           rebellion: rebellion ? {
             turn: rebellion.turn,
             rebelTroops: rebellion.rebelTroops,
@@ -40070,6 +42134,46 @@ window.MANUAL_MAP_DATA = {
       });
       console.table(rows);
       return rows;
+    }
+
+    function validatePublicSupportTurnCap() {
+      const audit = gameState.publicSupportTurnAudit || {};
+      const capped = audit.capped || [];
+
+      const rows = Object.values(gameState.cities || {}).map(city => {
+        const start = audit.start?.[city.id];
+        const end = audit.end?.[city.id] ?? city.publicSupport;
+        const controller = cityController(city.id);
+        const hasRealStress = hasPublicSupportRealStress(city);
+
+        return {
+          id: city.id,
+          name: city.name,
+          controller,
+          start,
+          end,
+          delta: start == null ? null : Number((end - start).toFixed(2)),
+          hasRealStress,
+          stressInfo: getPublicSupportStressInfo(city),
+          wasCappedThisTurn: capped.some(x => x.cityId === city.id),
+          violatesCap: start != null && end < start - PUBLIC_SUPPORT_MAX_TURN_DROP
+        };
+      });
+
+      return {
+        maxDrop: PUBLIC_SUPPORT_MAX_TURN_DROP,
+        capped,
+        violations: rows.filter(r => r.violatesCap),
+        npcUnexpectedDrops: rows.filter(r =>
+          r.controller !== 'player' &&
+          r.controller !== 'local' &&
+          r.delta != null &&
+          r.delta < -1 &&
+          !r.hasRealStress &&
+          !r.wasCappedThisTurn
+        ),
+        rows
+      };
     }
 
     function setCityPublicSupport(cityId, value) {
@@ -40091,6 +42195,7 @@ window.MANUAL_MAP_DATA = {
     }
 
     window.validatePublicSupportSystem = validatePublicSupportSystem;
+    window.validatePublicSupportTurnCap = validatePublicSupportTurnCap;
     window.setCityPublicSupport = setCityPublicSupport;
     window.forcePublicSupportCrisis = forcePublicSupportCrisis;
 
@@ -41039,6 +43144,11 @@ window.MANUAL_MAP_DATA = {
           startNpcConversation(conversation.getAttribute('data-character'), conversation.getAttribute('data-conversation'));
           return;
         }
+        const investigateBtn = event.target.closest('[data-investigate-character]');
+        if (investigateBtn) {
+          investigateCharacter(investigateBtn.getAttribute('data-investigate-character'));
+          return;
+        }
         const relief = event.target.closest('[data-request-relief]');
         if (relief) {
           requestRelief(relief.getAttribute('data-request-relief'), relief.getAttribute('data-relief-city'));
@@ -41190,6 +43300,44 @@ window.MANUAL_MAP_DATA = {
           queueInner(inner.getAttribute('data-inner-action'));
           return;
         }
+        const appointCityBtn = event.target.closest('[data-appoint-city-official]');
+        if (appointCityBtn) {
+          const charId = appointCityBtn.getAttribute('data-appoint-city-official');
+          const card = appointCityBtn.closest('.appointment-card');
+          if (card) {
+            const citySelect = card.querySelector('[data-appoint-city-select="' + charId + '"]');
+            const slotSelect = card.querySelector('[data-appoint-slot-select="' + charId + '"]');
+            if (citySelect && slotSelect) {
+              appointCityOfficial(citySelect.value, slotSelect.value, charId);
+            }
+          }
+          return;
+        }
+        const removeCityBtn = event.target.closest('[data-remove-city-official]');
+        if (removeCityBtn) {
+          const cityId = removeCityBtn.getAttribute('data-remove-city-official-city');
+          const slot = removeCityBtn.getAttribute('data-remove-city-official-slot');
+          const characterId = removeCityBtn.getAttribute('data-remove-city-official-character');
+          removeCityOfficial(cityId, slot, characterId);
+          return;
+        }
+        const appointCampaignBtn = event.target.closest('[data-appoint-campaign-commander]');
+        if (appointCampaignBtn) {
+          const charId = appointCampaignBtn.getAttribute('data-appoint-campaign-commander');
+          const card = appointCampaignBtn.closest('.appointment-card');
+          if (card) {
+            const campaignSelect = card.querySelector('[data-appoint-campaign-select="' + charId + '"]');
+            if (campaignSelect) {
+              appointCampaignCommander(campaignSelect.value, charId);
+            }
+          }
+          return;
+        }
+        const removeCampaignBtn = event.target.closest('[data-remove-campaign-commander]');
+        if (removeCampaignBtn) {
+          removeCampaignCommander(removeCampaignBtn.getAttribute('data-remove-campaign-commander'));
+          return;
+        }
         const yuan = event.target.closest('[data-yuan-action]');
         if (yuan) {
           performYuanAction(yuan.getAttribute('data-yuan-action'));
@@ -41313,6 +43461,24 @@ window.MANUAL_MAP_DATA = {
         if (transferField && gameState.draftTransfer) {
           gameState.draftTransfer[transferField.getAttribute('data-transfer-field')] = transferField.value;
           renderRightPanel();
+        }
+        const autoTaskField = event.target.closest('[data-auto-task-field]');
+        if (autoTaskField) {
+          const cityId = autoTaskField.getAttribute('data-auto-task-city');
+          const field = autoTaskField.getAttribute('data-auto-task-field');
+          const value = autoTaskField.type === 'checkbox'
+            ? autoTaskField.checked
+            : autoTaskField.value;
+          setCityAutoTask(cityId, field, value);
+          return;
+        }
+        const toggleAutoMode = event.target.closest('[data-toggle-auto-mode]');
+        if (toggleAutoMode) {
+          const cityId = toggleAutoMode.getAttribute('data-auto-task-city');
+          const field = toggleAutoMode.getAttribute('data-toggle-auto-mode');
+          const mode = toggleAutoMode.getAttribute('data-auto-mode');
+          toggleCityAutoTaskMode(cityId, field, mode);
+          return;
         }
         const plannerField = event.target.closest('[data-military-planner-field]');
         if (plannerField) {
