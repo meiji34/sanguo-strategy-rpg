@@ -31323,6 +31323,10 @@ window.MANUAL_MAP_DATA = {
     const MAP_SIZE = { width: 1448, height: 1086 };
     const TURN_DAYS = 5;
     const SAVE_KEY = 'luanshi_zhiqi_v4';
+    const BACKEND_SESSION_KEY = 'sanguo_backend_session_v1';
+    const BACKEND_DEVICE_KEY = 'sanguo_backend_device_id_v1';
+    const BACKEND_SAVE_SLOT = 'default';
+    const BACKEND_API_BASE_URL = window.SANGUO_API_BASE_URL || (window.location.protocol === 'file:' ? 'http://localhost:3001' : '');
     const GAME_SCHEMA_VERSION = 5;
     const MAP_EDITOR_STORAGE_KEY = 'sg-map-editor-data:v1';
 
@@ -37606,6 +37610,180 @@ window.MANUAL_MAP_DATA = {
       }
     }
 
+    function backendApiUrl(path) {
+      const base = String(BACKEND_API_BASE_URL || '').replace(/\/+$/, '');
+      return base ? base + path : path;
+    }
+
+    function readBackendSession() {
+      try {
+        return JSON.parse(localStorage.getItem(BACKEND_SESSION_KEY) || 'null');
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function writeBackendSession(session) {
+      localStorage.setItem(BACKEND_SESSION_KEY, JSON.stringify(session));
+    }
+
+    function getBackendDeviceId() {
+      let id = localStorage.getItem(BACKEND_DEVICE_KEY);
+      if (!id) {
+        id = (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+        localStorage.setItem(BACKEND_DEVICE_KEY, id);
+      }
+      return id;
+    }
+
+    async function backendFetch(path, options = {}, meta = {}) {
+      const headers = Object.assign({}, options.headers || {});
+      if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+      if (!meta.skipAuth) {
+        const session = await ensureBackendSession();
+        headers.Authorization = 'Bearer ' + session.token;
+      }
+      const response = await fetch(backendApiUrl(path), Object.assign({}, options, { headers }));
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch (error) {
+        payload = { raw: text };
+      }
+      if (!response.ok) {
+        if (response.status === 401 && !meta.skipAuth && !meta.retry) {
+          localStorage.removeItem(BACKEND_SESSION_KEY);
+          return backendFetch(path, options, Object.assign({}, meta, { retry: true }));
+        }
+        const error = new Error(payload?.message || payload?.error || ('HTTP ' + response.status));
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      return payload;
+    }
+
+    async function ensureBackendSession() {
+      const existing = readBackendSession();
+      if (existing?.token && (!existing.expiresAt || Date.parse(existing.expiresAt) > Date.now() + 60000)) {
+        return existing;
+      }
+      const payload = await backendFetch('/api/auth/guest', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: getBackendDeviceId(),
+          displayName: gameState?.player?.name || 'Player'
+        })
+      }, { skipAuth: true });
+      writeBackendSession(payload);
+      return payload;
+    }
+
+    function buildBackendSaveSummary() {
+      return {
+        turn: gameState.turn,
+        playerName: gameState.player?.name || '',
+        playerIdentity: gameState.player?.identity || '',
+        selectedCityId: gameState.selectedCityId || null,
+        savedAt: new Date().toISOString()
+      };
+    }
+
+    async function saveToBackend(show) {
+      const payload = await backendFetch('/api/saves/' + BACKEND_SAVE_SLOT, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: gameState.player?.name || 'Default Save',
+          clientVersion: 'prototype-v1',
+          summary: buildBackendSaveSummary(),
+          saveData: gameState
+        })
+      });
+      if (show) toast('\u8fdb\u5ea6\u5df2\u4fdd\u5b58\u5230\u6570\u636e\u5e93');
+      return payload;
+    }
+
+    async function loadFromBackend(show) {
+      const payload = await backendFetch('/api/saves/' + BACKEND_SAVE_SLOT);
+      const loaded = payload?.saveData;
+      if (!loaded) return null;
+      if (!sanitizeLoadedData(loaded)) {
+        if (show) toast('\u6570\u636e\u5e93\u5b58\u6863\u5f02\u5e38\uff0c\u5df2\u56de\u9000\u4e3a\u521d\u59cb\u72b6\u6001');
+        return createInitialState();
+      }
+      if (show) toast('\u5df2\u4ece\u6570\u636e\u5e93\u8bfb\u53d6\u8fdb\u5ea6');
+      return normalizeLoaded(loaded);
+    }
+
+    async function saveGameProgress(show) {
+      saveToStorage(false);
+      try {
+        await saveToBackend(show);
+        return true;
+      } catch (error) {
+        console.warn('Backend save failed, using local storage:', error);
+        if (show) toast('\u540e\u7aef\u4e0d\u53ef\u7528\uff0c\u5df2\u4fdd\u5b58\u5230\u672c\u5730');
+        return false;
+      }
+    }
+
+    async function loadGameProgress(show) {
+      try {
+        const remote = await loadFromBackend(show);
+        if (remote) return remote;
+      } catch (error) {
+        console.warn('Backend load failed, using local storage:', error);
+      }
+      return loadFromStorage(show);
+    }
+
+    function compactRemoteDialogueContext(context) {
+      const npc = context.npc || {};
+      return {
+        conversationType: context.conversationType,
+        player: {
+          name: context.player?.name,
+          identity: context.player?.identity,
+          ambition: context.player?.ambition,
+          protection: context.player?.protection
+        },
+        npc: {
+          id: npc.id,
+          name: npc.name,
+          faction: npc.faction,
+          status: npc.status,
+          currentPlan: npc.currentPlan,
+          trustPlayer: npc.trustPlayer,
+          suspicionOfPlayer: npc.suspicionOfPlayer,
+          fearPlayer: npc.fearPlayer,
+          respectPlayer: npc.respectPlayer,
+          recruitmentDifficulty: npc.recruitmentDifficulty,
+          personality: npc.personality,
+          stats: npc.stats,
+          npcAgency: npc.npcAgency
+        },
+        gameState: { turn: context.gameState?.turn },
+        recentMemory: Array.isArray(context.recentMemory) ? context.recentMemory.slice(0, 6) : [],
+        persona: context.persona,
+        strategicContext: context.strategicContext,
+        availableIntentions: context.availableIntentions
+      };
+    }
+
+    if (!window.remoteLLMAdapter?.generateNpcDialogue) {
+      window.__initLLMAdapter?.({
+        generateNpcDialogue: async context => {
+        const payload = await backendFetch('/api/ai/dialogue', {
+          method: 'POST',
+          body: JSON.stringify(compactRemoteDialogueContext(context))
+        });
+        return payload.dialogue || payload;
+        }
+      });
+    }
+    if (window.USE_REMOTE_LLM === undefined) window.USE_REMOTE_LLM = true;
+
     function purgeRemovedCitiesFromState(state) {
       if (!state) return state;
 
@@ -38487,7 +38665,7 @@ window.MANUAL_MAP_DATA = {
     }
 
     function bindEvents() {
-      document.addEventListener('click', event => {
+      document.addEventListener('click', async event => {
         const identity = event.target.closest('[data-identity]');
         if (identity) {
           characterDraft.identity = identity.getAttribute('data-identity');
@@ -38628,9 +38806,9 @@ window.MANUAL_MAP_DATA = {
         const top = event.target.closest('[data-top]');
         if (top) {
           const action = top.getAttribute('data-top');
-          if (action === 'save') saveToStorage(true);
+          if (action === 'save') await saveGameProgress(true);
           if (action === 'load') {
-            const loaded = loadFromStorage(true);
+            const loaded = await loadGameProgress(true);
             if (loaded) {
               gameState = loaded;
               characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
