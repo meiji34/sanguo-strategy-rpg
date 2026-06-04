@@ -1116,15 +1116,15 @@
     }
 
     .main-menu {
-      --menu-ink: rgba(3, 7, 6, 0.68);
-      --menu-paper: rgba(201, 192, 166, 0.16);
+      --menu-ink: rgba(2, 4, 4, 0.78);
+      --menu-paper: rgba(176, 174, 153, 0.08);
       position: fixed;
       inset: 0;
       z-index: 160;
       display: none;
       overflow: hidden;
       color: #eee8d7;
-      background: #070b09;
+      background: #020303;
     }
 
     .main-menu.show {
@@ -1135,7 +1135,7 @@
       position: absolute;
       inset: -3%;
       overflow: hidden;
-      background: #0b100d;
+      background: #020303;
     }
 
     .main-menu-backdrop::before,
@@ -1148,21 +1148,21 @@
     }
 
     .main-menu-backdrop::before {
-      opacity: 0.26;
-      filter: blur(24px);
+      opacity: 0.14;
+      filter: blur(28px);
       mix-blend-mode: screen;
       background:
-        radial-gradient(ellipse at 28% 46%, rgba(214, 223, 205, 0.18), transparent 34%),
-        radial-gradient(ellipse at 64% 58%, rgba(180, 192, 171, 0.13), transparent 28%),
-        linear-gradient(90deg, transparent, rgba(198, 208, 188, 0.12), transparent);
+        radial-gradient(ellipse at 28% 46%, rgba(148, 162, 151, 0.16), transparent 34%),
+        radial-gradient(ellipse at 64% 58%, rgba(128, 142, 132, 0.12), transparent 28%),
+        linear-gradient(90deg, transparent, rgba(155, 166, 151, 0.1), transparent);
       animation: menuMistDrift 12s ease-in-out infinite alternate;
     }
 
     .main-menu-backdrop::after {
-      opacity: 0.2;
+      opacity: 0.11;
       background:
-        linear-gradient(115deg, transparent 0%, rgba(237, 232, 208, 0.14) 36%, transparent 58%),
-        radial-gradient(circle at 58% 38%, rgba(229, 225, 202, 0.1), transparent 22%);
+        linear-gradient(115deg, transparent 0%, rgba(187, 185, 166, 0.11) 36%, transparent 58%),
+        radial-gradient(circle at 58% 38%, rgba(185, 186, 168, 0.08), transparent 22%);
       transform: translateX(-18%);
       animation: menuLightSweep 18s ease-in-out infinite;
     }
@@ -1178,7 +1178,7 @@
       opacity: 0;
       background-position: center;
       background-size: cover;
-      filter: grayscale(0.48) sepia(0.18) contrast(1.08) brightness(0.78);
+      filter: grayscale(0.82) sepia(0.06) saturate(0.62) contrast(1.14) brightness(0.58);
       will-change: transform, opacity;
     }
 
@@ -1187,8 +1187,9 @@
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(90deg, rgba(1, 4, 3, 0.93) 0%, rgba(3, 7, 6, 0.71) 34%, rgba(4, 8, 7, 0.37) 65%, rgba(1, 3, 2, 0.74) 100%),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.25), transparent 43%, rgba(0, 0, 0, 0.61));
+        radial-gradient(circle at 56% 47%, rgba(12, 20, 19, 0.32), transparent 38%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.97) 0%, rgba(2, 5, 5, 0.81) 34%, rgba(5, 9, 8, 0.58) 65%, rgba(0, 0, 0, 0.86) 100%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.52), transparent 42%, rgba(0, 0, 0, 0.76));
     }
 
     .menu-scene-one {
@@ -1216,7 +1217,7 @@
     }
 
     .menu-paper {
-      opacity: 0.28;
+      opacity: 0.18;
       background: url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
       mix-blend-mode: multiply;
     }
@@ -1227,11 +1228,11 @@
       inset: 0;
       pointer-events: none;
       background:
-        radial-gradient(circle at 72% 42%, rgba(203, 201, 175, 0.16), transparent 18%),
-        radial-gradient(circle at 56% 72%, rgba(132, 142, 119, 0.13), transparent 23%),
-        linear-gradient(90deg, rgba(0, 0, 0, 0.59), transparent 64%),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.18), transparent 45%, rgba(0, 0, 0, 0.52));
-      box-shadow: inset 0 0 150px rgba(0, 0, 0, 0.76);
+        radial-gradient(circle at 70% 42%, rgba(155, 158, 142, 0.08), transparent 18%),
+        radial-gradient(circle at 56% 72%, rgba(92, 105, 98, 0.1), transparent 23%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.72), transparent 62%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.28), transparent 44%, rgba(0, 0, 0, 0.64));
+      box-shadow: inset 0 0 190px rgba(0, 0, 0, 0.88);
     }
 
     .main-menu-smoke {
@@ -1240,9 +1241,9 @@
       height: 42vw;
       border-radius: 50%;
       pointer-events: none;
-      opacity: 0.22;
-      filter: blur(44px);
-      background: radial-gradient(circle, rgba(192, 199, 186, 0.42), transparent 67%);
+      opacity: 0.16;
+      filter: blur(48px);
+      background: radial-gradient(circle, rgba(154, 166, 153, 0.32), transparent 67%);
       animation: smokeFloat 16s ease-in-out infinite alternate;
     }
 
@@ -1266,25 +1267,25 @@
 
     .menu-era,
     .menu-footer {
-      color: rgba(231, 229, 211, 0.72);
+      color: rgba(221, 221, 206, 0.68);
       font-size: 14px;
       letter-spacing: 0.28em;
     }
 
     .main-menu h1 {
       margin: 16px 0 0;
-      color: #e5e4d7;
+      color: #dbded2;
       font-family: "LongCang", "STKaiti", "KaiTi", serif;
       font-size: clamp(88px, 13vw, 164px);
       font-weight: 400;
       letter-spacing: 0.05em;
       line-height: 0.92;
-      text-shadow: 0 0 22px rgba(228, 232, 216, 0.16), 0 10px 22px rgba(0, 0, 0, 0.82);
+      text-shadow: 0 0 20px rgba(225, 226, 210, 0.1), 0 10px 24px rgba(0, 0, 0, 0.9);
     }
 
     .menu-subtitle {
       margin: 15px 0 0 6px;
-      color: rgba(232, 231, 215, 0.82);
+      color: rgba(218, 220, 206, 0.76);
       font-family: "LongCang", "STKaiti", "KaiTi", serif;
       font-size: clamp(27px, 3.2vw, 42px);
       letter-spacing: 0.18em;
@@ -1294,7 +1295,7 @@
       width: min(360px, 72vw);
       height: 1px;
       margin: 26px 0 19px 6px;
-      background: linear-gradient(90deg, rgba(223, 225, 210, 0.62), transparent);
+      background: linear-gradient(90deg, rgba(205, 209, 194, 0.42), transparent);
     }
 
     .menu-actions {
@@ -1306,26 +1307,26 @@
 
     .menu-action {
       min-height: 48px;
-      border-color: rgba(214, 216, 200, 0.24);
+      border-color: rgba(200, 205, 190, 0.18);
       border-radius: 1px;
-      color: rgba(241, 239, 224, 0.9);
-      background: linear-gradient(90deg, rgba(21, 29, 25, 0.86), rgba(17, 23, 20, 0.28));
-      box-shadow: inset 0 0 20px rgba(231, 232, 213, 0.025), 0 12px 22px rgba(0, 0, 0, 0.24);
+      color: rgba(222, 224, 210, 0.86);
+      background: linear-gradient(90deg, rgba(13, 18, 16, 0.88), rgba(11, 15, 14, 0.34));
+      box-shadow: inset 0 0 20px rgba(219, 220, 203, 0.018), 0 12px 22px rgba(0, 0, 0, 0.32);
       text-align: left;
       padding: 10px 18px;
       letter-spacing: 0.26em;
     }
 
     .menu-action-primary {
-      border-color: rgba(225, 227, 209, 0.48);
-      background: linear-gradient(90deg, rgba(65, 76, 67, 0.78), rgba(25, 33, 29, 0.34));
+      border-color: rgba(214, 217, 201, 0.34);
+      background: linear-gradient(90deg, rgba(42, 51, 45, 0.68), rgba(14, 19, 17, 0.42));
     }
 
     .menu-save-status {
       width: min(430px, 86vw);
       min-height: 24px;
       margin: 18px 0 0 7px;
-      color: rgba(215, 215, 198, 0.58);
+      color: rgba(198, 202, 188, 0.52);
       font-size: 13px;
       line-height: 1.65;
     }
@@ -1335,7 +1336,7 @@
       right: clamp(22px, 5vw, 72px);
       bottom: 26px;
       z-index: 2;
-      color: rgba(226, 224, 207, 0.46);
+      color: rgba(210, 212, 198, 0.42);
       writing-mode: vertical-rl;
     }
 
