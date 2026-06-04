@@ -31614,6 +31614,15 @@ window.MANUAL_MAP_DATA = {
       render();
     }
 
+    function getUniqueAutoTaskModes(task, field, legacyField, allowedModes) {
+      const list = Array.isArray(task?.[field]) && task[field].length
+        ? task[field]
+        : (task?.[legacyField] && task[legacyField] !== 'none' ? [task[legacyField]] : []);
+      return [...new Set(list)]
+        .filter(mode => mode && mode !== 'none')
+        .filter(mode => !allowedModes || allowedModes.includes(mode));
+    }
+
     function canBeAppointed(character) {
       return character
         && isExternalCharacter(character)
@@ -32073,6 +32082,7 @@ window.MANUAL_MAP_DATA = {
 
       gameState.selectedCharacterId = characterId;
       gameState.characterFilter = 'contactable';
+      gameState.characterProfileId = characterId;
 
       addCharacterMemory?.(character, {
         turn: gameState.turn,
@@ -33466,6 +33476,7 @@ window.MANUAL_MAP_DATA = {
         characterRoster: createCharacterRoster(randomTalentSeed),
         characterDiscovery: {},
         selectedCharacterId: 'liuBiao',
+        characterProfileId: null,
         characterFilter: 'all',
         conversations: [],
         npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
@@ -38128,6 +38139,18 @@ window.MANUAL_MAP_DATA = {
     function renderCharacterPanel() {
       const filter = gameState.characterFilter || 'all';
       const characters = visibleCharacters().filter(character => characterMatchesFilter(character, filter));
+      if (gameState.characterProfileId) {
+        const profile = gameState.characterRoster?.[gameState.characterProfileId];
+        if (
+          profile &&
+          isExternalCharacter(profile) &&
+          profile.status !== 'hidden' &&
+          profile.status !== 'dead'
+        ) {
+          return renderCharacterProfilePage(profile);
+        }
+        gameState.characterProfileId = null;
+      }
       let selected = gameState.characterRoster?.[gameState.selectedCharacterId];
 
       if (
@@ -38154,13 +38177,12 @@ window.MANUAL_MAP_DATA = {
           <p>眼下只展开桂阳与荆州人物圈。远方名士会随着侦察、来信和重大事件逐步进入视野。</p>
           <div class="character-toolbar">${filters.map(([id, label]) => `<button class="ghost-btn ${filter === id ? 'active' : ''}" data-character-filter="${id}">${label}</button>`).join('')}</div>
           <div class="character-grid">${characters.map(character => `
-            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-select-character="${character.id}">
+            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-open-character-profile="${character.id}">
               <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
               <div class="character-card-body"><strong>${escapeHtml(character.name)}</strong><small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small><small>${escapeHtml(character.status)}</small></div>
             </article>
           `).join('') || '<div class="turn-event-item">当前筛选下暂无人物。</div>'}</div>
         </div>
-        ${renderCharacterDetail(selected)}
       `;
     }
 
@@ -38218,7 +38240,7 @@ window.MANUAL_MAP_DATA = {
       </div>`;
     }
 
-    function renderCharacterDetail(character) {
+    function renderCharacterProfilePage(character) {
       if (!character) {
         return `<div class="card"><p style="color:var(--muted)">暂无符合当前筛选的人物。</p></div>`;
       }
@@ -38230,8 +38252,14 @@ window.MANUAL_MAP_DATA = {
       const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
       const style = character.speechStyle || {};
       return `<div class="card">
-        <h2>${escapeHtml(character.name)}</h2>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0">${escapeHtml(character.name)}</h2>
+          <button class="ghost-btn" data-close-character-profile="1">返回名录</button>
+        </div>
         <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
+      </div>
+      <div class="card">
+        <h3>人物简介</h3>
         <p>${escapeHtml(character.summary)}</p>
         <div class="kv-grid">
           <div class="kv"><span>统率</span><strong>${character.stats.command}</strong></div>
@@ -38265,6 +38293,10 @@ window.MANUAL_MAP_DATA = {
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
       <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>
       ${renderAppointmentCard(character)}`;
+    }
+
+    function renderCharacterDetail(character) {
+      return renderCharacterProfilePage(character);
     }
 
     function renderNpcAgencyCard(character) {
@@ -39328,23 +39360,16 @@ window.MANUAL_MAP_DATA = {
     }
 
     function getAutoGovBudgetLimit() {
-      const cityCount = controlledCities().length;
-      return clamp(2 + Math.floor(cityCount / 2), 2, 6);
+      return Infinity;
     }
 
     function getAutoMilBudgetLimit() {
-      const cityCount = controlledCities().length;
-      return clamp(1 + Math.floor(cityCount / 3), 1, 4);
+      return Infinity;
     }
 
     function canSpendAutoGovPoint(reports, city) {
       normalizeAppointments(gameState);
       gameState.appointments.autoGovSpentThisTurn ||= 0;
-
-      if (gameState.appointments.autoGovSpentThisTurn >= getAutoGovBudgetLimit()) {
-        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动治理跳过：本回合自动政务已达上限。' });
-        return false;
-      }
 
       if ((gameState.actionPoints?.gov || 0) <= 0) {
         reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动治理未执行：政务点不足。' });
@@ -39359,11 +39384,6 @@ window.MANUAL_MAP_DATA = {
     function canSpendAutoMilPoint(reports, city) {
       normalizeAppointments(gameState);
       gameState.appointments.autoMilSpentThisTurn ||= 0;
-
-      if (gameState.appointments.autoMilSpentThisTurn >= getAutoMilBudgetLimit()) {
-        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动军事整备跳过：本回合自动军令已达上限。' });
-        return false;
-      }
 
       if ((gameState.actionPoints?.mil || 0) <= 0) {
         reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动军事整备未执行：军令点不足。' });
@@ -39704,9 +39724,7 @@ window.MANUAL_MAP_DATA = {
           }
         }
 
-        const civilModes = Array.isArray(task.civilModes)
-          ? task.civilModes.filter(m => m && m !== 'none')
-          : (task.civilMode && task.civilMode !== 'none' ? [task.civilMode] : []);
+        const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
         const civilLimit = Math.min(civilModes.length, administrators.length, getCityAdministratorLimit(city));
 
         for (let i = 0; i < civilLimit; i++) {
@@ -39724,9 +39742,7 @@ window.MANUAL_MAP_DATA = {
           }
         }
 
-        const militaryPrepModes = Array.isArray(task.militaryPrepModes)
-          ? task.militaryPrepModes.filter(m => m && m !== 'none')
-          : (task.militaryPrepMode && task.militaryPrepMode !== 'none' ? [task.militaryPrepMode] : []);
+        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
         const prepLimit = Math.min(militaryPrepModes.length, militaryOfficers.length, getCityMilitaryOfficerLimit(city));
 
         for (let i = 0; i < prepLimit; i++) {
@@ -41840,8 +41856,8 @@ window.MANUAL_MAP_DATA = {
         const administrators = getCityOfficials(cityId, 'administratorId');
         const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
         const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
-        const civilModes = Array.isArray(task.civilModes) ? task.civilModes.filter(m => m && m !== 'none') : [];
-        const militaryPrepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes.filter(m => m && m !== 'none') : [];
+        const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
+        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
         const executableCivilCount = Math.min(administrators.length, civilModes.length, getCityAdministratorLimit(city));
         const executableMilitaryPrepCount = Math.min(militaryOfficers.length, militaryPrepModes.length, getCityMilitaryOfficerLimit(city));
 
@@ -41915,6 +41931,8 @@ window.MANUAL_MAP_DATA = {
         autoTasks,
         autoGovBudgetLimit: getAutoGovBudgetLimit(),
         autoMilBudgetLimit: getAutoMilBudgetLimit(),
+        autoGovUnlimited: true,
+        autoMilUnlimited: true,
         autoGovSpentThisTurn,
         autoMilSpentThisTurn,
         govPoints,
@@ -41943,8 +41961,8 @@ window.MANUAL_MAP_DATA = {
           const task = gameState.appointments?.autoTasks?.[city.id] || {};
           const admins = getCityOfficials(city.id, 'administratorId');
           const officers = getCityOfficials(city.id, 'militaryOfficerId');
-          const civilModes = Array.isArray(task.civilModes) ? task.civilModes : [];
-          const prepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes : [];
+          const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
+          const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
           return {
             cityId: city.id,
             cityName: city.name,
@@ -41957,7 +41975,9 @@ window.MANUAL_MAP_DATA = {
             militaryPrepModes: prepModes,
             executableMilitaryPrepCount: Math.min(officers.length, prepModes.length, getCityMilitaryOfficerLimit(city)),
             autoGovBudgetLimit: getAutoGovBudgetLimit(),
-            autoMilBudgetLimit: getAutoMilBudgetLimit()
+            autoMilBudgetLimit: getAutoMilBudgetLimit(),
+            autoGovUnlimited: true,
+            autoMilUnlimited: true
           };
         });
     }
@@ -41972,6 +41992,7 @@ window.MANUAL_MAP_DATA = {
       migrated.randomTalentSeed ||= Math.floor(Date.now() % 2147483647) || 190;
       migrated.characterRoster ||= {};
       migrated.characterDiscovery ||= {};
+      migrated.characterProfileId ||= null;
       migrated.conversations ||= [];
       migrated.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
       migrated.specialEventState ||= { triggered: {}, cooldowns: {}, queue: [] };
@@ -43130,12 +43151,28 @@ window.MANUAL_MAP_DATA = {
         const characterFilter = event.target.closest('[data-character-filter]');
         if (characterFilter) {
           gameState.characterFilter = characterFilter.getAttribute('data-character-filter');
+          gameState.characterProfileId = null;
+          renderRightPanel();
+          return;
+        }
+        const closeCharacterProfile = event.target.closest('[data-close-character-profile]');
+        if (closeCharacterProfile) {
+          gameState.characterProfileId = null;
+          renderRightPanel();
+          return;
+        }
+        const openCharacterProfile = event.target.closest('[data-open-character-profile]');
+        if (openCharacterProfile) {
+          const characterId = openCharacterProfile.getAttribute('data-open-character-profile');
+          gameState.selectedCharacterId = characterId;
+          gameState.characterProfileId = characterId;
           renderRightPanel();
           return;
         }
         const characterTarget = event.target.closest('[data-select-character]');
         if (characterTarget) {
           gameState.selectedCharacterId = characterTarget.getAttribute('data-select-character');
+          gameState.characterProfileId = gameState.selectedCharacterId;
           renderRightPanel();
           return;
         }
