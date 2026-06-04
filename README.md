@@ -3,7 +3,6 @@
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.5-39c5bb?style=for-the-badge)
 ![SQLite](https://img.shields.io/badge/SQLite-save_data-78dcca?style=for-the-badge)
 ![DeepSeek](https://img.shields.io/badge/DeepSeek-dialogue_proxy-00a6d6?style=for-the-badge)
-![Miku Powered](https://img.shields.io/badge/Miku-39%20Hz-39c5bb?style=for-the-badge)
 
 > 地图驱动式三国权谋战略 RPG 原型。  
 > 前端负责地图、回合、指令和 UI；后端负责用户会话、云端存档和 AI 文本代理。
@@ -15,15 +14,7 @@
 
 ## ミク神龛
 
-项目没有真的依赖 Miku，但是 README 可以有一点电子香火。这里的图片来自 Wikimedia Commons 外链，并在文末保留授权说明。
-
-<p align="center">
-  <img src="https://commons.wikimedia.org/wiki/Special:FilePath/%E5%88%9D%E9%9F%B3%E8%88%9E%E8%B8%8F%E7%A5%AD2024_-_The_HATSUNE_Miku_concert_is_handmade_by_Hokkaido_University_student_volunteers_%28cropped%29.jpg?width=1200" alt="Hatsune Miku concert" width="86%">
-</p>
-
-<p align="center">
-  <img src="https://commons.wikimedia.org/wiki/Special:FilePath/Cosplay_of_Hatsune_Miku_%2829287319817%29.jpg?width=520" alt="Hatsune Miku cosplay" width="38%">
-</p>
+项目没有真的依赖 Miku，但是 README 可以有一点电子香火。
 
 ```text
           /\\_/\\
@@ -199,10 +190,3 @@ AI 只负责文本和轻量状态解释，不直接决定核心玩法结果。
 - 游戏数值仍由前端/后端确定性逻辑处理
 
 一句话：AI 是军师嘴替，不是天命骰子。
-
-## 图片与授权说明
-
-- Hatsune Miku / 初音ミク 相关名称和角色归 Crypton Future Media 所有。本项目与 Crypton Future Media 无官方关联；可参考 [PIAPRO Character License](https://piapro.net/intl/en_for_creators.html)。
-- README 中的演唱会照片来自 Wikimedia Commons：[初音舞踏祭2024](<https://commons.wikimedia.org/wiki/File:%E5%88%9D%E9%9F%B3%E8%88%9E%E8%B8%8F%E7%A5%AD2024_-_The_HATSUNE_Miku_concert_is_handmade_by_Hokkaido_University_student_volunteers_(cropped).jpg>)，MIKI Yoshihito，CC BY 2.0。
-- README 中的 cosplay 照片来自 Wikimedia Commons：[Cosplay of Hatsune Miku](<https://commons.wikimedia.org/wiki/File:Cosplay_of_Hatsune_Miku_(29287319817).jpg>)，chripell，CC BY-SA 2.0。
-- 使用外链展示图片，不把相关图片文件打包进仓库。
