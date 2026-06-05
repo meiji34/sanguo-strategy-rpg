@@ -33015,11 +33015,26 @@ const MAX_MAP_ZOOM = 4.2;
       render();
     }
 
+    function getLetterBackdropClass(letter) {
+      const sourceText = [
+        letter?.senderId,
+        letter?.senderName,
+        letter?.senderFaction,
+        letter?.title,
+        letter?.body,
+        letter?.kind
+      ].join(' ');
+      if (letter?.senderId === 'liuBiao' || letter?.critical) return 'letter-bg-arrival';
+      if (/军|兵|战|营|攻|守|粮道|断粮|刺探|谋略|内应|伏|援|防务/.test(sourceText)) return 'letter-bg-war';
+      return 'letter-bg-study';
+    }
+
     function renderModal() {
       const root = document.getElementById('gameModalRoot');
       if (!root) return;
       const modal = gameState.activeModal;
       root.classList.toggle('show', Boolean(modal));
+      root.classList.toggle('letter-open', modal?.type === 'letter');
       if (!modal) {
         root.innerHTML = '';
         return;
@@ -33045,7 +33060,7 @@ const MAX_MAP_ZOOM = 4.2;
         const letter = gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
         letter.read = true;
-        root.innerHTML = `<div class="game-modal">
+        root.innerHTML = `<div class="game-modal letter-modal ${getLetterBackdropClass(letter)}">
           <div class="letter-head"><div><h2>${escapeHtml(letter.title)}</h2><span class="tag">${escapeHtml(letter.senderName)}｜${escapeHtml(letter.date)}</span></div></div>
           <div class="letter-body">${escapeHtml(letter.body)}</div>
           <div class="modal-actions">${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}</div>
@@ -33369,12 +33384,29 @@ const MAX_MAP_ZOOM = 4.2;
       return surnames[Math.floor(Math.random() * surnames.length)] + given[Math.floor(Math.random() * given.length)];
     }
 
+    function syncCharacterCreationStageClasses() {
+      const characterCreate = document.getElementById('characterCreate');
+      if (!characterCreate) return;
+      const stageBackgrounds = {
+        arrival: './assets/opening/opening_arrival_landscape.png',
+        name: './assets/opening/opening_name_study.png',
+        identity: './assets/opening/opening_identity_war_camp.png',
+        confirm: './assets/opening/opening_identity_war_camp.png'
+      };
+      ['arrival', 'name', 'identity', 'confirm'].forEach(step => {
+        characterCreate.classList.toggle('stage-' + step, characterCreationStep === step);
+      });
+      characterCreate.dataset.creationStage = characterCreationStep;
+      characterCreate.style.setProperty('--creation-bg-image', `url("${stageBackgrounds[characterCreationStep] || stageBackgrounds.arrival}")`);
+    }
+
     function updateCharacterCreation() {
       const input = document.getElementById('playerNameInput');
       const note = document.getElementById('nameValidation');
       const namePreview = document.getElementById('namePreview');
       const start = document.querySelector('[data-start-game]');
       if (!input || !note || !start) return;
+      syncCharacterCreationStageClasses();
       if (!isComposingPlayerName && input.value !== characterDraft.name) input.value = characterDraft.name;
       document.querySelectorAll('[data-identity]').forEach(button => {
         button.classList.toggle('selected', button.getAttribute('data-identity') === characterDraft.identity);
@@ -33410,9 +33442,9 @@ const MAX_MAP_ZOOM = 4.2;
       if (commissionName) commissionName.textContent = draftName;
       if (commissionIdentity) commissionIdentity.textContent = identity.name;
       const identityBriefs = {
-        commandant: '朱笔旁批：领桂阳都尉，先稳郡兵与军令。地方士族会更谨慎。',
-        granary: '朱笔旁批：领桂阳督粮官，以屯田和粮草扎稳根基。正面军力略弱。',
-        magistrate: '朱笔旁批：领桂阳县令，先安民心、治安与郡中政务。军事起步略弱。'
+        commandant: '朱笔旁批：桂阳都尉。定位军事控局；优势在郡兵与军令，风险是地方士族起初更谨慎。',
+        granary: '朱笔旁批：桂阳督粮官。定位屯田后勤；优势在粮草与府库，风险是正面军力略弱。',
+        magistrate: '朱笔旁批：桂阳县令。定位民政治安；优势在民心、治安与政务，风险是军事起步较弱。'
       };
       if (identityBrief) identityBrief.textContent = identityBriefs[identity.id] || identityBriefs.commandant;
 
@@ -33420,22 +33452,22 @@ const MAX_MAP_ZOOM = 4.2;
         arrival: {
           speaker: '荆州牧 · 刘表',
           mark: '刘',
-          line: '“荆南门户，久不得安。今夜召你来，是要托付一件不能写在公文上的差事。”'
+          line: '“桂阳虽远，实为荆南门户。此令不入明堂，只在今夜交予你。”'
         },
         name: {
           speaker: '州府主簿',
           mark: '簿',
-          line: '“主公问你名姓，不为虚礼。密令出堂之后，桂阳诸署都要认这一笔。”'
+          line: '“主公问你名姓，不为虚礼。此名一落，桂阳诸署皆认此令。”'
         },
         identity: {
           speaker: '荆州牧 · 刘表',
           mark: '刘',
-          line: '“' + draftName + '，桂阳兵、粮、民心皆不可偏废。你愿先执哪一柄？”'
+          line: '“' + draftName + '，桂阳兵、粮、民心皆不可偏废。你先执哪一柄，便先承哪一重责。”'
         },
         confirm: {
           speaker: '荆州牧 · 刘表',
           mark: '令',
-          line: '“便依你所请。自今日起，你以' + identity.name + '之职赴桂阳。先稳门户，再谈天下。”'
+          line: '“刘表已落印，桂阳自此归你节制。先稳门户，再谈天下。”'
         }
       };
       const currentDialogue = dialogue[characterCreationStep] || dialogue.arrival;
@@ -33550,7 +33582,9 @@ const MAX_MAP_ZOOM = 4.2;
     function renderLaunchLayers() {
       document.getElementById('authScreen')?.classList.toggle('show', launchScreen === 'auth');
       document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
-      document.getElementById('characterCreate')?.classList.toggle('show', launchScreen === 'character');
+      const characterCreate = document.getElementById('characterCreate');
+      characterCreate?.classList.toggle('show', launchScreen === 'character');
+      syncCharacterCreationStageClasses();
       document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
       document.getElementById('officeHandoff')?.classList.toggle('show', launchScreen === 'handoff');
       const transition = document.getElementById('openingTransition');
@@ -33780,15 +33814,20 @@ const MAX_MAP_ZOOM = 4.2;
       const cities = controlledCities();
       const totals = cityTotals();
       document.getElementById('leftPanel').innerHTML = `
-        <div class="card">
-          <h3>${p.name}｜${p.title}</h3>
-          <div class="kv-grid">
-            <div class="kv"><span>实际控城</span><strong>${cities.length} 座</strong></div>
-            <div class="kv"><span>总驻军</span><strong>${fmt(totals.troops)}</strong></div>
+        <div class="card commander-card">
+          <div class="commander-heading">
+            <span>桂阳署印</span>
+            <h3>${p.name}｜${p.title}</h3>
+          </div>
+          <div class="commander-summary">
+            <strong>${cities.length} 座控城</strong>
+            <span>驻军 ${fmt(totals.troops)}｜战役槽 ${activeCampaignSlotCount()} / ${p.commandSlots}</span>
+          </div>
+          <div class="kv-grid commander-facts">
             <div class="kv"><span>声望</span><strong>${p.prestige}</strong></div>
             <div class="kv"><span>野心</span><strong>${p.ambition}</strong></div>
-            <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${p.commandSlots}</strong></div>
             <div class="kv"><span>紧急事务</span><strong>${gameState.urgentMatters.filter(item => !item.resolved).length}</strong></div>
+            <div class="kv"><span>府库合计</span><strong>${fmt(totals.money)}</strong></div>
           </div>
           ${metric('刘表庇护', p.protection)}
           ${metric('士族信任', gameState.characters.jingnanGentry.trust)}
@@ -33940,6 +33979,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function renderMap() {
       syncMapDataFromGameState();
+      normalizeMapView();
       const transform = `translate(${gameState.mapState.panX} ${gameState.mapState.panY}) scale(${gameState.mapState.zoom})`;
       document.getElementById('mapWorld').setAttribute('transform', transform);
       renderMapPatchLayer();
@@ -34620,37 +34660,47 @@ const MAX_MAP_ZOOM = 4.2;
       const distant = reach > 2;
       const reachText = reach === 0 ? '我方治下' : reach === 1 ? '接壤可行动' : reach === 2 ? '二线可交涉' : '远方情报';
       return `
-        <div class="card">
-          <h2>${city.name}</h2>
-          <div class="tag-row">
-            <span class="tag">名义：${factionName(nominalOwner)}</span>
-            <span class="tag">实际：${factionName(controller)}</span>
+        <div class="card city-detail-card">
+          <div class="city-detail-head">
+            <div>
+              <h2>${city.name}</h2>
+              <div class="city-owner-line">
+                <span>名义：${factionName(nominalOwner)}</span>
+                <span>实际：${factionName(controller)}</span>
+              </div>
+            </div>
+            <span class="city-reach-mark">${reachText}</span>
+          </div>
+          <div class="tag-row city-meta-row">
+            <span class="tag">等级 ${city.level}</span>
             <span class="tag">${escapeHtml(city.terrain)}</span>
             <span class="tag">${escapeHtml(city.resource)}</span>
-            <span class="tag">${reachText}</span>
+            <span class="tag">前线价值 ${city.strategic}</span>
             ${region ? `<span class="tag">控制区：${region.resources.map(escapeHtml).join('、')}</span>` : ''}
           </div>
-          <div class="kv-grid" style="margin-top:8px">
-            <div class="kv"><span>等级</span><strong>${city.level}</strong></div>
+          <div class="kv-grid city-core-grid">
             <div class="kv"><span>人口</span><strong>${fmt(city.population)}</strong></div>
             <div class="kv"><span>驻军</span><strong>${distant ? '约' + compactNumber(realTroops(city.garrison)) : fmt(realTroops(city.garrison))}</strong></div>
-            <div class="kv"><span>前线价值</span><strong>${city.strategic}</strong></div>
-            <div class="kv"><span>农业</span><strong>${Math.round(city.agriculture)}</strong></div>
-            <div class="kv"><span>商业</span><strong>${Math.round(city.commerce)}</strong></div>
             <div class="kv"><span>存粮</span><strong>${fmt(city.food)}</strong></div>
             <div class="kv"><span>府库</span><strong>${fmt(city.money)}</strong></div>
-            <div class="kv"><span>粮食产能</span><strong id="foodProd-${city.id}">${fmt(economy.foodProduction)} / 回合</strong></div>
+            <div class="kv"><span>农业</span><strong>${Math.round(city.agriculture)}</strong></div>
+            <div class="kv"><span>商业</span><strong>${Math.round(city.commerce)}</strong></div>
             <div class="kv"><span>税收贡献</span><strong id="taxIncome-${city.id}">${fmt(economy.taxIncome)} / 回合</strong></div>
-            <div class="kv"><span>粮食消耗</span><strong id="foodConsume-${city.id}">${fmt(economy.foodConsumption)} / 回合</strong></div>
             <div class="kv"><span>净粮</span><strong id="netFood-${city.id}">${economy.netFood >= 0 ? '+' : ''}${fmt(economy.netFood)}</strong></div>
+          </div>
+          <div class="city-secondary-grid">
+            <div class="kv"><span>粮食产能</span><strong id="foodProd-${city.id}">${fmt(economy.foodProduction)} / 回合</strong></div>
+            <div class="kv"><span>粮食消耗</span><strong id="foodConsume-${city.id}">${fmt(economy.foodConsumption)} / 回合</strong></div>
             ${region ? `<div class="kv"><span>地块邻接</span><strong>${region.neighbors.map(regionName).join('、') || '未设置'}</strong></div>` : ''}
             ${region ? `<div class="kv"><span>势力范围</span><strong>${region.polygon.length} 个边界点</strong></div>` : ''}
           </div>
-          ${metric('民心', city.publicSupport)}
-          <p class="muted">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
-          ${metric('治安', city.order)}
-          ${metric('士气', city.morale)}
-          ${metric('城防', city.defense)}
+          <div class="city-status-block">
+            ${metric('民心', city.publicSupport)}
+            ${metric('治安', city.order)}
+            ${metric('士气', city.morale)}
+            ${metric('城防', city.defense)}
+          </div>
+          <p class="muted city-support-note">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
         </div>
         <div class="card">
           <h3>政策与局势判断</h3>
@@ -36272,16 +36322,33 @@ const MAX_MAP_ZOOM = 4.2;
       nextMapState.zoom = clampMapZoom(nextMapState.zoom);
       nextMapState.panX = Number.isFinite(Number(nextMapState.panX)) ? Number(nextMapState.panX) : 0;
       nextMapState.panY = Number.isFinite(Number(nextMapState.panY)) ? Number(nextMapState.panY) : 0;
-      if (nextMapState.zoom <= MIN_MAP_ZOOM) {
-        nextMapState.zoom = MIN_MAP_ZOOM;
-        nextMapState.panX = 0;
-        nextMapState.panY = 0;
-      }
       return nextMapState;
+    }
+
+    function clampMapTransform() {
+      const svg = document.getElementById('mapStage');
+      if (!svg || !gameState?.mapState) return;
+      const rect = svg.getBoundingClientRect();
+      const viewBox = svg.viewBox?.baseVal;
+      const viewportWidth = viewBox?.width || rect.width || MAP_SIZE.width;
+      const viewportHeight = viewBox?.height || rect.height || MAP_SIZE.height;
+      const mapWidth = MAP_SIZE.width * gameState.mapState.zoom;
+      const mapHeight = MAP_SIZE.height * gameState.mapState.zoom;
+      if (mapWidth > viewportWidth) {
+        gameState.mapState.panX = clamp(gameState.mapState.panX, viewportWidth - mapWidth, 0);
+      } else {
+        gameState.mapState.panX = (viewportWidth - mapWidth) / 2;
+      }
+      if (mapHeight > viewportHeight) {
+        gameState.mapState.panY = clamp(gameState.mapState.panY, viewportHeight - mapHeight, 0);
+      } else {
+        gameState.mapState.panY = (viewportHeight - mapHeight) / 2;
+      }
     }
 
     function normalizeMapView() {
       gameState.mapState = normalizeMapState(gameState.mapState);
+      clampMapTransform();
     }
 
     function setMapFocusOn(x, y, zoom) {
@@ -37825,7 +37892,7 @@ const MAX_MAP_ZOOM = 4.2;
       openingTransitionTimer = null;
       document.getElementById('openingTransition')?.classList.remove('playing');
       if (openingTransitionMode === 'departure') {
-        beginOfficeHandoffTransition();
+        startNewCharacter({ delayGuide: true });
         return;
       }
       characterCreationStep = 'arrival';
@@ -38388,6 +38455,11 @@ const MAX_MAP_ZOOM = 4.2;
         zoomMapAt(event.clientX, event.clientY, direction * 0.18);
         renderMap();
       }, { passive: false });
+
+      window.addEventListener('resize', () => {
+        normalizeMapView();
+        renderMap();
+      });
     }
 
     function initGame() {
