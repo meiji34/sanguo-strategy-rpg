@@ -1101,6 +1101,276 @@
       transform: translateX(-50%) translateY(0);
     }
 
+    .auth-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 180;
+      display: none;
+      overflow: hidden;
+      color: #eee8d7;
+      background: #020303;
+    }
+
+    .auth-screen.show {
+      display: block;
+    }
+
+    .auth-backdrop,
+    .auth-scene,
+    .auth-paper {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .auth-backdrop {
+      inset: -3%;
+      background: #020303;
+    }
+
+    .auth-scene {
+      background-position: center;
+      background-size: cover;
+      filter: grayscale(0.66) sepia(0.08) saturate(0.72) contrast(1.05) brightness(0.92);
+      transform: scale(1.08);
+      will-change: transform, opacity;
+    }
+
+    .auth-scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 64% 38%, rgba(202, 202, 176, 0.12), transparent 20%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.78), rgba(2, 5, 5, 0.3) 46%, rgba(0, 0, 0, 0.66)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.2), transparent 42%, rgba(0, 0, 0, 0.56));
+    }
+
+    .auth-scene-one {
+      background-image: url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-51493.jpg");
+      background-position: center 46%;
+      animation: authMountainBreath 22s ease-in-out infinite alternate;
+    }
+
+    .auth-scene-two {
+      opacity: 0.52;
+      background-image: url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-39548.jpg");
+      background-position: 58% 45%;
+      mix-blend-mode: multiply;
+      animation: authMountainDrift 28s ease-in-out infinite alternate;
+    }
+
+    .auth-paper {
+      opacity: 0.13;
+      background: url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
+      mix-blend-mode: soft-light;
+    }
+
+    .auth-screen::before,
+    .auth-screen::after {
+      content: "";
+      position: absolute;
+      inset: -12%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .auth-screen::before {
+      opacity: 0.26;
+      filter: blur(34px);
+      mix-blend-mode: screen;
+      background:
+        radial-gradient(ellipse at 38% 22%, rgba(210, 209, 182, 0.18), transparent 24%),
+        radial-gradient(ellipse at 72% 72%, rgba(132, 142, 126, 0.16), transparent 30%);
+      animation: menuMistDrift 13s ease-in-out infinite alternate;
+    }
+
+    .auth-screen::after {
+      background:
+        linear-gradient(115deg, transparent 0%, rgba(220, 218, 184, 0.1) 38%, transparent 58%),
+        radial-gradient(circle at 60% 35%, rgba(214, 216, 188, 0.08), transparent 18%);
+      animation: menuLightSweep 19s ease-in-out infinite;
+    }
+
+    .auth-content {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(330px, 420px);
+      min-height: 100vh;
+      gap: clamp(24px, 6vw, 86px);
+      align-items: center;
+      padding: clamp(28px, 7vw, 92px);
+    }
+
+    .auth-hero {
+      position: relative;
+      max-width: 700px;
+      padding-left: clamp(0px, 2vw, 22px);
+    }
+
+    .auth-era {
+      color: rgba(221, 221, 206, 0.68);
+      font-size: 14px;
+      letter-spacing: 0.28em;
+    }
+
+    .auth-hero h1 {
+      margin: 18px 0 0;
+      color: #e1e3d5;
+      font-family: "LongCang", "STKaiti", "KaiTi", serif;
+      font-size: clamp(92px, 14vw, 184px);
+      font-weight: 400;
+      letter-spacing: 0.05em;
+      line-height: 0.92;
+      text-shadow: 0 0 28px rgba(228, 229, 205, 0.14), 0 13px 32px rgba(0, 0, 0, 0.92);
+    }
+
+    .auth-hero p {
+      margin: 18px 0 0 8px;
+      color: rgba(218, 220, 206, 0.76);
+      font-family: "LongCang", "STKaiti", "KaiTi", serif;
+      font-size: clamp(28px, 3.2vw, 44px);
+      letter-spacing: 0.18em;
+    }
+
+    .auth-seal {
+      position: absolute;
+      left: clamp(260px, 38vw, 520px);
+      top: clamp(120px, 18vw, 240px);
+      display: grid;
+      width: 62px;
+      height: 62px;
+      place-items: center;
+      border: 2px solid rgba(150, 58, 45, 0.74);
+      color: rgba(167, 64, 49, 0.84);
+      font-size: 19px;
+      font-weight: 900;
+      line-height: 0.88;
+      text-align: center;
+      transform: rotate(-8deg);
+    }
+
+    .auth-panel {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(218, 222, 204, 0.28);
+      border-radius: 2px;
+      padding: 24px;
+      background:
+        linear-gradient(180deg, rgba(18, 25, 22, 0.9), rgba(5, 8, 7, 0.95)),
+        radial-gradient(circle at 100% 0%, rgba(166, 111, 60, 0.16), transparent 30%);
+      box-shadow: 0 28px 78px rgba(0, 0, 0, 0.58), inset 0 0 34px rgba(224, 219, 190, 0.035);
+      backdrop-filter: blur(8px) saturate(0.86);
+    }
+
+    .auth-panel::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: 22px;
+      right: 22px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(230, 218, 179, 0.62), transparent);
+    }
+
+    .auth-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 22px;
+    }
+
+    .auth-tabs button {
+      flex: 1;
+      border-color: rgba(218, 216, 198, 0.16);
+      border-radius: 1px;
+      background: rgba(20, 27, 24, 0.58);
+      color: rgba(226, 224, 204, 0.72);
+      letter-spacing: 0.18em;
+    }
+
+    .auth-tabs button.active {
+      border-color: rgba(224, 199, 150, 0.62);
+      background: linear-gradient(180deg, rgba(98, 80, 50, 0.72), rgba(36, 48, 39, 0.88));
+      color: #eee8d7;
+    }
+
+    .auth-panel-title {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .auth-panel-title span {
+      color: rgba(224, 191, 128, 0.86);
+      font-size: 13px;
+      letter-spacing: 0.18em;
+    }
+
+    .auth-panel-title strong {
+      color: rgba(237, 238, 224, 0.92);
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 28px;
+      letter-spacing: 0.12em;
+    }
+
+    .auth-field {
+      display: grid;
+      gap: 7px;
+      margin-top: 14px;
+    }
+
+    .auth-field span {
+      color: rgba(198, 202, 188, 0.6);
+      font-size: 12px;
+      letter-spacing: 0.16em;
+    }
+
+    .auth-field input {
+      min-height: 44px;
+      border-radius: 1px;
+      border-color: rgba(218, 222, 204, 0.2);
+      background: rgba(232, 229, 203, 0.075);
+      color: #ece9d8;
+      letter-spacing: 0.06em;
+    }
+
+    .auth-status {
+      min-height: 42px;
+      margin-top: 14px;
+      color: rgba(198, 202, 188, 0.56);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .auth-status.bad {
+      color: #ffac93;
+    }
+
+    .auth-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .auth-actions button {
+      min-height: 44px;
+      border-radius: 1px;
+      letter-spacing: 0.16em;
+    }
+
+    .auth-guest {
+      border-color: rgba(218, 216, 198, 0.14);
+      background: rgba(17, 23, 20, 0.62);
+      color: rgba(226, 224, 204, 0.68);
+    }
+
+    .auth-submit {
+      border-color: rgba(221, 202, 157, 0.6);
+      background: linear-gradient(180deg, rgba(104, 82, 52, 0.78), rgba(38, 51, 39, 0.9));
+    }
+
     .intro {
       position: fixed;
       inset: 0;
@@ -1359,20 +1629,20 @@
       inset: -4%;
       opacity: 0;
       background:
-        linear-gradient(90deg, rgba(2, 4, 3, 0.82), rgba(10, 14, 12, 0.32), rgba(1, 2, 2, 0.74)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.7), rgba(5, 9, 8, 0.32) 42%, rgba(0, 0, 0, 0.58)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover,
-        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-72710.jpg") 48% 56% / cover;
-      background-blend-mode: normal, multiply, normal;
-      filter: grayscale(0.5) sepia(0.16) saturate(0.78) contrast(1.08) brightness(0.78);
+        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-36131.jpg") center 48% / cover;
+      background-blend-mode: normal, soft-light, normal;
+      filter: grayscale(0.68) sepia(0.08) saturate(0.72) contrast(1.04) brightness(0.9);
       transform: scale(1.12);
     }
 
     .opening-transition.departure .transition-backdrop {
       background:
-        linear-gradient(90deg, rgba(1, 2, 2, 0.9), rgba(6, 10, 8, 0.44), rgba(1, 2, 2, 0.82)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.74), rgba(5, 9, 8, 0.34), rgba(0, 0, 0, 0.6)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover,
-        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-51493.jpg") center / cover;
-      background-blend-mode: normal, multiply, normal;
+        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-49454.jpg") center 42% / cover;
+      background-blend-mode: normal, soft-light, normal;
     }
 
     .transition-ink {
@@ -1489,11 +1759,11 @@
       inset: 0;
       z-index: 120;
       display: none;
-      place-items: end center;
+      place-items: center;
       overflow: hidden;
       padding: clamp(18px, 4vw, 46px);
-      color: #f7e6bf;
-      background: #080b09;
+      color: #2c2417;
+      background: #020303;
     }
 
     .character-create.show {
@@ -1514,27 +1784,28 @@
       inset: 0;
       pointer-events: none;
       background:
-        radial-gradient(circle at 19% 18%, rgba(176, 114, 62, 0.16), transparent 24%),
-        radial-gradient(circle at 70% 55%, rgba(188, 190, 168, 0.08), transparent 28%),
-        linear-gradient(90deg, rgba(2, 4, 3, 0.55), transparent 48%, rgba(2, 4, 3, 0.52)),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.12), transparent 42%, rgba(1, 2, 2, 0.78));
+        radial-gradient(circle at 68% 42%, rgba(178, 180, 157, 0.1), transparent 18%),
+        radial-gradient(circle at 24% 18%, rgba(176, 114, 62, 0.14), transparent 22%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 62%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.16), transparent 44%, rgba(0, 0, 0, 0.4));
       z-index: 2;
+      box-shadow: inset 0 0 135px rgba(0, 0, 0, 0.62);
     }
 
     .audience-painting {
       inset: -4%;
       background:
-        linear-gradient(90deg, rgba(2, 4, 3, 0.7), rgba(9, 14, 12, 0.32), rgba(2, 4, 3, 0.62)),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.12), transparent 50%, rgba(0, 0, 0, 0.54)),
-        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-72710.jpg") 48% 56% / cover;
-      filter: grayscale(0.5) sepia(0.15) saturate(0.78) contrast(1.06) brightness(0.78);
+        linear-gradient(90deg, rgba(0, 0, 0, 0.62), rgba(5, 9, 8, 0.26) 42%, rgba(0, 0, 0, 0.52)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.12), transparent 50%, rgba(0, 0, 0, 0.42)),
+        url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/met-36131.jpg") center 48% / cover;
+      filter: grayscale(0.68) sepia(0.08) saturate(0.72) contrast(1.04) brightness(0.9);
       animation: audienceDrift 18s ease-in-out infinite alternate;
     }
 
     .audience-paper {
-      opacity: 0.17;
+      opacity: 0.14;
       background: url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
-      mix-blend-mode: multiply;
+      mix-blend-mode: soft-light;
       z-index: 1;
     }
 
@@ -1565,29 +1836,61 @@
     .creation-panel {
       position: relative;
       z-index: 5;
-      width: min(940px, calc(100vw - 40px));
+      width: min(820px, calc(100vw - 40px));
       min-height: 0;
-      max-height: calc(100vh - 42px);
+      max-height: calc(100vh - 56px);
       overflow: auto;
-      margin-bottom: clamp(8px, 3vh, 34px);
-      border: 1px solid rgba(218, 222, 204, 0.34);
+      margin: clamp(8px, 3vh, 28px) 0;
+      border: 1px solid rgba(80, 60, 35, 0.34);
       border-radius: 2px;
-      padding: clamp(18px, 2.6vw, 26px) clamp(18px, 3vw, 30px) clamp(20px, 3vw, 28px);
+      padding: clamp(24px, 4vw, 42px) clamp(24px, 4.2vw, 46px) clamp(24px, 4vw, 38px);
       background:
-        linear-gradient(180deg, rgba(22, 28, 24, 0.9), rgba(6, 9, 8, 0.95)),
-        radial-gradient(circle at 82% 0%, rgba(166, 111, 60, 0.16), transparent 30%);
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.54), inset 0 0 34px rgba(224, 219, 190, 0.035);
-      backdrop-filter: blur(8px) saturate(0.86);
+        radial-gradient(circle at 82% 0%, rgba(153, 89, 45, 0.14), transparent 30%),
+        linear-gradient(135deg, rgba(211, 202, 168, 0.92), rgba(154, 143, 112, 0.9)),
+        url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
+      background-blend-mode: normal, normal, multiply;
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.56), inset 0 0 42px rgba(65, 43, 24, 0.14);
+      transform: rotate(-0.25deg);
+      isolation: isolate;
     }
 
     .creation-panel::before {
       content: "";
       position: absolute;
-      top: -1px;
-      left: 24px;
-      right: 24px;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(230, 218, 179, 0.72), transparent);
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 18%, rgba(64, 42, 24, 0.12) 18.25%, transparent 18.8%, transparent 81%, rgba(64, 42, 24, 0.1) 81.25%, transparent 81.8%),
+        linear-gradient(180deg, transparent 22%, rgba(64, 42, 24, 0.08) 22.25%, transparent 22.8%, transparent 76%, rgba(64, 42, 24, 0.08) 76.25%, transparent 76.8%),
+        radial-gradient(circle at 50% 50%, transparent 52%, rgba(46, 30, 18, 0.18));
+      mix-blend-mode: multiply;
+      z-index: 0;
+    }
+
+    .creation-panel::after {
+      content: "密\A 令";
+      white-space: pre;
+      position: absolute;
+      right: clamp(28px, 4vw, 46px);
+      bottom: clamp(24px, 4vw, 42px);
+      display: grid;
+      width: 62px;
+      height: 62px;
+      place-items: center;
+      border: 2px solid rgba(143, 38, 30, 0.58);
+      color: rgba(143, 38, 30, 0.58);
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 0.88;
+      text-align: center;
+      pointer-events: none;
+      transform: rotate(8deg);
+      z-index: 0;
+    }
+
+    .creation-panel > * {
+      position: relative;
+      z-index: 1;
     }
 
     .dialogue-voice-mark {
@@ -1599,14 +1902,14 @@
       height: 48px;
       place-items: center;
       border: 1px solid rgba(146, 58, 43, 0.62);
-      color: rgba(175, 72, 52, 0.9);
-      background: rgba(14, 10, 8, 0.52);
+      color: rgba(149, 40, 31, 0.86);
+      background: rgba(232, 215, 174, 0.22);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 24px;
       font-weight: 900;
       line-height: 1;
       transform: rotate(-5deg);
-      box-shadow: inset 0 0 18px rgba(130, 52, 38, 0.12);
+      box-shadow: inset 0 0 18px rgba(130, 52, 38, 0.08);
     }
 
     .audience-heading {
@@ -1615,17 +1918,17 @@
       justify-content: flex-start;
       gap: 16px;
       border-bottom: 0;
-      padding: 0 104px 6px 66px;
+      padding: 0 96px 10px 66px;
     }
 
     .audience-heading .intro-kicker {
       margin-bottom: 0;
-      color: rgba(224, 191, 128, 0.9);
+      color: rgba(126, 76, 42, 0.84);
       letter-spacing: 0.1em;
     }
 
     .audience-location {
-      color: rgba(211, 205, 182, 0.45);
+      color: rgba(83, 65, 42, 0.62);
       font-size: 12px;
       letter-spacing: 0.18em;
     }
@@ -1653,14 +1956,14 @@
     }
 
     .dialogue-progress span.current {
-      border-color: rgba(217, 183, 117, 0.72);
-      background: rgba(217, 183, 117, 0.72);
-      box-shadow: 0 0 14px rgba(217, 183, 117, 0.32);
+      border-color: rgba(130, 67, 42, 0.7);
+      background: rgba(130, 67, 42, 0.7);
+      box-shadow: 0 0 14px rgba(130, 67, 42, 0.22);
     }
 
     .dialogue-progress span.done {
-      border-color: rgba(201, 211, 190, 0.54);
-      background: rgba(201, 211, 190, 0.38);
+      border-color: rgba(77, 72, 54, 0.46);
+      background: rgba(77, 72, 54, 0.34);
     }
 
     .dialogue-frame {
@@ -1678,11 +1981,11 @@
       top: 3px;
       bottom: 8px;
       width: 2px;
-      background: linear-gradient(180deg, rgba(185, 142, 77, 0.82), rgba(185, 142, 77, 0.08));
+      background: linear-gradient(180deg, rgba(125, 78, 45, 0.74), rgba(125, 78, 45, 0.08));
     }
 
     .dialogue-speaker {
-      color: rgba(224, 191, 128, 0.92);
+      color: rgba(116, 67, 39, 0.86);
       font-size: 14px;
       font-weight: 900;
       letter-spacing: 0.14em;
@@ -1691,11 +1994,11 @@
     .dialogue-line {
       width: min(740px, 100%);
       margin: 9px 0 0;
-      color: #e2e3d4;
+      color: #262016;
       font-family: "STKaiti", "KaiTi", serif;
       font-size: clamp(20px, 2.25vw, 27px);
       line-height: 1.7;
-      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.46);
+      text-shadow: 0 1px 0 rgba(255, 244, 202, 0.2);
     }
 
     .creation-step {
@@ -1710,21 +2013,21 @@
 
     .audience-narration {
       margin: 0 0 12px;
-      color: rgba(202, 205, 188, 0.7);
+      color: rgba(63, 54, 36, 0.72);
       font-size: 14px;
       line-height: 1.65;
     }
 
     .creation-field {
       margin-top: 10px;
-      border-top: 1px solid rgba(218, 222, 204, 0.1);
+      border-top: 1px solid rgba(64, 42, 24, 0.14);
       padding-top: 12px;
     }
 
     .creation-field > strong {
       display: block;
       margin-bottom: 8px;
-      color: rgba(213, 183, 127, 0.86);
+      color: rgba(116, 67, 39, 0.78);
       font-size: 13px;
       letter-spacing: 0.14em;
     }
@@ -1737,28 +2040,28 @@
 
     .creation-name-row input {
       min-height: 43px;
-      border-color: rgba(218, 222, 204, 0.2);
-      background: rgba(232, 229, 203, 0.08);
-      color: #ece9d8;
+      border-color: rgba(80, 60, 35, 0.26);
+      background: rgba(255, 247, 214, 0.22);
+      color: #2b2418;
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 20px;
       letter-spacing: 0.08em;
     }
 
     .creation-name-row input::placeholder {
-      color: rgba(205, 205, 187, 0.38);
+      color: rgba(74, 61, 41, 0.42);
     }
 
     .creation-name-row button {
-      border-color: rgba(218, 216, 198, 0.18);
-      background: rgba(16, 21, 18, 0.58);
-      color: rgba(231, 226, 206, 0.76);
+      border-color: rgba(116, 67, 39, 0.26);
+      background: rgba(70, 48, 27, 0.14);
+      color: rgba(47, 37, 24, 0.78);
     }
 
     .creation-note {
       min-height: 20px;
       margin-top: 7px;
-      color: rgba(184, 187, 170, 0.76);
+      color: rgba(72, 62, 42, 0.72);
       font-size: 13px;
     }
 
@@ -1767,52 +2070,56 @@
     }
 
     .identity-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
     }
 
     .identity-option {
       min-height: 0;
-      padding: 9px 13px 10px 16px;
-      text-align: left;
-      border-color: rgba(210, 214, 198, 0.09);
-      border-left-color: rgba(213, 183, 127, 0.28);
+      padding: 8px 12px 9px;
+      text-align: center;
+      border-color: rgba(116, 67, 39, 0.18);
+      border-left-color: rgba(116, 67, 39, 0.18);
       border-radius: 1px;
-      background: linear-gradient(90deg, rgba(232, 226, 196, 0.045), rgba(16, 21, 18, 0.18));
+      background: rgba(255, 247, 214, 0.16);
       box-shadow: none;
       transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
     }
 
     .identity-option.selected {
-      border-color: rgba(224, 199, 150, 0.72);
-      border-left-color: rgba(224, 199, 150, 0.95);
-      background: linear-gradient(90deg, rgba(88, 72, 47, 0.68), rgba(30, 42, 34, 0.72));
-      box-shadow: inset 0 0 0 1px rgba(232, 218, 184, 0.1), 0 8px 24px rgba(0, 0, 0, 0.22);
-      transform: translateX(3px);
+      border-color: rgba(140, 51, 39, 0.58);
+      border-left-color: rgba(140, 51, 39, 0.58);
+      background: rgba(142, 55, 42, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(142, 55, 42, 0.08);
+      transform: translateY(-1px);
     }
 
     .identity-option .response-prefix {
       display: inline;
       margin-right: 5px;
-      color: rgba(213, 183, 127, 0.74);
+      color: rgba(116, 67, 39, 0.62);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 16px;
     }
 
     .identity-option strong {
       display: inline;
-      color: rgba(238, 231, 205, 0.95);
+      color: rgba(36, 29, 19, 0.92);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 17px;
     }
 
-    .identity-option span:not(.response-prefix) {
-      display: block;
-      margin-top: 4px;
-      color: rgba(193, 198, 179, 0.78);
-      font-size: 13px;
-      line-height: 1.42;
+    .identity-brief {
+      position: relative;
+      margin: 0 0 4px;
+      border-left: 2px solid rgba(143, 38, 30, 0.38);
+      padding: 8px 12px;
+      color: rgba(48, 39, 25, 0.78);
+      background: rgba(255, 247, 214, 0.14);
+      font-size: 14px;
+      line-height: 1.65;
     }
 
     .dialogue-responses {
@@ -1825,52 +2132,49 @@
     .dialogue-response {
       min-width: 132px;
       min-height: 40px;
-      border-color: rgba(218, 216, 198, 0.2);
-      background: rgba(21, 29, 25, 0.62);
-      color: rgba(236, 233, 216, 0.88);
+      border-color: rgba(116, 67, 39, 0.22);
+      border-radius: 1px;
+      background: rgba(255, 247, 214, 0.16);
+      color: rgba(43, 34, 22, 0.82);
       letter-spacing: 0.08em;
+      box-shadow: none;
     }
 
     .dialogue-response:hover {
-      border-color: rgba(224, 204, 160, 0.52);
-      background: rgba(42, 51, 42, 0.72);
+      border-color: rgba(143, 38, 30, 0.42);
+      background: rgba(142, 55, 42, 0.1);
     }
 
     .response-primary {
-      border-color: rgba(221, 202, 157, 0.6);
-      background: linear-gradient(180deg, rgba(104, 82, 52, 0.78), rgba(38, 51, 39, 0.9));
+      border-color: rgba(143, 38, 30, 0.42);
+      background: linear-gradient(180deg, rgba(143, 67, 46, 0.2), rgba(78, 52, 30, 0.16));
+      color: rgba(39, 28, 17, 0.9);
     }
 
     .response-quiet {
-      color: rgba(212, 210, 192, 0.68);
+      color: rgba(68, 58, 40, 0.66);
     }
 
     .creation-start {
       min-width: 150px;
-      border-color: rgba(224, 226, 209, 0.56);
-      background: linear-gradient(180deg, rgba(91, 106, 92, 0.9), rgba(34, 45, 39, 0.96));
-      color: #edecdc;
+      border-color: rgba(143, 38, 30, 0.48);
+      background: linear-gradient(180deg, rgba(143, 67, 46, 0.24), rgba(78, 52, 30, 0.18));
+      color: #2b2014;
       font-weight: 900;
     }
 
     .commission-summary {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px 11px;
-      align-items: center;
-      border: 1px solid rgba(214, 211, 191, 0.14);
-      border-left-color: rgba(146, 58, 43, 0.52);
-      padding: 10px 13px;
-      background: rgba(222, 222, 200, 0.04);
-    }
-
-    .commission-summary span {
-      color: rgba(194, 196, 178, 0.62);
-      font-size: 12px;
+      display: block;
+      border: 1px solid rgba(80, 60, 35, 0.18);
+      border-left-color: rgba(143, 38, 30, 0.42);
+      padding: 12px 14px;
+      background: rgba(255, 247, 214, 0.14);
+      color: rgba(47, 37, 24, 0.78);
+      line-height: 1.75;
     }
 
     .commission-summary strong {
-      color: rgba(235, 225, 196, 0.92);
+      color: rgba(38, 27, 16, 0.94);
     }
 
     .audience-exit {
@@ -1880,7 +2184,7 @@
       bottom: auto;
       border: 0;
       padding: 4px 0;
-      color: rgba(200, 200, 181, 0.52);
+      color: rgba(80, 60, 35, 0.56);
       background: transparent;
       font-size: 12px;
       letter-spacing: 0.14em;
@@ -1980,6 +2284,16 @@
     @keyframes menuDrift {
       from { transform: scale(1.04) translate3d(-0.8%, -0.45%, 0); }
       to { transform: scale(1.11) translate3d(0.8%, 0.45%, 0); }
+    }
+
+    @keyframes authMountainBreath {
+      from { transform: scale(1.06) translate3d(-1.2%, -0.75%, 0); }
+      to { transform: scale(1.18) translate3d(1.35%, 0.95%, 0); }
+    }
+
+    @keyframes authMountainDrift {
+      from { transform: scale(1.12) translate3d(1.4%, 0.8%, 0); opacity: 0.42; }
+      to { transform: scale(1.2) translate3d(-1.6%, -1.1%, 0); opacity: 0.6; }
     }
 
     @keyframes menuSceneCycle {
@@ -2220,21 +2534,25 @@
 
     .dialogue-layout {
       display: grid;
-      grid-template-columns: 150px minmax(0, 1fr);
-      gap: 13px;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 12px;
       margin: 12px 0;
     }
 
     .dialogue-portrait {
       display: grid;
-      min-height: 188px;
+      width: 64px;
+      min-height: 64px;
       place-items: center;
-      border: 1px solid rgba(255, 230, 160, 0.2);
-      border-radius: 6px;
-      color: #ffe6a7;
-      background: rgba(72, 57, 39, 0.64);
-      font-size: 34px;
+      align-self: start;
+      border: 2px solid rgba(143, 38, 30, 0.52);
+      border-radius: 1px;
+      color: rgba(170, 59, 44, 0.86);
+      background: rgba(234, 210, 158, 0.08);
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 28px;
       font-weight: 900;
+      transform: rotate(-5deg);
     }
 
     .dialogue-text,
@@ -2242,7 +2560,15 @@
       min-height: 96px;
       white-space: pre-wrap;
       line-height: 1.78;
-      color: #f6e2b6;
+      border: 1px solid rgba(214, 190, 138, 0.2);
+      border-left-color: rgba(143, 38, 30, 0.36);
+      padding: 14px 16px;
+      color: #2b2418;
+      background:
+        linear-gradient(135deg, rgba(230, 218, 180, 0.94), rgba(186, 171, 132, 0.9)),
+        url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
+      background-blend-mode: normal, multiply;
+      box-shadow: inset 0 0 24px rgba(65, 43, 24, 0.12), 0 12px 30px rgba(0, 0, 0, 0.18);
     }
 
     .delta-item {
@@ -2355,12 +2681,41 @@
         min-height: 520px;
       }
 
+      .auth-content {
+        grid-template-columns: 1fr;
+        align-content: center;
+        gap: 22px;
+        overflow: auto;
+        padding: 24px 18px;
+      }
+
+      .auth-hero h1 {
+        font-size: clamp(72px, 20vw, 112px);
+      }
+
+      .auth-hero p {
+        font-size: clamp(22px, 7vw, 34px);
+      }
+
+      .auth-seal {
+        display: none;
+      }
+
+      .auth-panel {
+        padding: 18px;
+      }
+
+      .auth-actions {
+        grid-template-columns: 1fr;
+      }
+
       .identity-grid {
+        display: grid;
         grid-template-columns: 1fr;
       }
 
       .character-create {
-        place-items: end center;
+        place-items: center;
         padding: 14px;
         overflow: auto;
       }
@@ -2370,6 +2725,7 @@
         max-height: none;
         margin-bottom: 0;
         padding-bottom: 18px;
+        transform: none;
       }
 
       .audience-heading {
@@ -2406,6 +2762,15 @@
         justify-content: flex-start;
       }
 
+      .dialogue-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .dialogue-portrait {
+        width: 58px;
+        min-height: 58px;
+      }
+
       .commission-summary {
         align-items: flex-start;
       }
@@ -2426,6 +2791,9 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+      .auth-scene,
+      .auth-screen::before,
+      .auth-screen::after,
       .menu-scene,
       .main-menu-backdrop::before,
       .main-menu-backdrop::after,

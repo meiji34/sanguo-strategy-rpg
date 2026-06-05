@@ -29237,6 +29237,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     const TURN_DAYS = 5;
     const SAVE_KEY = 'luanshi_zhiqi_v4';
     const SAVE_KEY_BACKUP = 'luanshi_zhiqi_v4_backup';
+    const AUTH_SESSION_KEY = 'luanshi_zhiqi_auth_session_v1';
     const GAME_SCHEMA_VERSION = 6;
     const MAP_EDITOR_STORAGE_KEY = 'sg-map-editor-data:v1';
     const storageLoadDiagnostics = [];
@@ -30856,7 +30857,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     const loadedGameState = loadFromStorage(false);
     let gameState = ensureCharacterSystemState(loadedGameState || createInitialState());
     let characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
-    let launchScreen = 'menu';
+    let launchScreen = 'auth';
+    let authMode = 'login';
+    let authUser = null;
     let characterCreationStep = 'arrival';
     let openingTransitionMode = 'audience';
     let openingTransitionTimer = null;
@@ -33396,10 +33399,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const speaker = document.getElementById('creationSpeaker');
       const line = document.getElementById('creationLine');
       const voiceMark = document.getElementById('dialogueVoiceMark');
+      const identityBrief = document.getElementById('identityBrief');
       const commissionName = document.getElementById('commissionName');
       const commissionIdentity = document.getElementById('commissionIdentity');
       if (commissionName) commissionName.textContent = draftName;
       if (commissionIdentity) commissionIdentity.textContent = identity.name;
+      const identityBriefs = {
+        commandant: '朱笔旁批：领桂阳都尉，先稳郡兵与军令。地方士族会更谨慎。',
+        granary: '朱笔旁批：领桂阳督粮官，以屯田和粮草扎稳根基。正面军力略弱。',
+        magistrate: '朱笔旁批：领桂阳县令，先安民心、治安与郡中政务。军事起步略弱。'
+      };
+      if (identityBrief) identityBrief.textContent = identityBriefs[identity.id] || identityBriefs.commandant;
 
       const dialogue = {
         arrival: {
@@ -33449,6 +33459,75 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return null;
     }
 
+    const authApi = {
+      async login(payload) {
+        return { ok: true, user: { account: payload.account, displayName: payload.account || '来客' } };
+      },
+      async register(payload) {
+        return { ok: true, user: { account: payload.account, displayName: payload.account || '新客' } };
+      }
+    };
+    window.sanguoAuthApi = authApi;
+
+    function updateAuthScreen() {
+      const screen = document.getElementById('authScreen');
+      if (!screen) return;
+      screen.querySelectorAll('[data-auth-mode]').forEach(button => {
+        button.classList.toggle('active', button.getAttribute('data-auth-mode') === authMode);
+      });
+      const title = document.getElementById('authPanelTitle');
+      const kicker = document.getElementById('authPanelKicker');
+      const submit = document.getElementById('authSubmit');
+      const password = document.getElementById('authPassword');
+      if (title) title.textContent = authMode === 'register' ? '注册新账号' : '登录账号';
+      if (kicker) kicker.textContent = authMode === 'register' ? '新牒入册' : '府牒验身';
+      if (submit) submit.textContent = authMode === 'register' ? '注册' : '登录';
+      if (password) password.autocomplete = authMode === 'register' ? 'new-password' : 'current-password';
+    }
+
+    function readAuthPayload() {
+      return {
+        account: document.getElementById('authAccount')?.value.trim() || '',
+        password: document.getElementById('authPassword')?.value || ''
+      };
+    }
+
+    function setAuthStatus(message, bad = false) {
+      const status = document.getElementById('authStatus');
+      if (!status) return;
+      status.textContent = message;
+      status.classList.toggle('bad', bad);
+    }
+
+    function enterMainMenuAfterAuth(user) {
+      authUser = user || { account: 'guest', displayName: '游客' };
+      try {
+        sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authUser));
+      } catch (_) {
+        // 浏览器隐私模式下无法写入时，保留内存登录态即可。
+      }
+      launchScreen = 'menu';
+      render();
+    }
+
+    async function submitAuthForm() {
+      const payload = readAuthPayload();
+      if (!payload.account) return setAuthStatus('请先写下账号。', true);
+      if (payload.password.length < 4) return setAuthStatus('密钥至少需要 4 个字符。', true);
+      setAuthStatus(authMode === 'register' ? '正在登记新牒...' : '正在校验府牒...');
+      try {
+        const result = await authApi[authMode](payload);
+        if (!result?.ok) return setAuthStatus(result?.message || '校验未通过。', true);
+        enterMainMenuAfterAuth(result.user);
+      } catch (error) {
+        setAuthStatus('前端已预留后端接口，但当前请求失败：' + (error?.message || '未知错误'), true);
+      }
+    }
+
+    function enterAsGuest() {
+      enterMainMenuAfterAuth({ account: 'guest', displayName: '游客' });
+    }
+
     function updateMainMenu() {
       const summary = getStoredSaveSummary();
       const continueButton = document.getElementById('continueGame');
@@ -33464,12 +33543,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function renderLaunchLayers() {
+      document.getElementById('authScreen')?.classList.toggle('show', launchScreen === 'auth');
       document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
       document.getElementById('characterCreate')?.classList.toggle('show', launchScreen === 'character');
       document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
       const transition = document.getElementById('openingTransition');
       transition?.classList.toggle('show', launchScreen === 'transition' || launchScreen === 'commissioning');
       transition?.classList.toggle('departure', launchScreen === 'commissioning');
+      updateAuthScreen();
       updateMainMenu();
     }
 
@@ -37753,6 +37834,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function bindEvents() {
       document.addEventListener('click', event => {
+        const authModeButton = event.target.closest('[data-auth-mode]');
+        if (authModeButton) {
+          authMode = authModeButton.getAttribute('data-auth-mode') === 'register' ? 'register' : 'login';
+          setAuthStatus('当前为前端演示入口，后端接口已预留。');
+          updateAuthScreen();
+          return;
+        }
+        if (event.target.closest('[data-auth-guest]')) {
+          enterAsGuest();
+          return;
+        }
         const menuAction = event.target.closest('[data-menu-action]');
         if (menuAction) {
           const action = menuAction.getAttribute('data-menu-action');
@@ -38057,6 +38149,13 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const mapClick = event.target.closest('#mapStage');
         if (mapClick) {
           selectNearestCityFromMapEvent(event);
+        }
+      });
+
+      document.addEventListener('submit', event => {
+        if (event.target.id === 'authForm') {
+          event.preventDefault();
+          submitAuthForm();
         }
       });
 
