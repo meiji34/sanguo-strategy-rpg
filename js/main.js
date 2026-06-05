@@ -29234,6 +29234,8 @@
 };
 
 const MAP_SIZE = { width: 1448, height: 1086 };
+const MIN_MAP_ZOOM = 1;
+const MAX_MAP_ZOOM = 4.2;
     const TURN_DAYS = 5;
     const SAVE_KEY = 'luanshi_zhiqi_v4';
     const SAVE_KEY_BACKUP = 'luanshi_zhiqi_v4_backup';
@@ -33370,6 +33372,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function updateCharacterCreation() {
       const input = document.getElementById('playerNameInput');
       const note = document.getElementById('nameValidation');
+      const namePreview = document.getElementById('namePreview');
       const start = document.querySelector('[data-start-game]');
       if (!input || !note || !start) return;
       if (!isComposingPlayerName && input.value !== characterDraft.name) input.value = characterDraft.name;
@@ -33380,7 +33383,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const valid = length === 0 || (length >= 2 && length <= 6);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? (length ? '主簿已经记下，等你应答。' : '姓名留空时，将由主簿代拟。')
+        ? (length ? '主簿已在文牒上收笔，待你回禀。' : '不报姓名时，主簿会替你拟一个两到六字中文名。')
         : '姓名需为 2 到 6 个中文字符。';
       start.disabled = !valid;
 
@@ -33403,6 +33406,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const identityBrief = document.getElementById('identityBrief');
       const commissionName = document.getElementById('commissionName');
       const commissionIdentity = document.getElementById('commissionIdentity');
+      if (namePreview) namePreview.textContent = draftName === '名册待录' ? '名册待录' : '已录 · ' + draftName;
       if (commissionName) commissionName.textContent = draftName;
       if (commissionIdentity) commissionIdentity.textContent = identity.name;
       const identityBriefs = {
@@ -33421,7 +33425,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         name: {
           speaker: '州府主簿',
           mark: '簿',
-          line: '“赴任文牒已经备好。还请留下姓名，待主公亲自用印。”'
+          line: '“主公问你名姓，不为虚礼。密令出堂之后，桂阳诸署都要认这一笔。”'
         },
         identity: {
           speaker: '荆州牧 · 刘表',
@@ -36258,10 +36262,33 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
+    function clampMapZoom(zoom) {
+      const numericZoom = Number(zoom);
+      return clamp(Number.isFinite(numericZoom) ? numericZoom : MIN_MAP_ZOOM, MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+    }
+
+    function normalizeMapState(mapState = gameState.mapState) {
+      const nextMapState = (mapState && typeof mapState === 'object') ? mapState : { zoom: MIN_MAP_ZOOM, panX: 0, panY: 0 };
+      nextMapState.zoom = clampMapZoom(nextMapState.zoom);
+      nextMapState.panX = Number.isFinite(Number(nextMapState.panX)) ? Number(nextMapState.panX) : 0;
+      nextMapState.panY = Number.isFinite(Number(nextMapState.panY)) ? Number(nextMapState.panY) : 0;
+      if (nextMapState.zoom <= MIN_MAP_ZOOM) {
+        nextMapState.zoom = MIN_MAP_ZOOM;
+        nextMapState.panX = 0;
+        nextMapState.panY = 0;
+      }
+      return nextMapState;
+    }
+
+    function normalizeMapView() {
+      gameState.mapState = normalizeMapState(gameState.mapState);
+    }
+
     function setMapFocusOn(x, y, zoom) {
-      gameState.mapState.zoom = clamp(zoom, 0.75, 4.2);
+      gameState.mapState.zoom = clampMapZoom(zoom);
       gameState.mapState.panX = MAP_SIZE.width / 2 - x * gameState.mapState.zoom;
       gameState.mapState.panY = MAP_SIZE.height / 2 - y * gameState.mapState.zoom;
+      normalizeMapView();
     }
 
     function clientToSvgPoint(clientX, clientY) {
@@ -36360,14 +36387,18 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function zoomMapAt(clientX, clientY, deltaZoom) {
       const oldZoom = gameState.mapState.zoom;
-      const newZoom = clamp(oldZoom + deltaZoom, 0.75, 4.2);
-      if (newZoom === oldZoom) return;
+      const newZoom = clampMapZoom(oldZoom + deltaZoom);
+      if (newZoom === oldZoom) {
+        normalizeMapView();
+        return;
+      }
       const point = clientToSvgPoint(clientX, clientY);
       const worldX = (point.x - gameState.mapState.panX) / oldZoom;
       const worldY = (point.y - gameState.mapState.panY) / oldZoom;
       gameState.mapState.zoom = newZoom;
       gameState.mapState.panX = point.x - worldX * newZoom;
       gameState.mapState.panY = point.y - worldY * newZoom;
+      normalizeMapView();
     }
 
     function zoomMapAtCenter(deltaZoom) {
@@ -36990,6 +37021,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         factionRelations: Object.assign(fresh.factionRelations, loaded.factionRelations || structuredClone(DEFAULT_FACTION_RELATIONS))
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
+      normalized.mapState = normalizeMapState(normalized.mapState);
       if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 2) {
         applyInitialPublicSupportProfiles(normalized, true);
       }
@@ -38328,6 +38360,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         if (Math.abs(dx) + Math.abs(dy) > 1.5) dragState.moved = true;
         gameState.mapState.panX += dx;
         gameState.mapState.panY += dy;
+        normalizeMapView();
         dragState.point = point;
         renderMap();
       });

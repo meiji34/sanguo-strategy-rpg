@@ -120,13 +120,21 @@
       </div>
 
       <div class="creation-step" data-creation-step="name">
-        <p class="audience-narration">主簿摊开名册，执笔候在一旁。你向前半步，堂中只余纸页轻响。</p>
+        <p class="audience-narration">主簿将赴任文牒推到灯下。案边烛火一低，堂中只余纸页轻响，等你亲口落名。</p>
         <div class="creation-field">
-          <strong>你的应答</strong>
-          <div class="creation-name-row">
-            <input id="playerNameInput" autocomplete="off" placeholder="报上姓名；留空则由主簿代拟">
-            <button data-random-name="1">请主簿拟名</button>
+          <div class="name-audience-card">
+            <div class="name-scribe">
+              <span>州府主簿</span>
+              <strong>“文牒在此，请落姓名。”</strong>
+            </div>
+            <label class="name-slip" for="playerNameInput">
+              <span class="name-slip-kicker">赴任文牒 · 姓名栏</span>
+              <input id="playerNameInput" autocomplete="off" placeholder="在此报名">
+              <span class="name-slip-rule" aria-hidden="true"></span>
+            </label>
+            <button class="name-generate-seal" data-random-name="1">主簿代拟</button>
           </div>
+          <div class="name-preview" id="namePreview" aria-live="polite">名册待录</div>
           <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可由主簿代拟。</div>
         </div>
         <div class="dialogue-responses">
