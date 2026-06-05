@@ -30863,6 +30863,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     let characterCreationStep = 'arrival';
     let openingTransitionMode = 'audience';
     let openingTransitionTimer = null;
+    let officeHandoffTimer = null;
     let isComposingPlayerName = false;
     FACTIONS.player.name = gameState.player.name || '玩家';
     let mapData = createMapData();
@@ -33547,6 +33548,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
       document.getElementById('characterCreate')?.classList.toggle('show', launchScreen === 'character');
       document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
+      document.getElementById('officeHandoff')?.classList.toggle('show', launchScreen === 'handoff');
       const transition = document.getElementById('openingTransition');
       transition?.classList.toggle('show', launchScreen === 'transition' || launchScreen === 'commissioning');
       transition?.classList.toggle('departure', launchScreen === 'commissioning');
@@ -33569,6 +33571,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function beginNewGameFlow() {
       stopOpeningTransition();
+      stopOfficeHandoffTransition();
       resetRuntimeForNewGame();
       launchScreen = 'intro';
       render();
@@ -33577,6 +33580,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function resumeSavedGame(show = true) {
       stopOpeningTransition();
+      stopOfficeHandoffTransition();
       const loaded = loadFromStorage(show);
       if (!loaded || !loaded.storyFlags?.characterCreated) {
         if (show) toast('没有可继续的游戏进度');
@@ -33599,11 +33603,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function returnToMainMenu() {
       stopIntroVideo();
       stopOpeningTransition();
+      stopOfficeHandoffTransition();
       launchScreen = 'menu';
       render();
     }
 
-    function startNewCharacter() {
+    function startNewCharacter(options = {}) {
       if (gameState.storyFlags.characterCreated) return;
       const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
       const name = characterDraft.name || randomChineseName();
@@ -33646,8 +33651,16 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       startAutosaveTimer();
       updateAutosaveDisplay();
       render();
-      gameState.activeModal = { type: 'tutorialGuide', guideId: 'introStart' };
-      render();
+      const showIntroGuide = () => {
+        if (launchScreen !== 'game' || !gameState.storyFlags.characterCreated) return;
+        gameState.activeModal = { type: 'tutorialGuide', guideId: 'introStart' };
+        render();
+      };
+      if (options.delayGuide) {
+        setTimeout(showIntroGuide, 650);
+      } else {
+        showIntroGuide();
+      }
     }
 
     function renderTutorialCard() {
@@ -37770,12 +37783,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       document.getElementById('openingTransition')?.classList.remove('playing');
     }
 
+    function stopOfficeHandoffTransition() {
+      if (officeHandoffTimer) clearTimeout(officeHandoffTimer);
+      officeHandoffTimer = null;
+    }
+
     function completeOpeningTransition() {
       if (openingTransitionTimer) clearTimeout(openingTransitionTimer);
       openingTransitionTimer = null;
       document.getElementById('openingTransition')?.classList.remove('playing');
       if (openingTransitionMode === 'departure') {
-        startNewCharacter();
+        beginOfficeHandoffTransition();
         return;
       }
       characterCreationStep = 'arrival';
@@ -37783,8 +37801,19 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
+    function beginOfficeHandoffTransition() {
+      stopOfficeHandoffTransition();
+      launchScreen = 'handoff';
+      render();
+      officeHandoffTimer = setTimeout(() => {
+        officeHandoffTimer = null;
+        startNewCharacter({ delayGuide: true });
+      }, 4200);
+    }
+
     function beginOpeningTransition(mode = 'audience') {
       stopOpeningTransition();
+      stopOfficeHandoffTransition();
       openingTransitionMode = mode;
       launchScreen = mode === 'departure' ? 'commissioning' : 'transition';
       const kicker = document.getElementById('transitionKicker');
