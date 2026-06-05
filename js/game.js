@@ -2178,6 +2178,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         conversations: [],
         npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
         specialEventState: { triggered: {}, cooldowns: {}, queue: [] },
+        aiContentCache: {},
+        aiContentPayloads: {},
+        aiContentPending: {},
+        aiUsage: { turn: 1, turnDialogueCalls: 0, maxDialogueCallsPerTurn: 5, turnContentCalls: 0, maxContentCallsPerTurn: 6 },
         letters: [],
         militaryOrders: [],
         campaigns: [],
@@ -3256,11 +3260,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const opening = getNpcSignatureOpening(npc, context.conversationType, attitude);
       const actionLine = getNpcActionLine(npc, context.conversationType, attitude, memoryProfile);
       const memoryLine = getNpcMemoryLine(npc, memoryProfile);
+
       const intentMap = {
         talk: '重新校准彼此的底线',
         probe: '守住秘密并反向试探你',
         gift: '衡量这份好处是否值得欠情',
-        recruit: npc.trustPlayer >= npc.recruitmentDifficulty ? '决定是否把前途押给你' : '拖延归附并继续观察',
+        recruit: npc.trustPlayer >= (npc.recruitmentDifficulty || 50) ? '决定是否把前途押给你' : '拖延归附并继续观察',
         ally: '争取对自己有利的盟约边界',
         scheme: '确认计策的收益、代价和退路',
         threaten: '在恐惧与反感之间重新评估你',
@@ -3268,11 +3273,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         promiseOffice: '考验你的承诺是否有兑现能力',
         strategy: '把自己的长远打算嵌入你的战略'
       };
+
+      const allParts = [opening, actionLine, memoryLine].filter(Boolean);
+
       return {
-        npcText: [opening, actionLine, memoryLine].filter(Boolean).join(' '),
+        npcText: allParts.join(' '),
         npcIntent: intentMap[context.conversationType] || action.label,
         emotionalShift: attitude,
-        memorySummary: npc.name + '把这次“' + action.label + '”记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
+        memorySummary: npc.name + '把这次"' + action.label + '"记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
         suggestedPlayerChoices: ['顺着其目标继续谈', '触碰其底线试探', '暂时收束承诺']
       };
     }
@@ -3444,16 +3452,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       gameState.selectedCharacterId = characterId;
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: true };
       renderModal();
-      const dialogue = await generateNpcDialogue({
-        npc,
-        player: gameState.player,
-        gameState,
-        conversationType,
-        recentMemory: npc.memory.slice(0, 6),
-        persona: buildNpcDialoguePersona(npc),
-        strategicContext: getNpcStrategicContext(npc),
-        availableIntentions: Object.keys(CONVERSATION_ACTIONS)
-      });
+      const dialogue = await generateNpcDialogue({ npc, player: gameState.player, gameState, conversationType });
       const effects = applyConversationResult({ npc, conversationType }, dialogue);
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: false, dialogue, effects };
       saveToStorage(false);
@@ -3831,7 +3830,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const opening = getNpcSignatureOpening(npc, 'talk', getNpcAttitudeLabel(npc));
       const bodyLines = {
         '庇护松动': '襄阳近来对桂阳的耐心正在变薄。若你仍要借刘表之名行事，就必须给出能让人安心的凭据。',
-        '野心渐显': '你的声势渐起，旁人会开始区分“能臣”和“异心”。我想听你亲口说明边界。',
+        '野心渐显': '你的声势渐起，旁人会开始区分"能臣"和"异心"。我想听你亲口说明边界。',
         '乡里不安': '乡里议论已经起了波澜。若官府只求快刀，豪强未必明着反，却会在暗处拖住你。',
         '军令后续': '军令既出，后勤、期限和退路都要有人盯着。我请见，是怕胜算被琐事磨坏。',
         '疑虑加深': '此前几件事让我心中生疑。若不把话说开，往后合作只会越来越薄。',
@@ -5670,16 +5669,34 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function renderTurnResultModal(summary) {
       const events = summary.events.filter(event => event.level !== 'minor');
+      gameState.aiContentPayloads ||= {};
       return `<div class="game-modal">
         <div class="modal-head"><div><h2>第 ${summary.turn} 回合结算</h2><span class="tag">${summary.date}</span></div><button data-turn-summary-continue="1">继续</button></div>
         <div class="modal-columns">
           <section class="modal-column"><h3>我方状态变化</h3>${renderPlayerDeltaPanel(summary)}</section>
           <section class="modal-column"><h3>当日战报 / 天下消息 / 来信</h3>
-            ${events.length ? events.map(event => `<div class="turn-event-item ${event.level}">
-              <strong>${escapeHtml(event.text)}</strong>
-              ${event.letterId ? `<div><button data-open-letter="${event.letterId}">打开来信</button></div>` : ''}
-              ${event.level === 'important' && !event.letterId ? `<div><button data-open-turn-event="${event.id}">展开详情</button></div>` : ''}
-            </div>`).join('') : '<div class="turn-event-item">本回合没有需要特别禀报的大事。</div>'}
+            ${events.length ? events.map(function(event) {
+              var aiBtn = '';
+              if (event.level === 'important' && !event.letterId) {
+                var payloadId = 'event_' + gameState.turn + '_' + simpleHash((event.id || '') + (event.text || ''));
+                gameState.aiContentPayloads[payloadId] ||= {
+                  id: event.id || '',
+                  eventId: event.id || '',
+                  title: '战报详情',
+                  summary: event.text || '',
+                  tone: event.tone || '',
+                  level: event.level || '',
+                  turn: gameState.turn
+                };
+                aiBtn = '<div><button class="ghost-btn" data-ai-content-type="battleReportDetail" data-ai-content-payload-id="' + payloadId + '">AI 详析</button></div>';
+              }
+              return '<div class="turn-event-item ' + event.level + '">'
+                + '<strong>' + escapeHtml(event.text) + '</strong>'
+                + (event.letterId ? '<div><button data-open-letter="' + event.letterId + '">打开来信</button></div>' : '')
+                + (event.level === 'important' && !event.letterId ? '<div><button data-open-turn-event="' + event.id + '">展开详情</button></div>' : '')
+                + aiBtn
+                + '</div>';
+            }).join('') : '<div class="turn-event-item">本回合没有需要特别禀报的大事。</div>'}
           </section>
         </div>
       </div>`;
@@ -5717,6 +5734,236 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
+
+    // ---------- 按需 AI 内容生成系统 ----------
+
+    function canUseAiContentApi() {
+      gameState.aiUsage ||= {};
+      gameState.aiUsage.turn ||= gameState.turn;
+      gameState.aiUsage.turnDialogueCalls ||= 0;
+      gameState.aiUsage.maxDialogueCallsPerTurn ||= 5;
+      gameState.aiUsage.turnContentCalls ||= 0;
+      gameState.aiUsage.maxContentCallsPerTurn ||= 6;
+
+      if (gameState.aiUsage.turn !== gameState.turn) {
+        gameState.aiUsage.turn = gameState.turn;
+        gameState.aiUsage.turnDialogueCalls = 0;
+        gameState.aiUsage.turnContentCalls = 0;
+      }
+
+      const max = Number(gameState.aiUsage.maxContentCallsPerTurn || 6);
+      if (gameState.aiUsage.turnContentCalls >= max) {
+        return false;
+      }
+
+      gameState.aiUsage.turnContentCalls += 1;
+      return true;
+    }
+
+    function buildAiContentKey(type, payload = {}) {
+      const raw = JSON.stringify({
+        type,
+        turn: gameState.turn,
+        id: payload.id || '',
+        eventId: payload.eventId || '',
+        characterId: payload.characterId || '',
+        cityId: payload.cityId || '',
+        factionId: payload.factionId || '',
+        topic: payload.topic || '',
+        summary: payload.summary || ''
+      });
+      return type + '|' + gameState.turn + '|' + simpleHash(raw);
+    }
+
+    function buildCompactAiContentContext(type, payload = {}) {
+      return {
+        type,
+        turn: gameState.turn,
+        date: formatDate(),
+        player: {
+          name: gameState.player?.name,
+          title: gameState.player?.title,
+          protection: gameState.player?.protection,
+          independent: !!gameState.player?.independent,
+          cityCount: controlledCities().length,
+          mainCities: controlledCities().slice(0, 4).map(function(c) {
+            return {
+              id: c.id,
+              name: c.name,
+              publicSupport: c.publicSupport,
+              food: c.food,
+              money: c.money,
+              defense: c.defense,
+              morale: c.morale
+            };
+          })
+        },
+        payload: payload,
+        recentEvents: (gameState.turnEvents || []).slice(-5).map(function(e) {
+          return { tone: e.tone, level: e.level, text: e.text };
+        }),
+        recentSummaries: (gameState.turnSummaries || []).slice(0, 2).map(function(s) {
+          return {
+            turn: s.turn,
+            date: s.date,
+            events: (s.events || []).slice(0, 4).map(function(e) { return e.text; })
+          };
+        })
+      };
+    }
+
+    function generateAiContentFallback(type, context) {
+      var p = context.payload || {};
+
+      if (type === 'advisorAdvice') {
+        return [
+          '臣以为，当前局势不可只看一城一地。',
+          p.cityName ? p.cityName + '之事，关乎民心、粮草与守备三端。' : '',
+          '若府库尚足，可先稳民心；若敌军逼近，则应先整军修防。',
+          '主公宜择其急者而行，不可使内政与军务同时失衡。'
+        ].filter(Boolean).join('');
+      }
+
+      if (type === 'npcMessage') {
+        return [
+          p.npcName ? p.npcName + '遣人传话：' : '有人传话：',
+          p.summary || '局势有变，还请主公早作决断。'
+        ].join('');
+      }
+
+      if (type === 'letterBody') {
+        return [
+          p.senderName ? p.senderName + '来信：' : '来信：',
+          p.summary || '近来局势多变，愿与主公再议后事。'
+        ].join('');
+      }
+
+      if (type === 'battleReportDetail') {
+        return [
+          '此役虽只见战报数行，实则牵动军心与地势。',
+          p.summary || '',
+          '若继续进兵，需留意粮道与后方守备。'
+        ].filter(Boolean).join('');
+      }
+
+      return p.summary || '局势未明，仍需主公亲自权衡。';
+    }
+
+    async function generateAiContent(type, payload) {
+      gameState.aiContentCache ||= {};
+      gameState.aiContentPending ||= {};
+
+      var key = buildAiContentKey(type, payload);
+
+      var cached = gameState.aiContentCache[key];
+      if (cached && cached.text) {
+        return cached.text;
+      }
+
+      if (gameState.aiContentPending[key]) {
+        return gameState.aiContentPending[key];
+      }
+
+      var context = buildCompactAiContentContext(type, payload);
+
+      var task = (async function() {
+        var text;
+        var usedApi = false;
+
+        try {
+          if (canUseAiContentApi() && window.remoteLLMAdapter && window.remoteLLMAdapter.generateAiContent) {
+            text = await window.remoteLLMAdapter.generateAiContent(context);
+            usedApi = true;
+          } else {
+            text = generateAiContentFallback(type, context);
+          }
+        } catch (err) {
+          console.error('AI 内容生成失败，使用 fallback', type, err);
+          text = generateAiContentFallback(type, context);
+        }
+
+        text = String(text || '').trim() || generateAiContentFallback(type, context);
+
+        gameState.aiContentCache[key] = {
+          key: key,
+          type: type,
+          turn: gameState.turn,
+          title: payload.title || '',
+          text: text,
+          source: usedApi ? 'api' : 'fallback',
+          createdAt: Date.now()
+        };
+
+        saveToStorage(false);
+        return text;
+      })();
+
+      gameState.aiContentPending[key] = task;
+
+      try {
+        return await task;
+      } finally {
+        delete gameState.aiContentPending[key];
+      }
+    }
+
+    function openAiContentModal(type, payload) {
+      var title = payload.title || '详情';
+      gameState.activeModal = {
+        type: 'aiContent',
+        contentType: type,
+        payload: payload,
+        title: title,
+        loading: true,
+        text: ''
+      };
+
+      renderModal();
+
+      generateAiContent(type, payload).then(function(text) {
+        if (
+          gameState.activeModal &&
+          gameState.activeModal.type === 'aiContent' &&
+          gameState.activeModal.contentType === type
+        ) {
+          gameState.activeModal.loading = false;
+          gameState.activeModal.text = text;
+          var key = buildAiContentKey(type, payload);
+          gameState.activeModal.source = (gameState.aiContentCache[key] && gameState.aiContentCache[key].source) || 'fallback';
+          renderModal();
+        }
+      }).catch(function(err) {
+        console.error('AI 内容弹窗生成失败', err);
+        if (gameState.activeModal && gameState.activeModal.type === 'aiContent') {
+          gameState.activeModal.loading = false;
+          gameState.activeModal.text = generateAiContentFallback(type, buildCompactAiContentContext(type, payload));
+          gameState.activeModal.source = 'fallback';
+          renderModal();
+        }
+      });
+    }
+
+    function normalizeAiContentCache() {
+      gameState.aiContentCache ||= {};
+      gameState.aiContentPayloads ||= {};
+
+      Object.keys(gameState.aiContentCache).forEach(function(key) {
+        var item = gameState.aiContentCache[key];
+        if (!item || gameState.turn - Number(item.turn || 0) > 3) {
+          delete gameState.aiContentCache[key];
+        }
+      });
+
+      Object.keys(gameState.aiContentPayloads || {}).forEach(function(id) {
+        var payload = gameState.aiContentPayloads[id];
+        if (payload && payload.turn != null && gameState.turn - payload.turn > 3) {
+          delete gameState.aiContentPayloads[id];
+        }
+      });
+    }
+
+    // ---------- 按需 AI 内容生成系统结束 ----------
+
     function renderModal() {
       const root = document.getElementById('gameModalRoot');
       if (!root) return;
@@ -5747,10 +5994,25 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const letter = gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
         letter.read = true;
+        var letterPayloadId = 'letter_' + letter.id + '_' + gameState.turn;
+        gameState.aiContentPayloads ||= {};
+        gameState.aiContentPayloads[letterPayloadId] ||= {
+          id: 'letter_' + letter.id,
+          letterId: letter.id,
+          characterId: letter.fromCharacterId || letter.senderId || '',
+          senderName: letter.senderName || '',
+          title: letter.title || '',
+          summary: letter.summary || letter.body || '',
+          choices: (letter.choices || []).map(function(c) { return c.label; }),
+          turn: gameState.turn
+        };
         root.innerHTML = `<div class="game-modal">
           <div class="letter-head"><div><h2>${escapeHtml(letter.title)}</h2><span class="tag">${escapeHtml(letter.senderName)}｜${escapeHtml(letter.date)}</span></div></div>
           <div class="letter-body">${escapeHtml(letter.body)}</div>
-          <div class="modal-actions">${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}</div>
+          <div class="modal-actions">
+            <button class="ghost-btn" data-ai-content-type="letterBody" data-ai-content-payload-id="${letterPayloadId}">展开信件原文</button>
+            ${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}
+          </div>
         </div>`;
         return;
       }
@@ -5791,6 +6053,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           </div>
         </div>`;
       }
+      if (modal.type === 'aiContent') {
+        root.innerHTML = renderAiContentModal(modal);
+        return;
+      }
       if (modal.type === 'tutorialGuide') {
         root.innerHTML = renderGuideModal(modal.guideId);
         return;
@@ -5799,6 +6065,34 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         root.innerHTML = renderTaskDrawer();
         return;
       }
+    }
+
+    function renderAiContentModal(modal) {
+      var loading = modal.loading;
+      var sourceLabel = '';
+      if (!loading && modal.source === 'fallback') {
+        sourceLabel = '<span class="tag muted">本地简版</span>';
+      } else if (!loading && modal.source === 'api') {
+        sourceLabel = '<span class="tag">AI 生成</span>';
+      }
+
+      return [
+        '<div class="game-modal">',
+        '<div class="modal-head">',
+        '<h2>' + escapeHtml(modal.title || '详情') + '</h2>',
+        sourceLabel,
+        '<button class="ghost-btn" data-close-modal="1">关闭</button>',
+        '</div>',
+        '<div class="card">',
+        loading
+          ? '<p class="muted">谋士正在整理言辞……</p>'
+          : '<p class="dialogue-text">' + escapeHtml(modal.text || '暂无内容。') + '</p>',
+        '</div>',
+        '<div class="modal-actions">',
+        '<button data-close-modal="1">确认</button>',
+        '</div>',
+        '</div>'
+      ].join('');
     }
 
     function captureRegion(regionId, controller, reports, options = {}) {
@@ -8041,6 +8335,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return Math.random().toString(36).slice(2, 10);
     }
 
+    function simpleHash(str) {
+      let hash = 5381;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
+        hash = hash & hash;
+      }
+      return Math.abs(hash).toString(36);
+    }
+
     function undoOrder() {
       const order = gameState.orders.pop();
       if (!order) return toast('没有可撤销的指令');
@@ -8494,6 +8797,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       gameState.turnSummaries = gameState.turnSummaries.slice(0, 18);
       gameState.pendingTurnSummary = summary;
       cleanupInvalidAppointments();
+      normalizeAiContentCache();
       saveToStorage(false);
       gameState.lastAutoSave = Date.now();
       updateAutosaveDisplay();
@@ -9165,7 +9469,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (playerPower > 58) y.alert = clamp(y.alert + 4, 0, 100);
       if (y.alert >= 62 && !gameState.storyFlags.yuanDisarm) {
         gameState.storyFlags.yuanDisarm = true;
-        reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在“袁绍”面板选择表忠、拒绝或起兵。' });
+        reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在"袁绍"面板选择表忠、拒绝或起兵。' });
       }
       if (y.alert >= 84 && !gameState.storyFlags.openConflict && canNpcTargetPlayerCity('yuan', 'liyang', 'yecheng', {}) && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
         createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800, routeMode: 'official' }, reports);
@@ -9310,7 +9614,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       captureRegion('yecheng', 'player', null);
       gameState.characters.yuanShao.status = method === 'coup' ? '被迫退位' : '兵败失权';
       gameState.characters.yuanShao.authority = 0;
-      reports.push({ tone: 'good', text: '河北夺袁篇结束：邺城已落入你手。游戏进入第二篇“北方霸权篇”，袁氏余党与曹操威胁仍未消失。' });
+      reports.push({ tone: 'good', text: '河北夺袁篇结束：邺城已落入你手。游戏进入第二篇"北方霸权篇"，袁氏余党与曹操威胁仍未消失。' });
     }
 
     function launchCoup() {
@@ -10182,6 +10486,20 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         }
       });
     }
+    if (!window.remoteLLMAdapter?.generateAiContent) {
+      window.__initLLMAdapter?.(Object.assign(window.remoteLLMAdapter || {}, {
+        generateAiContent: async function(context) {
+          var res = await backendFetch('/api/ai/content', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ context: context })
+          });
+          if (!res.ok) throw new Error('AI content request failed');
+          var data = await res.json();
+          return data.text || data.content || '';
+        }
+      }));
+    }
     if (window.USE_REMOTE_LLM === undefined) window.USE_REMOTE_LLM = true;
 
     let autosaveTimer = null;
@@ -10882,6 +11200,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       migrated.publicUnrestState.rebellionCities ||= {};
       migrated.publicUnrestState.intelligenceLeaks ||= [];
       migrated.factionRelations ||= structuredClone(DEFAULT_FACTION_RELATIONS);
+      migrated.aiContentCache ||= {};
+      migrated.aiContentPayloads ||= {};
+      migrated.aiContentPending ||= {};
+      migrated.aiUsage ||= {};
+      migrated.aiUsage.turn ||= migrated.turn || 1;
+      migrated.aiUsage.turnDialogueCalls ||= 0;
+      migrated.aiUsage.maxDialogueCallsPerTurn ||= 5;
+      migrated.aiUsage.turnContentCalls ||= 0;
+      migrated.aiUsage.maxContentCallsPerTurn ||= 6;
       migrated.schemaVersion = GAME_SCHEMA_VERSION;
       // 清理旧存档中存在的异常战役
       (migrated.campaigns || []).forEach(c => {
@@ -10942,7 +11269,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         militaryPlanner: Object.assign(fresh.militaryPlanner, loaded.militaryPlanner || { sourceId: null, targetId: null, route: 'official' }),
         factionWarState: Object.assign(fresh.factionWarState, loaded.factionWarState || { lastAttackTurnByFaction: {}, recentWars: [] }),
         publicUnrestState: Object.assign(fresh.publicUnrestState, loaded.publicUnrestState || { lastCrisisTurnByCity: {}, rebellionCities: {}, intelligenceLeaks: [] }),
-        factionRelations: Object.assign(fresh.factionRelations, loaded.factionRelations || structuredClone(DEFAULT_FACTION_RELATIONS))
+        factionRelations: Object.assign(fresh.factionRelations, loaded.factionRelations || structuredClone(DEFAULT_FACTION_RELATIONS)),
+        aiContentCache: Object.assign(fresh.aiContentCache, loaded.aiContentCache || {}),
+        aiContentPayloads: Object.assign(fresh.aiContentPayloads, loaded.aiContentPayloads || {}),
+        aiContentPending: Object.assign(fresh.aiContentPending, loaded.aiContentPending || {}),
+        aiUsage: Object.assign(fresh.aiUsage, loaded.aiUsage || {}),
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
       if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 2) {
@@ -11867,9 +12198,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         '公元190年，董卓乱政，群雄并起。',
         '荆州表面安定，宗族、豪强与士族却各有盘算。',
         '某夜，襄阳。荆州牧刘表召见了你。',
-        '“桂阳偏远，却是荆南门户。”',
-        '“此地若稳，荆州可安。此地若乱，荆州必失。”',
-        '“吾欲托付于卿。”'
+        '"桂阳偏远，却是荆南门户。"',
+        '"此地若稳，荆州可安。此地若乱，荆州必失。"',
+        '"吾欲托付于卿。"'
       ];
       let index = 0;
       const intro = document.getElementById('intro');
@@ -11997,6 +12328,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const openLetter = event.target.closest('[data-open-letter]');
         if (openLetter) {
           openLetterModal(openLetter.getAttribute('data-open-letter'));
+          return;
+        }
+        const aiContentBtn = event.target.closest('[data-ai-content-type]');
+        if (aiContentBtn) {
+          var aiType = aiContentBtn.getAttribute('data-ai-content-type');
+          var aiPayloadId = aiContentBtn.getAttribute('data-ai-content-payload-id');
+          gameState.aiContentPayloads ||= {};
+          var aiPayload = gameState.aiContentPayloads[aiPayloadId] || {};
+          openAiContentModal(aiType, aiPayload);
           return;
         }
         const openTurnEvent = event.target.closest('[data-open-turn-event]');
@@ -12537,6 +12877,30 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     window.validateStorageSystem = validateStorageSystem;
+
+    function validateAiContentSystem() {
+      return {
+        turn: gameState.turn,
+        aiUsage: gameState.aiUsage,
+        cacheCount: Object.keys(gameState.aiContentCache || {}).length,
+        payloadCount: Object.keys(gameState.aiContentPayloads || {}).length,
+        cache: Object.entries(gameState.aiContentCache || {}).map(function(entry) {
+          var key = entry[0];
+          var item = entry[1];
+          return {
+            key: key,
+            type: item.type,
+            turn: item.turn,
+            title: item.title,
+            hasText: !!item.text,
+            source: item.source || 'unknown',
+            createdAt: item.createdAt
+          };
+        })
+      };
+    }
+
+    window.validateAiContentSystem = validateAiContentSystem;
 
     function validateRemovedCitiesCleanup() {
       const removed = [...REMOVED_CITY_IDS];
