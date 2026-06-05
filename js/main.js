@@ -33383,8 +33383,8 @@ const MAX_MAP_ZOOM = 4.2;
       const valid = length === 0 || (length >= 2 && length <= 6);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? (length ? '主簿已在文牒上收笔，待你回禀。' : '不报姓名时，主簿会替你拟一个两到六字中文名。')
-        : '姓名需为 2 到 6 个中文字符。';
+        ? '姓名须二至六字；若不具名，主簿将代拟入册。'
+        : '姓名须二至六字。';
       start.disabled = !valid;
 
       const steps = ['arrival', 'name', 'identity', 'confirm'];
@@ -33618,7 +33618,7 @@ const MAX_MAP_ZOOM = 4.2;
       const name = characterDraft.name || randomChineseName();
       if (name.length < 2 || name.length > 6) {
         updateCharacterCreation();
-        return toast('姓名需为 2 到 6 个中文字符');
+        return toast('姓名须二至六字');
       }
       const guiyang = gameState.cities.guiyang;
       characterDraft.name = name;
@@ -37869,7 +37869,7 @@ const MAX_MAP_ZOOM = 4.2;
       const name = characterDraft.name || randomChineseName();
       if (name.length < 2 || name.length > 6) {
         updateCharacterCreation();
-        return toast('姓名需为 2 到 6 个中文字符');
+        return toast('姓名须二至六字');
       }
       characterDraft.name = name;
       updateCharacterCreation();

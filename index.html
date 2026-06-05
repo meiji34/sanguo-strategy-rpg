@@ -103,8 +103,8 @@
       </div>
       <div class="dialogue-progress" aria-label="夜召进度">
         <span data-dialogue-progress="arrival">入堂</span>
-        <span data-dialogue-progress="name">报姓名</span>
-        <span data-dialogue-progress="identity">定初任</span>
+        <span data-dialogue-progress="name">具名</span>
+        <span data-dialogue-progress="identity">择任</span>
         <span data-dialogue-progress="confirm">接密令</span>
       </div>
       <div class="dialogue-frame">
@@ -129,17 +129,17 @@
             </div>
             <label class="name-slip" for="playerNameInput">
               <span class="name-slip-kicker">赴任文牒 · 姓名栏</span>
-              <input id="playerNameInput" autocomplete="off" placeholder="在此报名">
+              <input id="playerNameInput" autocomplete="off" placeholder="请书名姓">
               <span class="name-slip-rule" aria-hidden="true"></span>
             </label>
             <button class="name-generate-seal" data-random-name="1">主簿代拟</button>
           </div>
           <div class="name-preview" id="namePreview" aria-live="polite">名册待录</div>
-          <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可由主簿代拟。</div>
+          <div class="creation-note" id="nameValidation">姓名须二至六字；若不具名，主簿将代拟入册。</div>
         </div>
         <div class="dialogue-responses">
-          <button class="dialogue-response response-quiet" data-creation-retreat="arrival">暂不应声</button>
-          <button class="dialogue-response response-primary" data-creation-advance="identity">报上姓名</button>
+          <button class="dialogue-response response-quiet" data-creation-retreat="arrival">缄默不语</button>
+          <button class="dialogue-response response-primary" data-creation-advance="identity">落名接令</button>
         </div>
       </div>
 
@@ -177,7 +177,7 @@
         </div>
       </div>
 
-      <button class="audience-exit" data-menu-action="back">返回主菜单</button>
+      <button class="audience-exit" data-menu-action="back">退回堂外</button>
     </div>
   </section>
 

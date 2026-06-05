@@ -1936,8 +1936,10 @@
       place-items: center;
       overflow: hidden;
       padding: clamp(18px, 4vw, 46px);
-      color: #2c2417;
-      background: #020303;
+      color: #251d13;
+      background:
+        radial-gradient(ellipse at 50% 45%, rgba(78, 61, 36, 0.13), transparent 38%),
+        linear-gradient(180deg, #010101, #050403 52%, #010101);
     }
 
     .character-create.show {
@@ -1958,26 +1960,26 @@
       inset: 0;
       pointer-events: none;
       background:
-        radial-gradient(circle at 68% 42%, rgba(208, 203, 170, 0.12), transparent 18%),
-        radial-gradient(circle at 24% 18%, rgba(168, 106, 62, 0.12), transparent 22%),
-        linear-gradient(90deg, rgba(0, 0, 0, 0.46), transparent 62%),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.08), transparent 44%, rgba(0, 0, 0, 0.36));
+        radial-gradient(ellipse at 52% 51%, rgba(166, 132, 78, 0.12), transparent 31%),
+        radial-gradient(circle at 24% 18%, rgba(118, 63, 38, 0.1), transparent 24%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.72), transparent 48%, rgba(0, 0, 0, 0.62)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.64), transparent 39%, rgba(0, 0, 0, 0.72));
       z-index: 2;
-      box-shadow: inset 0 0 135px rgba(0, 0, 0, 0.62);
+      box-shadow: inset 0 0 190px rgba(0, 0, 0, 0.84);
     }
 
     .audience-painting {
       inset: -4%;
       background:
-        linear-gradient(90deg, rgba(0, 0, 0, 0.56), rgba(5, 9, 8, 0.22) 42%, rgba(0, 0, 0, 0.5)),
-        linear-gradient(180deg, rgba(0, 0, 0, 0.08), transparent 50%, rgba(0, 0, 0, 0.36)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.72), rgba(5, 7, 6, 0.4) 42%, rgba(0, 0, 0, 0.68)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.46), transparent 48%, rgba(0, 0, 0, 0.66)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/paintings/expanded/met-51667.jpg") center 52% / cover;
-      filter: grayscale(0.62) sepia(0.07) saturate(0.76) contrast(1.04) brightness(1.0);
+      filter: grayscale(0.72) sepia(0.08) saturate(0.66) contrast(1.1) brightness(0.64);
       animation: audienceDrift 13s ease-in-out infinite alternate;
     }
 
     .audience-paper {
-      opacity: 0.14;
+      opacity: 0.09;
       background: url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
       mix-blend-mode: soft-light;
       z-index: 1;
@@ -1989,9 +1991,9 @@
       height: 24vw;
       border-radius: 50%;
       pointer-events: none;
-      opacity: 0.2;
+      opacity: 0.12;
       filter: blur(40px);
-      background: radial-gradient(circle, rgba(191, 119, 61, 0.55), transparent 66%);
+      background: radial-gradient(circle, rgba(138, 74, 40, 0.5), transparent 66%);
       animation: lanternBreathe 6s ease-in-out infinite alternate;
       z-index: 3;
     }
@@ -2019,19 +2021,25 @@
       border-radius: 1px;
       padding: clamp(28px, 4.2vw, 46px) clamp(26px, 4.4vw, 50px) clamp(26px, 4vw, 42px);
       background:
-        radial-gradient(circle at 10% 8%, rgba(255, 248, 207, 0.42), transparent 23%),
-        radial-gradient(circle at 86% 8%, rgba(139, 64, 45, 0.13), transparent 29%),
-        linear-gradient(135deg, rgba(225, 215, 176, 0.95), rgba(170, 157, 121, 0.93)),
+        radial-gradient(circle at 12% 10%, rgba(214, 196, 137, 0.16), transparent 24%),
+        radial-gradient(circle at 86% 14%, rgba(74, 37, 28, 0.2), transparent 31%),
+        radial-gradient(circle at 50% 102%, rgba(22, 14, 8, 0.34), transparent 42%),
+        linear-gradient(135deg, rgba(141, 132, 95, 0.96), rgba(84, 78, 58, 0.97)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
-      background-blend-mode: soft-light, normal, normal, multiply;
+      background-blend-mode: soft-light, multiply, multiply, normal, multiply;
       box-shadow:
-        0 2px 0 rgba(255, 248, 213, 0.24) inset,
-        0 -1px 0 rgba(74, 47, 27, 0.18) inset,
-        0 34px 96px rgba(0, 0, 0, 0.62),
-        18px 24px 0 rgba(10, 8, 5, 0.12);
+        0 1px 0 rgba(238, 224, 170, 0.18) inset,
+        0 -1px 0 rgba(41, 25, 13, 0.28) inset,
+        0 42px 120px rgba(0, 0, 0, 0.82),
+        0 12px 38px rgba(0, 0, 0, 0.56),
+        18px 24px 0 rgba(3, 2, 1, 0.2);
       transform: rotate(-0.32deg);
       isolation: isolate;
-      clip-path: polygon(1.1% 0.3%, 99% 0.8%, 99.5% 96.6%, 96.5% 99%, 1.7% 98.6%, 0.35% 49%);
+      clip-path: polygon(1.1% 0.4%, 98.8% 0.9%, 99.6% 28%, 99% 71%, 96.4% 98.8%, 72% 99.5%, 1.7% 98.5%, 0.35% 49%, 0.9% 14%);
+    }
+
+    .character-create.show .creation-panel {
+      animation: characterPaperIn 1.1s cubic-bezier(0.2, 0.72, 0.24, 1) both;
     }
 
     .creation-panel::before {
@@ -2040,10 +2048,13 @@
       inset: 9px 12px;
       pointer-events: none;
       background:
-        linear-gradient(90deg, transparent 17%, rgba(64, 42, 24, 0.12) 17.15%, transparent 17.8%, transparent 80%, rgba(64, 42, 24, 0.1) 80.2%, transparent 80.9%),
-        linear-gradient(180deg, transparent 23%, rgba(64, 42, 24, 0.08) 23.15%, transparent 23.9%, transparent 74%, rgba(64, 42, 24, 0.08) 74.25%, transparent 75%),
-        radial-gradient(circle at 48% 48%, transparent 48%, rgba(46, 30, 18, 0.18)),
-        linear-gradient(135deg, rgba(255, 255, 255, 0.24), transparent 18%, transparent 74%, rgba(60, 36, 18, 0.1));
+        radial-gradient(circle at 16% 20%, rgba(51, 32, 17, 0.11) 0 1px, transparent 2px),
+        radial-gradient(circle at 76% 72%, rgba(45, 29, 17, 0.12) 0 1px, transparent 2px),
+        linear-gradient(180deg, rgba(15, 10, 6, 0.11), transparent 35%, rgba(18, 11, 6, 0.16)),
+        linear-gradient(90deg, transparent 17%, rgba(42, 27, 15, 0.14) 17.15%, transparent 17.8%, transparent 80%, rgba(42, 27, 15, 0.12) 80.2%, transparent 80.9%),
+        linear-gradient(180deg, transparent 23%, rgba(42, 27, 15, 0.1) 23.15%, transparent 23.9%, transparent 74%, rgba(42, 27, 15, 0.1) 74.25%, transparent 75%),
+        radial-gradient(circle at 48% 48%, transparent 48%, rgba(23, 15, 9, 0.28)),
+        linear-gradient(135deg, rgba(255, 244, 190, 0.14), transparent 18%, transparent 72%, rgba(24, 13, 7, 0.18));
       mix-blend-mode: multiply;
       z-index: 0;
       clip-path: polygon(1.2% 0.4%, 99% 0.7%, 99.4% 96.7%, 96.6% 99%, 1.7% 98.4%, 0.35% 49%);
@@ -2060,7 +2071,7 @@
       height: 62px;
       place-items: center;
       border: 2px solid rgba(143, 38, 30, 0.5);
-      color: rgba(143, 38, 30, 0.5);
+      color: rgba(130, 33, 27, 0.46);
       font-size: 18px;
       font-weight: 900;
       line-height: 0.88;
@@ -2068,13 +2079,30 @@
       pointer-events: none;
       transform: rotate(8deg);
       z-index: 0;
-      background: rgba(126, 42, 32, 0.025);
-      box-shadow: inset 0 0 18px rgba(132, 44, 32, 0.08);
+      background: rgba(84, 29, 24, 0.035);
+      box-shadow: inset 0 0 18px rgba(81, 28, 24, 0.08);
     }
 
     .creation-panel > * {
       position: relative;
       z-index: 1;
+    }
+
+    .character-create.show .audience-heading,
+    .character-create.show .dialogue-frame,
+    .character-create.show .dialogue-progress,
+    .character-create.show .audience-exit {
+      animation: inkTextIn 1s ease both;
+      animation-delay: 0.34s;
+    }
+
+    .character-create.show .dialogue-frame {
+      animation-delay: 0.44s;
+    }
+
+    .character-create.show .creation-step.active {
+      animation: paperReplyIn 0.9s ease both;
+      animation-delay: 0.54s;
     }
 
     .dialogue-voice-mark {
@@ -2085,15 +2113,15 @@
       width: 48px;
       height: 48px;
       place-items: center;
-      border: 1px solid rgba(146, 58, 43, 0.62);
-      color: rgba(149, 40, 31, 0.86);
-      background: rgba(232, 215, 174, 0.22);
+      border: 1px solid rgba(126, 38, 32, 0.58);
+      color: rgba(119, 31, 26, 0.82);
+      background: rgba(119, 38, 30, 0.07);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 24px;
       font-weight: 900;
       line-height: 1;
       transform: rotate(-5deg);
-      box-shadow: inset 0 0 18px rgba(130, 52, 38, 0.08);
+      box-shadow: inset 0 0 18px rgba(65, 26, 19, 0.12);
     }
 
     .audience-heading {
@@ -2107,12 +2135,12 @@
 
     .audience-heading .intro-kicker {
       margin-bottom: 0;
-      color: rgba(126, 76, 42, 0.84);
+      color: rgba(97, 61, 37, 0.82);
       letter-spacing: 0.1em;
     }
 
     .audience-location {
-      color: rgba(83, 65, 42, 0.62);
+      color: rgba(55, 45, 32, 0.64);
       font-size: 12px;
       letter-spacing: 0.18em;
     }
@@ -2122,32 +2150,43 @@
       top: clamp(19px, 2.8vw, 28px);
       right: clamp(18px, 3vw, 30px);
       display: flex;
-      gap: 7px;
+      gap: 9px;
       margin-top: 0;
     }
 
     .dialogue-progress span {
-      width: 8px;
-      height: 8px;
-      overflow: hidden;
-      border: 1px solid rgba(219, 216, 196, 0.24);
-      border-radius: 50%;
-      padding: 0;
-      color: rgba(210, 207, 187, 0.38);
-      font-size: 0;
-      letter-spacing: 0;
-      background: rgba(12, 17, 15, 0.72);
+      display: grid;
+      min-width: 38px;
+      min-height: 25px;
+      place-items: center;
+      border: 1px solid rgba(113, 36, 31, 0.2);
+      border-radius: 0;
+      padding: 2px 7px;
+      color: rgba(94, 34, 29, 0.48);
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.14em;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(119, 36, 31, 0.05), transparent 64%),
+        rgba(126, 42, 32, 0.025);
+      transform: rotate(-3deg);
     }
 
     .dialogue-progress span.current {
-      border-color: rgba(130, 67, 42, 0.7);
-      background: rgba(130, 67, 42, 0.7);
-      box-shadow: 0 0 14px rgba(130, 67, 42, 0.22);
+      border-color: rgba(124, 32, 27, 0.58);
+      color: rgba(111, 28, 24, 0.78);
+      background:
+        radial-gradient(circle at 50% 45%, rgba(129, 35, 29, 0.12), transparent 64%),
+        rgba(126, 42, 32, 0.045);
+      box-shadow: inset 0 0 14px rgba(111, 28, 24, 0.08);
+      transform: rotate(2deg);
     }
 
     .dialogue-progress span.done {
-      border-color: rgba(77, 72, 54, 0.46);
-      background: rgba(77, 72, 54, 0.34);
+      border-color: rgba(95, 35, 30, 0.3);
+      color: rgba(90, 32, 28, 0.38);
+      background: rgba(85, 32, 28, 0.03);
     }
 
     .dialogue-frame {
@@ -2165,11 +2204,11 @@
       top: 3px;
       bottom: 8px;
       width: 2px;
-      background: linear-gradient(180deg, rgba(125, 78, 45, 0.7), rgba(125, 78, 45, 0.08));
+      background: linear-gradient(180deg, rgba(91, 55, 32, 0.64), rgba(91, 55, 32, 0.06));
     }
 
     .dialogue-speaker {
-      color: rgba(116, 67, 39, 0.86);
+      color: rgba(82, 49, 29, 0.9);
       font-size: 14px;
       font-weight: 900;
       letter-spacing: 0.14em;
@@ -2178,11 +2217,11 @@
     .dialogue-line {
       width: min(740px, 100%);
       margin: 9px 0 0;
-      color: #262016;
+      color: rgba(30, 23, 15, 0.92);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: clamp(20px, 2.25vw, 27px);
       line-height: 1.7;
-      text-shadow: 0 1px 0 rgba(255, 244, 202, 0.2);
+      text-shadow: 0 1px 0 rgba(210, 192, 139, 0.16);
     }
 
     .dialogue-line::first-letter {
@@ -2197,12 +2236,12 @@
     .creation-step.active {
       display: block;
       padding-left: 66px;
-      animation: paperReplyIn 0.46s ease both;
+      animation: paperReplyIn 0.72s ease both;
     }
 
     .audience-narration {
       margin: 0 0 12px;
-      color: rgba(63, 54, 36, 0.72);
+      color: rgba(45, 36, 24, 0.66);
       font-size: 14px;
       line-height: 1.65;
     }
@@ -2222,16 +2261,16 @@
       grid-template-columns: minmax(118px, 0.55fr) minmax(0, 1fr) auto;
       gap: 12px;
       align-items: stretch;
-      border: 1px solid rgba(94, 63, 35, 0.22);
+      border: 1px solid rgba(73, 48, 28, 0.18);
       padding: 12px;
       background:
-        linear-gradient(135deg, rgba(255, 249, 220, 0.42), rgba(126, 88, 49, 0.08)),
+        linear-gradient(135deg, rgba(169, 153, 105, 0.34), rgba(65, 43, 25, 0.16)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
-      background-blend-mode: normal, multiply;
+      background-blend-mode: multiply, multiply;
       box-shadow:
-        0 18px 28px rgba(60, 37, 18, 0.09),
-        inset 0 1px 0 rgba(255, 251, 226, 0.35),
-        inset 0 -1px 0 rgba(74, 46, 24, 0.1);
+        0 18px 28px rgba(38, 23, 11, 0.12),
+        inset 0 1px 0 rgba(221, 207, 158, 0.2),
+        inset 0 -1px 0 rgba(55, 34, 18, 0.14);
       clip-path: polygon(0.6% 0.8%, 98.8% 0.2%, 99.5% 92%, 96.8% 99.2%, 1.2% 98.6%, 0.2% 22%);
     }
 
@@ -2240,7 +2279,7 @@
       position: absolute;
       inset: 7px;
       pointer-events: none;
-      border: 1px solid rgba(84, 55, 31, 0.11);
+      border: 1px solid rgba(55, 35, 20, 0.1);
       background:
         linear-gradient(90deg, transparent, rgba(145, 94, 54, 0.06), transparent),
         radial-gradient(circle at 86% 18%, rgba(145, 38, 30, 0.08), transparent 24%);
@@ -2259,21 +2298,21 @@
       align-content: center;
       gap: 8px;
       min-height: 92px;
-      border-left: 2px solid rgba(128, 70, 38, 0.38);
+      border-left: 2px solid rgba(103, 56, 34, 0.34);
       padding: 12px 13px;
       background:
-        linear-gradient(135deg, rgba(54, 39, 25, 0.16), rgba(255, 247, 214, 0.06));
+        linear-gradient(135deg, rgba(47, 32, 19, 0.18), rgba(204, 187, 132, 0.05));
       box-shadow: inset 0 0 18px rgba(73, 42, 18, 0.05);
     }
 
     .name-scribe span {
-      color: rgba(116, 67, 39, 0.76);
+      color: rgba(82, 49, 29, 0.68);
       font-size: 12px;
       letter-spacing: 0.18em;
     }
 
     .name-scribe strong {
-      color: rgba(37, 30, 20, 0.88);
+      color: rgba(32, 25, 17, 0.86);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 19px;
       font-weight: 700;
@@ -2284,15 +2323,15 @@
       display: grid;
       align-content: end;
       min-height: 92px;
-      border: 1px solid rgba(91, 62, 35, 0.2);
+      border: 0;
       padding: 13px 16px 12px;
       background:
-        linear-gradient(180deg, rgba(255, 249, 220, 0.66), rgba(210, 186, 129, 0.14)),
+        linear-gradient(180deg, rgba(167, 154, 111, 0.24), rgba(73, 49, 29, 0.12)),
         url("../影像素材/sanguo_opening_video_package_v10/assets/textures/Paper001/Paper001_1K-JPG_Color.jpg") center / cover;
-      background-blend-mode: normal, multiply;
+      background-blend-mode: multiply, multiply;
       box-shadow:
-        0 10px 24px rgba(62, 37, 17, 0.08),
-        inset 0 0 22px rgba(92, 55, 24, 0.06);
+        inset 0 -1px 0 rgba(46, 29, 16, 0.12),
+        inset 0 0 22px rgba(54, 35, 19, 0.08);
       transform: rotate(-0.25deg);
       cursor: text;
     }
@@ -2306,15 +2345,15 @@
       width: 28px;
       height: 28px;
       place-items: center;
-      border: 1px solid rgba(143, 38, 30, 0.32);
-      color: rgba(143, 38, 30, 0.42);
+      border: 1px solid rgba(118, 32, 27, 0.28);
+      color: rgba(105, 29, 25, 0.36);
       font-family: "STKaiti", "KaiTi", serif;
       font-weight: 900;
       transform: rotate(6deg);
     }
 
     .name-slip-kicker {
-      color: rgba(116, 67, 39, 0.62);
+      color: rgba(84, 50, 30, 0.58);
       font-size: 12px;
       letter-spacing: 0.18em;
     }
@@ -2323,11 +2362,11 @@
       width: 100%;
       min-height: 45px;
       border-width: 0 0 1px;
-      border-color: rgba(80, 60, 35, 0.4);
+      border-color: rgba(58, 42, 25, 0.42);
       border-radius: 0;
       padding: 4px 48px 2px 0;
       background: transparent;
-      color: #2b2418;
+      color: rgba(29, 22, 15, 0.92);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: clamp(28px, 3vw, 36px);
       letter-spacing: 0.16em;
@@ -2336,12 +2375,12 @@
 
     .name-slip input:focus {
       outline: none;
-      border-color: rgba(132, 49, 38, 0.58);
-      box-shadow: 0 7px 0 -6px rgba(132, 49, 38, 0.28);
+      border-color: rgba(58, 42, 25, 0.54);
+      box-shadow: none;
     }
 
     .name-slip input::placeholder {
-      color: rgba(74, 61, 41, 0.32);
+      color: rgba(40, 32, 22, 0.28);
     }
 
     .name-slip-rule {
@@ -2350,32 +2389,32 @@
       right: 64px;
       bottom: 15px;
       height: 1px;
-      background: linear-gradient(90deg, rgba(105, 72, 41, 0.45), transparent);
+      background: linear-gradient(90deg, rgba(67, 47, 27, 0.46), transparent);
     }
 
     .name-generate-seal {
       align-self: center;
       min-width: 88px;
       min-height: 64px;
-      border: 1px solid rgba(143, 38, 30, 0.42);
+      border: 1px solid rgba(112, 31, 27, 0.38);
       border-radius: 0;
       padding: 8px 12px;
-      color: rgba(128, 43, 33, 0.88);
+      color: rgba(97, 28, 24, 0.78);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 18px;
       line-height: 1.15;
       background:
-        radial-gradient(circle at 50% 44%, rgba(153, 46, 35, 0.12), transparent 58%),
-        rgba(255, 247, 214, 0.18);
-      box-shadow: inset 0 0 18px rgba(142, 55, 42, 0.08), 0 10px 20px rgba(62, 37, 17, 0.08);
+        radial-gradient(circle at 50% 44%, rgba(120, 34, 29, 0.11), transparent 58%),
+        rgba(110, 40, 32, 0.035);
+      box-shadow: inset 0 0 18px rgba(91, 32, 27, 0.08), 0 10px 20px rgba(38, 23, 11, 0.08);
       transform: rotate(1.5deg);
     }
 
     .name-generate-seal:hover {
-      border-color: rgba(143, 38, 30, 0.64);
+      border-color: rgba(112, 31, 27, 0.58);
       background:
-        radial-gradient(circle at 50% 44%, rgba(153, 46, 35, 0.16), transparent 58%),
-        rgba(255, 247, 214, 0.28);
+        radial-gradient(circle at 50% 44%, rgba(120, 34, 29, 0.15), transparent 58%),
+        rgba(110, 40, 32, 0.07);
       transform: translateY(-1px) rotate(1.5deg);
     }
 
@@ -2383,9 +2422,9 @@
       width: fit-content;
       min-width: 118px;
       margin: 8px 0 0 auto;
-      border-top: 1px solid rgba(111, 72, 41, 0.18);
+      border-top: 1px solid rgba(81, 50, 29, 0.18);
       padding-top: 5px;
-      color: rgba(116, 67, 39, 0.7);
+      color: rgba(74, 43, 27, 0.64);
       font-family: "STKaiti", "KaiTi", serif;
       font-size: 15px;
       letter-spacing: 0.18em;
@@ -2395,7 +2434,7 @@
     .creation-note {
       min-height: 20px;
       margin-top: 7px;
-      color: rgba(72, 62, 42, 0.72);
+      color: rgba(49, 39, 26, 0.68);
       font-size: 13px;
     }
 
@@ -2483,42 +2522,86 @@
     .dialogue-responses {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      margin-top: 14px;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
     }
 
     .dialogue-response {
-      min-width: 132px;
+      position: relative;
+      min-width: 126px;
       min-height: 40px;
-      border-color: rgba(116, 67, 39, 0.22);
-      border-radius: 1px;
+      border-color: rgba(78, 48, 28, 0.18);
+      border-radius: 0;
       background:
-        linear-gradient(180deg, rgba(255, 247, 214, 0.18), rgba(86, 57, 31, 0.1));
-      color: rgba(43, 34, 22, 0.82);
+        linear-gradient(180deg, rgba(183, 168, 118, 0.08), rgba(68, 43, 24, 0.06));
+      color: rgba(39, 30, 20, 0.72);
       letter-spacing: 0.08em;
-      box-shadow: 0 8px 18px rgba(56, 35, 20, 0.08);
+      box-shadow: none;
     }
 
     .dialogue-response:hover {
-      border-color: rgba(143, 38, 30, 0.42);
-      background: rgba(142, 55, 42, 0.1);
+      border-color: rgba(106, 36, 30, 0.34);
+      background: rgba(98, 37, 30, 0.07);
     }
 
     .response-primary {
-      border-color: rgba(143, 38, 30, 0.42);
-      background: linear-gradient(180deg, rgba(143, 67, 46, 0.2), rgba(78, 52, 30, 0.16));
-      color: rgba(39, 28, 17, 0.9);
+      min-width: 142px;
+      border-color: rgba(111, 28, 24, 0.58);
+      color: rgba(84, 22, 18, 0.9);
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 17px;
+      font-weight: 900;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(122, 28, 23, 0.14), transparent 62%),
+        rgba(103, 31, 26, 0.045);
+      box-shadow: inset 0 0 20px rgba(92, 26, 22, 0.08), 0 11px 22px rgba(37, 21, 10, 0.1);
+      transform: rotate(-0.6deg);
+    }
+
+    .response-primary::after {
+      content: "";
+      position: absolute;
+      right: 8px;
+      bottom: 7px;
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(112, 28, 24, 0.36);
+      background: rgba(106, 28, 24, 0.05);
+      transform: rotate(8deg);
+      pointer-events: none;
+    }
+
+    .response-primary:hover {
+      border-color: rgba(111, 28, 24, 0.76);
+      background:
+        radial-gradient(circle at 50% 50%, rgba(122, 28, 23, 0.2), transparent 62%),
+        rgba(103, 31, 26, 0.07);
+      transform: translateY(-1px) rotate(-0.6deg);
     }
 
     .response-quiet {
-      color: rgba(68, 58, 40, 0.66);
+      min-width: auto;
+      border-color: transparent;
+      padding-inline: 4px;
+      color: rgba(47, 38, 27, 0.44);
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .response-quiet:hover {
+      border-color: transparent;
+      color: rgba(84, 29, 24, 0.62);
+      background: transparent;
     }
 
     .creation-start {
       min-width: 150px;
-      border-color: rgba(143, 38, 30, 0.48);
-      background: linear-gradient(180deg, rgba(143, 67, 46, 0.24), rgba(78, 52, 30, 0.18));
-      color: #2b2014;
+      border-color: rgba(111, 28, 24, 0.64);
+      background:
+        radial-gradient(circle at 50% 50%, rgba(122, 28, 23, 0.18), transparent 62%),
+        rgba(103, 31, 26, 0.06);
+      color: rgba(78, 20, 17, 0.92);
       font-weight: 900;
     }
 
@@ -2622,11 +2705,13 @@
       border-color: rgba(255, 225, 151, 0.72);
       background: rgba(45, 27, 15, 0.88);
       color: #ffe7a8;
+      pointer-events: none;
       box-shadow: 0 18px 42px rgba(0, 0, 0, 0.52);
     }
 
     .intro-play.show {
       display: block;
+      pointer-events: auto;
     }
 
     .intro-kicker {
@@ -2638,10 +2723,22 @@
 
     .skip-intro {
       position: absolute;
-      top: 18px;
-      right: 18px;
+      top: 16px;
+      right: 20px;
       z-index: 3;
-      background: rgba(0, 0, 0, 0.45);
+      border: 0;
+      padding: 5px 0;
+      background: transparent;
+      color: rgba(226, 224, 206, 0.28);
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.92);
+      opacity: 0.62;
+    }
+
+    .skip-intro:hover {
+      color: rgba(238, 232, 210, 0.82);
+      opacity: 1;
     }
 
     @keyframes menuDrift {
@@ -2739,6 +2836,40 @@
       to { transform: scale(1.12) translate3d(0.95%, 0.75%, 0); }
     }
 
+    @keyframes characterPaperIn {
+      0% {
+        opacity: 0;
+        filter: brightness(0.72) blur(2px);
+        transform: translate3d(0, 26px, 0) scale(0.985) rotate(-0.32deg);
+      }
+      45% {
+        opacity: 0.82;
+        filter: brightness(0.9) blur(0.7px);
+      }
+      100% {
+        opacity: 1;
+        filter: brightness(1) blur(0);
+        transform: translate3d(0, 0, 0) scale(1) rotate(-0.32deg);
+      }
+    }
+
+    @keyframes inkTextIn {
+      0% {
+        opacity: 0;
+        filter: blur(1.5px);
+        transform: translate3d(0, 7px, 0);
+      }
+      62% {
+        opacity: 0.68;
+        filter: blur(0.45px);
+      }
+      100% {
+        opacity: 1;
+        filter: blur(0);
+        transform: translate3d(0, 0, 0);
+      }
+    }
+
     @keyframes lanternBreathe {
       from { opacity: 0.12; transform: scale(0.9); }
       to { opacity: 0.28; transform: scale(1.08); }
@@ -2750,8 +2881,8 @@
     }
 
     @keyframes paperReplyIn {
-      from { opacity: 0; transform: translate3d(0, 12px, 0) rotate(-0.2deg); }
-      to { opacity: 1; transform: translate3d(0, 0, 0) rotate(0deg); }
+      from { opacity: 0; filter: blur(1.2px); transform: translate3d(0, 12px, 0) rotate(-0.2deg); }
+      to { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) rotate(0deg); }
     }
 
     @keyframes marching {
@@ -3204,10 +3335,17 @@
       .opening-transition.playing .transition-ink,
       .opening-transition.playing .transition-content,
       .opening-transition.playing .transition-continue,
+      .character-create.show .creation-panel,
+      .character-create.show .audience-heading,
+      .character-create.show .dialogue-frame,
+      .character-create.show .dialogue-progress,
+      .character-create.show .audience-exit,
+      .character-create.show .creation-step.active,
       .office-handoff-backdrop,
       .office-handoff-mist,
       .office-handoff-paper {
         animation-duration: 0.01ms !important;
+        animation-delay: 0s !important;
         animation-iteration-count: 1 !important;
       }
 
