@@ -1,0 +1,9 @@
+Update/
+origin/
+.env
+node_modules/
+/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+npm-debug.log*
