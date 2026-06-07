@@ -5724,12 +5724,65 @@ const MAX_MAP_ZOOM = 4.2;
       return null;
     }
 
+    function authUserFromBackend(user) {
+      const username = user?.username || 'guest';
+      return {
+        id: user?.id || null,
+        username,
+        account: username,
+        displayName: user?.displayName || username,
+        isGuest: Boolean(user?.isGuest)
+      };
+    }
+
+    function persistBackendAuthSession(payload) {
+      if (!payload?.token || !payload?.user) throw new Error('AUTH_PAYLOAD_INVALID');
+      writeBackendSession(payload);
+      return authUserFromBackend(payload.user);
+    }
+
+    function authErrorMessage(error) {
+      const code = error?.payload?.error || error?.message;
+      if (code === 'USERNAME_TAKEN') return '这个账号已经被注册了。';
+      if (code === 'INVALID_CREDENTIALS') return '账号或密钥不正确。';
+      if (code === 'USERNAME_AND_PASSWORD_REQUIRED') return '账号需 3-40 位，只能使用字母、数字、下划线、点、@ 或短横线；密钥至少 6 位。';
+      if (code === 'AUTH_PAYLOAD_INVALID') return '后端返回的登录凭证不完整。';
+      return error?.message || '未知错误';
+    }
+
     const authApi = {
       async login(payload) {
-        return { ok: true, user: { account: payload.account, displayName: payload.account || '来客' } };
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
       },
       async register(payload) {
-        return { ok: true, user: { account: payload.account, displayName: payload.account || '新客' } };
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password,
+            displayName: account
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
+      },
+      async guest() {
+        const result = await backendFetch('/api/auth/guest', {
+          method: 'POST',
+          body: JSON.stringify({
+            deviceId: getBackendDeviceId(),
+            displayName: '游客'
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
       }
     };
     window.sanguoAuthApi = authApi;
@@ -5778,19 +5831,25 @@ const MAX_MAP_ZOOM = 4.2;
     async function submitAuthForm() {
       const payload = readAuthPayload();
       if (!payload.account) return setAuthStatus('请先写下账号。', true);
-      if (payload.password.length < 4) return setAuthStatus('密钥至少需要 4 个字符。', true);
+      if (payload.password.length < 6) return setAuthStatus('密钥至少需要 6 个字符。', true);
       setAuthStatus(authMode === 'register' ? '正在登记新牒...' : '正在校验府牒...');
       try {
         const result = await authApi[authMode](payload);
         if (!result?.ok) return setAuthStatus(result?.message || '校验未通过。', true);
         enterMainMenuAfterAuth(result.user);
       } catch (error) {
-        setAuthStatus('前端已预留后端接口，但当前请求失败：' + (error?.message || '未知错误'), true);
+        setAuthStatus('请求后端失败：' + authErrorMessage(error), true);
       }
     }
 
-    function enterAsGuest() {
-      enterMainMenuAfterAuth({ account: 'guest', displayName: '游客' });
+    async function enterAsGuest() {
+      setAuthStatus('正在创建游客身份...');
+      try {
+        const result = await authApi.guest();
+        enterMainMenuAfterAuth(result.user);
+      } catch (error) {
+        setAuthStatus('游客入口请求后端失败：' + authErrorMessage(error), true);
+      }
     }
 
     function updateMainMenu() {
@@ -5839,9 +5898,8 @@ const MAX_MAP_ZOOM = 4.2;
       stopOpeningTransition();
       stopOfficeHandoffTransition();
       resetRuntimeForNewGame();
-      launchScreen = 'intro';
+      launchScreen = 'character';
       render();
-      beginIntro();
     }
 
     async function resumeSavedGame(show = true) {
@@ -11636,12 +11694,12 @@ const MAX_MAP_ZOOM = 4.2;
         const authModeButton = event.target.closest('[data-auth-mode]');
         if (authModeButton) {
           authMode = authModeButton.getAttribute('data-auth-mode') === 'register' ? 'register' : 'login';
-          setAuthStatus('当前为前端演示入口，后端接口已预留。');
+          setAuthStatus(authMode === 'register' ? '填写账号和密钥后即可注册。' : '输入账号和密钥登录。');
           updateAuthScreen();
           return;
         }
         if (event.target.closest('[data-auth-guest]')) {
-          enterAsGuest();
+          await enterAsGuest();
           return;
         }
         const menuAction = event.target.closest('[data-menu-action]');
