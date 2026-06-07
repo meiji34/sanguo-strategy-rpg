@@ -704,13 +704,56 @@
 
     .action-tabs {
       display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
+      grid-template-columns: repeat(8, minmax(0, 1fr));
       gap: 8px;
     }
 
     .action-tabs button {
       font-weight: 900;
       font-size: 16px;
+    }
+
+    .appointment-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .appointment-row > div {
+      min-width: 0;
+    }
+
+    .appointment-candidate {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      align-items: center;
+    }
+
+    .appointment-candidate > div {
+      min-width: 0;
+    }
+
+    .mini-btn {
+      padding: 3px 8px;
+      font-size: 12px;
+      min-height: 0;
+    }
+
+    .appointment-city-block {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 10px;
+      margin-top: 10px;
+    }
+
+    .appointment-auto-controls {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      margin-top: 10px;
+      padding-top: 10px;
     }
 
     .end-turn-box {
