@@ -10835,14 +10835,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     if (!window.remoteLLMAdapter?.generateAiContent) {
       window.__initLLMAdapter?.(Object.assign(window.remoteLLMAdapter || {}, {
         generateAiContent: async function(context) {
-          var res = await backendFetch('/api/ai/content', {
+          var payload = await backendFetch('/api/ai/content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ context: context })
           });
-          if (!res.ok) throw new Error('AI content request failed');
-          var data = await res.json();
-          return data.text || data.content || '';
+          return payload.text || payload.content || '';
         }
       }));
     }
@@ -12540,6 +12538,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     // ===== 强制新手引导系统结束 =====
+    function updateTabLockStates() {
       document.querySelectorAll('[data-tab]').forEach(btn => {
         const tabId = btn.getAttribute('data-tab');
         const locked = !isTabUnlocked(tabId);
