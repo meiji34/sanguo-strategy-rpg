@@ -287,6 +287,15 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (route === '/api/ai/content' && request.method === 'POST') {
+      const auth = authenticate(request);
+      if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
+      const body = await readJsonBody(request);
+      const text = await generateContentWithDeepSeek(auth.user.id, body.context);
+      sendJson(response, 200, { text });
+      return;
+    }
+
     sendJson(response, 404, { error: 'NOT_FOUND' });
   } catch (error) {
     console.error(error);
@@ -548,6 +557,81 @@ async function generateDialogueWithDeepSeek(userId, context) {
   const content = result.choices?.[0]?.message?.content || '';
   const parsed = parseJsonOrNull(content) || { npcText: content };
   return normalizeDialoguePayload(parsed);
+}
+
+async function generateContentWithDeepSeek(userId, context) {
+  const ctx = context || {};
+  const type = safeString(ctx.type, 40) || 'battleReportDetail';
+  const prompt = buildContentPrompt(type, ctx);
+  const payload = {
+    model: config.deepseekModel,
+    messages: [
+      {
+        role: 'system',
+        content: '你是一个三国策略游戏的叙事助手。你为玩家生成沉浸式的战报详情、谋士献策、NPC留言和信件正文。只返回纯文本内容，不要JSON。'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ],
+    thinking: { type: config.deepseekThinking },
+    temperature: 0.8,
+    max_tokens: 600,
+    stream: false
+  };
+  const result = await callDeepSeek(userId, 'content', payload);
+  const text = result.choices?.[0]?.message?.content || '';
+  return text.trim();
+}
+
+function buildContentPrompt(type, ctx) {
+  const player = ctx.player || {};
+  const payload = ctx.payload || {};
+  const date = safeString(ctx.date, 40);
+
+  if (type === 'advisorAdvice') {
+    return [
+      '你是一位三国谋士，请以谋士的口吻向主公分析当前局势并提出建议。',
+      '当前日期：' + date,
+      '主公：' + safeString(player.name, 20) + '，头衔：' + safeString(player.title, 30),
+      '主公控制城池数：' + (player.cityCount || 0),
+      '相关城池：' + safeString(payload.cityName || '', 30),
+      '局势摘要：' + safeString(payload.summary || '', 300),
+      payload.advisorHint ? '建议方向：' + safeString(payload.advisorHint, 300) : '',
+      '请以谋士口吻输出200-400字的局势分析与建议，语气恭敬有礼。'
+    ].filter(Boolean).join('\n');
+  }
+
+  if (type === 'npcMessage') {
+    return [
+      '你是一位三国时期的NPC角色，请以该角色的身份向玩家传话。',
+      'NPC名称：' + safeString(payload.npcName || '', 20),
+      '所属势力：' + safeString(payload.faction || '', 20),
+      '传话主题：' + safeString(payload.summary || '', 300),
+      '请以NPC的口吻输出100-250字的传话内容，体现角色性格。'
+    ].join('\n');
+  }
+
+  if (type === 'letterBody') {
+    return [
+      '请为一封三国时期的书信撰写正文。',
+      '写信人：' + safeString(payload.senderName || '', 20),
+      '信件标题：' + safeString(payload.title || '', 60),
+      '信件摘要：' + safeString(payload.summary || '', 300),
+      '可选回复：' + (Array.isArray(payload.choices) ? payload.choices.join('、') : ''),
+      '请输出200-400字的书信正文，使用文言文或半文言风格。'
+    ].join('\n');
+  }
+
+  return [
+    '请为一条三国策略游戏的战报事件生成详细叙述。',
+    '当前日期：' + date,
+    '战报内容：' + safeString(payload.summary || '', 300),
+    '事件基调：' + safeString(payload.tone || '', 20),
+    '重要程度：' + safeString(payload.level || '', 20),
+    '请输出150-300字的战报详情叙述，像史书或战地报告的风格。'
+  ].join('\n');
 }
 
 function compactDialogueContext(context) {

@@ -1146,6 +1146,10 @@ const MAX_MAP_ZOOM = 4.2;
         conversations: [],
         npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
         specialEventState: { triggered: {}, cooldowns: {}, queue: [] },
+        aiContentCache: {},
+        aiContentPayloads: {},
+        aiContentPending: {},
+        aiUsage: { turn: 1, turnDialogueCalls: 0, maxDialogueCallsPerTurn: 5, turnContentCalls: 0, maxContentCallsPerTurn: 6 },
         letters: [],
         militaryOrders: [],
         campaigns: [],
@@ -2097,7 +2101,7 @@ const MAX_MAP_ZOOM = 4.2;
         talk: '重新校准彼此的底线',
         probe: '守住秘密并反向试探你',
         gift: '衡量这份好处是否值得欠情',
-        recruit: npc.trustPlayer >= npc.recruitmentDifficulty ? '决定是否把前途押给你' : '拖延归附并继续观察',
+        recruit: npc.trustPlayer >= (npc.recruitmentDifficulty || 50) ? '决定是否把前途押给你' : '拖延归附并继续观察',
         ally: '争取对自己有利的盟约边界',
         scheme: '确认计策的收益、代价和退路',
         threaten: '在恐惧与反感之间重新评估你',
@@ -2105,8 +2109,9 @@ const MAX_MAP_ZOOM = 4.2;
         promiseOffice: '考验你的承诺是否有兑现能力',
         strategy: '把自己的长远打算嵌入你的战略'
       };
+      const dialogueParts = [opening, actionLine, memoryLine].filter(Boolean);
       return {
-        npcText: [opening, actionLine, memoryLine].filter(Boolean).join(' '),
+        npcText: dialogueParts.join(' '),
         npcIntent: intentMap[context.conversationType] || action.label,
         emotionalShift: attitude,
         memorySummary: npc.name + '把这次“' + action.label + '”记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
@@ -3737,16 +3742,34 @@ const MAX_MAP_ZOOM = 4.2;
 
     function renderTurnResultModal(summary) {
       const events = summary.events.filter(event => event.level !== 'minor');
+      gameState.aiContentPayloads ||= {};
       return `<div class="game-modal">
         <div class="modal-head"><div><h2>第 ${summary.turn} 回合结算</h2><span class="tag">${summary.date}</span></div><button data-turn-summary-continue="1">继续</button></div>
         <div class="modal-columns">
           <section class="modal-column"><h3>我方状态变化</h3>${renderPlayerDeltaPanel(summary)}</section>
           <section class="modal-column"><h3>当日战报 / 天下消息 / 来信</h3>
-            ${events.length ? events.map(event => `<div class="turn-event-item ${event.level}">
-              <strong>${escapeHtml(event.text)}</strong>
-              ${event.letterId ? `<div><button data-open-letter="${event.letterId}">打开来信</button></div>` : ''}
-              ${event.level === 'important' && !event.letterId ? `<div><button data-open-turn-event="${event.id}">展开详情</button></div>` : ''}
-            </div>`).join('') : '<div class="turn-event-item">本回合没有需要特别禀报的大事。</div>'}
+            ${events.length ? events.map(event => {
+              let aiButton = '';
+              if (event.level === 'important' && !event.letterId) {
+                const payloadId = 'event_' + gameState.turn + '_' + simpleHash((event.id || '') + (event.text || ''));
+                gameState.aiContentPayloads[payloadId] ||= {
+                  id: event.id || '',
+                  eventId: event.id || '',
+                  title: '战报详情',
+                  summary: event.text || '',
+                  tone: event.tone || '',
+                  level: event.level || '',
+                  turn: gameState.turn
+                };
+                aiButton = `<div><button class="ghost-btn" data-ai-content-type="battleReportDetail" data-ai-content-payload-id="${payloadId}">AI 详析</button></div>`;
+              }
+              return `<div class="turn-event-item ${event.level}">
+                <strong>${escapeHtml(event.text)}</strong>
+                ${event.letterId ? `<div><button data-open-letter="${event.letterId}">打开来信</button></div>` : ''}
+                ${event.level === 'important' && !event.letterId ? `<div><button data-open-turn-event="${event.id}">展开详情</button></div>` : ''}
+                ${aiButton}
+              </div>`;
+            }).join('') : '<div class="turn-event-item">本回合没有需要特别禀报的大事。</div>'}
           </section>
         </div>
       </div>`;
@@ -3782,6 +3805,190 @@ const MAX_MAP_ZOOM = 4.2;
       saveToStorage(false);
       openNextCriticalModal();
       render();
+    }
+
+    function canUseAiContentApi() {
+      gameState.aiUsage ||= {};
+      gameState.aiUsage.turn ||= gameState.turn;
+      gameState.aiUsage.turnDialogueCalls ||= 0;
+      gameState.aiUsage.maxDialogueCallsPerTurn ||= 5;
+      gameState.aiUsage.turnContentCalls ||= 0;
+      gameState.aiUsage.maxContentCallsPerTurn ||= 6;
+
+      if (gameState.aiUsage.turn !== gameState.turn) {
+        gameState.aiUsage.turn = gameState.turn;
+        gameState.aiUsage.turnDialogueCalls = 0;
+        gameState.aiUsage.turnContentCalls = 0;
+      }
+
+      const max = Number(gameState.aiUsage.maxContentCallsPerTurn || 6);
+      if (gameState.aiUsage.turnContentCalls >= max) return false;
+      gameState.aiUsage.turnContentCalls += 1;
+      return true;
+    }
+
+    function buildAiContentKey(type, payload = {}) {
+      const raw = JSON.stringify({
+        type,
+        turn: gameState.turn,
+        id: payload.id || '',
+        eventId: payload.eventId || '',
+        characterId: payload.characterId || '',
+        cityId: payload.cityId || '',
+        factionId: payload.factionId || '',
+        topic: payload.topic || '',
+        summary: payload.summary || ''
+      });
+      return type + '|' + gameState.turn + '|' + simpleHash(raw);
+    }
+
+    function buildCompactAiContentContext(type, payload = {}) {
+      return {
+        type,
+        turn: gameState.turn,
+        date: formatDate(),
+        player: {
+          name: gameState.player?.name,
+          title: gameState.player?.title,
+          protection: gameState.player?.protection,
+          independent: !!gameState.player?.independent,
+          cityCount: controlledCities().length,
+          mainCities: controlledCities().slice(0, 4).map(city => ({
+            id: city.id,
+            name: city.name,
+            publicSupport: city.publicSupport,
+            food: city.food,
+            money: city.money,
+            defense: city.defense,
+            morale: city.morale
+          }))
+        },
+        payload,
+        recentEvents: (gameState.turnEvents || []).slice(-5).map(event => ({
+          tone: event.tone,
+          level: event.level,
+          text: event.text
+        })),
+        recentSummaries: (gameState.turnSummaries || []).slice(0, 2).map(summary => ({
+          turn: summary.turn,
+          date: summary.date,
+          events: (summary.events || []).slice(0, 4).map(event => event.text)
+        }))
+      };
+    }
+
+    function generateAiContentFallback(type, context) {
+      const payload = context.payload || {};
+      if (type === 'advisorAdvice') {
+        return [
+          '臣以为，当前局势不可只看一城一地。',
+          payload.cityName ? payload.cityName + '之事，关乎民心、粮草与守备三端。' : '',
+          '若府库尚足，可先稳民心；若敌军逼近，则应先整军修防。',
+          '主公宜择其急者而行，不可使内政与军务同时失衡。'
+        ].filter(Boolean).join('');
+      }
+      if (type === 'npcMessage') {
+        return [
+          payload.npcName ? payload.npcName + '遣人传话：' : '有人传话：',
+          payload.summary || '局势有变，还请主公早作决断。'
+        ].join('');
+      }
+      if (type === 'letterBody') {
+        return [
+          payload.senderName ? payload.senderName + '来信：' : '来信：',
+          payload.summary || '近来局势多变，愿与主公再议后事。'
+        ].join('');
+      }
+      if (type === 'battleReportDetail') {
+        return [
+          '此役虽只见战报数行，实则牵动军心与地势。',
+          payload.summary || '',
+          '若继续进兵，需留意粮道与后方守备。'
+        ].filter(Boolean).join('');
+      }
+      return payload.summary || '局势未明，仍需主公亲自权衡。';
+    }
+
+    async function generateAiContent(type, payload) {
+      gameState.aiContentCache ||= {};
+      gameState.aiContentPending ||= {};
+      const key = buildAiContentKey(type, payload);
+      const cached = gameState.aiContentCache[key];
+      if (cached?.text) return cached.text;
+      if (gameState.aiContentPending[key]) return gameState.aiContentPending[key];
+
+      const context = buildCompactAiContentContext(type, payload);
+      const task = (async () => {
+        let text = '';
+        let usedApi = false;
+        try {
+          if (canUseAiContentApi() && window.remoteLLMAdapter?.generateAiContent) {
+            text = await window.remoteLLMAdapter.generateAiContent(context);
+            usedApi = true;
+          } else {
+            text = generateAiContentFallback(type, context);
+          }
+        } catch (error) {
+          console.error('AI 内容生成失败，使用 fallback', type, error);
+          text = generateAiContentFallback(type, context);
+        }
+
+        text = String(text || '').trim() || generateAiContentFallback(type, context);
+        gameState.aiContentCache[key] = {
+          key,
+          type,
+          turn: gameState.turn,
+          title: payload.title || '',
+          text,
+          source: usedApi ? 'api' : 'fallback',
+          createdAt: Date.now()
+        };
+        saveToStorage(false);
+        return text;
+      })();
+
+      gameState.aiContentPending[key] = task;
+      try {
+        return await task;
+      } finally {
+        delete gameState.aiContentPending[key];
+      }
+    }
+
+    function openAiContentModal(type, payload) {
+      const title = payload.title || '详情';
+      gameState.activeModal = { type: 'aiContent', contentType: type, payload, title, loading: true, text: '' };
+      renderModal();
+      generateAiContent(type, payload).then(text => {
+        if (gameState.activeModal?.type === 'aiContent' && gameState.activeModal.contentType === type) {
+          gameState.activeModal.loading = false;
+          gameState.activeModal.text = text;
+          const key = buildAiContentKey(type, payload);
+          gameState.activeModal.source = gameState.aiContentCache[key]?.source || 'fallback';
+          renderModal();
+        }
+      }).catch(error => {
+        console.error('AI 内容弹窗生成失败', error);
+        if (gameState.activeModal?.type === 'aiContent') {
+          gameState.activeModal.loading = false;
+          gameState.activeModal.text = generateAiContentFallback(type, buildCompactAiContentContext(type, payload));
+          gameState.activeModal.source = 'fallback';
+          renderModal();
+        }
+      });
+    }
+
+    function normalizeAiContentCache() {
+      gameState.aiContentCache ||= {};
+      gameState.aiContentPayloads ||= {};
+      Object.keys(gameState.aiContentCache).forEach(key => {
+        const item = gameState.aiContentCache[key];
+        if (!item || gameState.turn - Number(item.turn || 0) > 3) delete gameState.aiContentCache[key];
+      });
+      Object.keys(gameState.aiContentPayloads).forEach(id => {
+        const payload = gameState.aiContentPayloads[id];
+        if (payload && payload.turn != null && gameState.turn - payload.turn > 3) delete gameState.aiContentPayloads[id];
+      });
     }
 
     function getLetterBackdropClass(letter) {
@@ -3829,10 +4036,25 @@ const MAX_MAP_ZOOM = 4.2;
         const letter = gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
         letter.read = true;
+        const letterPayloadId = 'letter_' + letter.id + '_' + gameState.turn;
+        gameState.aiContentPayloads ||= {};
+        gameState.aiContentPayloads[letterPayloadId] ||= {
+          id: 'letter_' + letter.id,
+          letterId: letter.id,
+          characterId: letter.fromCharacterId || letter.senderId || '',
+          senderName: letter.senderName || '',
+          title: letter.title || '',
+          summary: letter.summary || letter.body || '',
+          choices: (letter.choices || []).map(choice => choice.label),
+          turn: gameState.turn
+        };
         root.innerHTML = `<div class="game-modal letter-modal ${getLetterBackdropClass(letter)}">
           <div class="letter-head"><div><h2>${escapeHtml(letter.title)}</h2><span class="tag">${escapeHtml(letter.senderName)}｜${escapeHtml(letter.date)}</span></div></div>
           <div class="letter-body">${escapeHtml(letter.body)}</div>
-          <div class="modal-actions">${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}</div>
+          <div class="modal-actions">
+            <button class="ghost-btn" data-ai-content-type="letterBody" data-ai-content-payload-id="${letterPayloadId}">展开信件原文</button>
+            ${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}
+          </div>
         </div>`;
         return;
       }
@@ -3841,6 +4063,10 @@ const MAX_MAP_ZOOM = 4.2;
           <div class="modal-head"><h2>${escapeHtml(modal.title)}</h2><button class="ghost-btn" data-close-modal="1">收起</button></div>
           <div class="dialogue-text">${escapeHtml(modal.text)}</div>
         </div>`;
+        return;
+      }
+      if (modal.type === 'aiContent') {
+        root.innerHTML = renderAiContentModal(modal);
         return;
       }
       if (modal.type === 'urgent') {
@@ -3881,6 +4107,29 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = renderTaskDrawer();
         return;
       }
+    }
+
+    function renderAiContentModal(modal) {
+      const sourceLabel = !modal.loading && modal.source === 'fallback'
+        ? '<span class="tag muted">本地简版</span>'
+        : (!modal.loading && modal.source === 'api' ? '<span class="tag">AI 生成</span>' : '');
+      return [
+        '<div class="game-modal">',
+        '<div class="modal-head">',
+        '<h2>' + escapeHtml(modal.title || '详情') + '</h2>',
+        sourceLabel,
+        '<button class="ghost-btn" data-close-modal="1">关闭</button>',
+        '</div>',
+        '<div class="card">',
+        modal.loading
+          ? '<p class="muted">谋士正在整理言辞……</p>'
+          : '<p class="dialogue-text">' + escapeHtml(modal.text || '暂无内容。') + '</p>',
+        '</div>',
+        '<div class="modal-actions">',
+        '<button data-close-modal="1">确认</button>',
+        '</div>',
+        '</div>'
+      ].join('');
     }
 
     function captureRegion(regionId, controller, reports, options = {}) {
@@ -6155,6 +6404,15 @@ const MAX_MAP_ZOOM = 4.2;
       return Math.random().toString(36).slice(2, 10);
     }
 
+    function simpleHash(str) {
+      let hash = 5381;
+      for (let index = 0; index < str.length; index += 1) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(index);
+        hash &= hash;
+      }
+      return Math.abs(hash).toString(36);
+    }
+
     function undoOrder() {
       const order = gameState.orders.pop();
       if (!order) return toast('没有可撤销的指令');
@@ -6199,6 +6457,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.turnSummaries.unshift(summary);
       gameState.turnSummaries = gameState.turnSummaries.slice(0, 18);
       gameState.pendingTurnSummary = summary;
+      normalizeAiContentCache();
       saveToStorage(false);
       gameState.lastAutoSave = Date.now();
       updateAutosaveDisplay();
@@ -7814,6 +8073,17 @@ const MAX_MAP_ZOOM = 4.2;
         }
       });
     }
+    if (!window.remoteLLMAdapter?.generateAiContent) {
+      window.__initLLMAdapter?.(Object.assign({}, window.remoteLLMAdapter || {}, {
+        generateAiContent: async context => {
+          const payload = await backendFetch('/api/ai/content', {
+            method: 'POST',
+            body: JSON.stringify({ context })
+          });
+          return payload.text || payload.content || '';
+        }
+      }));
+    }
     if (window.USE_REMOTE_LLM === undefined) window.USE_REMOTE_LLM = true;
 
     let autosaveTimer = null;
@@ -7991,6 +8261,15 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.publicUnrestState.rebellionCities ||= {};
       migrated.publicUnrestState.intelligenceLeaks ||= [];
       migrated.factionRelations ||= structuredClone(DEFAULT_FACTION_RELATIONS);
+      migrated.aiContentCache ||= {};
+      migrated.aiContentPayloads ||= {};
+      migrated.aiContentPending ||= {};
+      migrated.aiUsage ||= {};
+      migrated.aiUsage.turn ||= migrated.turn || 1;
+      migrated.aiUsage.turnDialogueCalls ||= 0;
+      migrated.aiUsage.maxDialogueCallsPerTurn ||= 5;
+      migrated.aiUsage.turnContentCalls ||= 0;
+      migrated.aiUsage.maxContentCallsPerTurn ||= 6;
       migrated.schemaVersion = GAME_SCHEMA_VERSION;
       return purgeRemovedCitiesFromState(migrated);
     }
@@ -8030,7 +8309,11 @@ const MAX_MAP_ZOOM = 4.2;
         militaryPlanner: Object.assign(fresh.militaryPlanner, loaded.militaryPlanner || { sourceId: null, targetId: null, route: 'official' }),
         factionWarState: Object.assign(fresh.factionWarState, loaded.factionWarState || { lastAttackTurnByFaction: {}, recentWars: [] }),
         publicUnrestState: Object.assign(fresh.publicUnrestState, loaded.publicUnrestState || { lastCrisisTurnByCity: {}, rebellionCities: {}, intelligenceLeaks: [] }),
-        factionRelations: Object.assign(fresh.factionRelations, loaded.factionRelations || structuredClone(DEFAULT_FACTION_RELATIONS))
+        factionRelations: Object.assign(fresh.factionRelations, loaded.factionRelations || structuredClone(DEFAULT_FACTION_RELATIONS)),
+        aiContentCache: Object.assign(fresh.aiContentCache, loaded.aiContentCache || {}),
+        aiContentPayloads: Object.assign(fresh.aiContentPayloads, loaded.aiContentPayloads || {}),
+        aiContentPending: Object.assign(fresh.aiContentPending, loaded.aiContentPending || {}),
+        aiUsage: Object.assign(fresh.aiUsage, loaded.aiUsage || {})
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
       normalized.mapState = normalizeMapState(normalized.mapState);
@@ -9024,6 +9307,14 @@ const MAX_MAP_ZOOM = 4.2;
           openLetterModal(openLetter.getAttribute('data-open-letter'));
           return;
         }
+        const aiContentButton = event.target.closest('[data-ai-content-type]');
+        if (aiContentButton) {
+          const aiType = aiContentButton.getAttribute('data-ai-content-type');
+          const aiPayloadId = aiContentButton.getAttribute('data-ai-content-payload-id');
+          gameState.aiContentPayloads ||= {};
+          openAiContentModal(aiType, gameState.aiContentPayloads[aiPayloadId] || {});
+          return;
+        }
         const openTurnEvent = event.target.closest('[data-open-turn-event]');
         if (openTurnEvent) {
           openTurnEventModal(openTurnEvent.getAttribute('data-open-turn-event'));
@@ -9469,6 +9760,26 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     window.validateStorageSystem = validateStorageSystem;
+
+    function validateAiContentSystem() {
+      return {
+        turn: gameState.turn,
+        aiUsage: gameState.aiUsage,
+        cacheCount: Object.keys(gameState.aiContentCache || {}).length,
+        payloadCount: Object.keys(gameState.aiContentPayloads || {}).length,
+        cache: Object.entries(gameState.aiContentCache || {}).map(([key, item]) => ({
+          key,
+          type: item.type,
+          turn: item.turn,
+          title: item.title,
+          hasText: !!item.text,
+          source: item.source || 'unknown',
+          createdAt: item.createdAt
+        }))
+      };
+    }
+
+    window.validateAiContentSystem = validateAiContentSystem;
 
     function validateRemovedCitiesCleanup() {
       const removed = [...REMOVED_CITY_IDS];
