@@ -773,13 +773,56 @@
 
     .action-tabs {
       display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
+      grid-template-columns: repeat(8, minmax(0, 1fr));
       gap: 8px;
     }
 
     .action-tabs button {
       font-weight: 900;
       font-size: 16px;
+    }
+
+    .appointment-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .appointment-row > div {
+      min-width: 0;
+    }
+
+    .appointment-candidate {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      align-items: center;
+    }
+
+    .appointment-candidate > div {
+      min-width: 0;
+    }
+
+    .mini-btn {
+      padding: 3px 8px;
+      font-size: 12px;
+      min-height: 0;
+    }
+
+    .appointment-city-block {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 10px;
+      margin-top: 10px;
+    }
+
+    .appointment-auto-controls {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      margin-top: 10px;
+      padding-top: 10px;
     }
 
     .end-turn-box {
@@ -4636,6 +4679,90 @@
     .btn-skip:hover {
       border-color: var(--muted) !important;
       color: var(--ink) !important;
+    }
+
+    /* ===== 强制新手引导高亮/遮罩/浮窗 ===== */
+    .tutorial-highlight {
+      animation: tutorialPulse 1.2s ease-in-out infinite;
+      box-shadow: 0 0 16px rgba(255, 215, 0, 0.7), 0 0 32px rgba(255, 215, 0, 0.3) !important;
+      border-color: #ffd700 !important;
+      z-index: 100 !important;
+      position: relative;
+    }
+    .tutorial-highlight::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border: 2px solid rgba(255, 215, 0, 0.6);
+      border-radius: inherit;
+      pointer-events: none;
+      animation: tutorialGlow 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes tutorialPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.03); }
+    }
+    @keyframes tutorialGlow {
+      from { border-color: rgba(255, 215, 0, 0.4); }
+      to { border-color: rgba(255, 215, 0, 0.9); }
+    }
+
+    /* 引导浮窗提示 */
+    .tutorial-tooltip {
+      position: fixed;
+      background: rgba(22, 12, 6, 0.96);
+      border: 1px solid #ffd700;
+      border-radius: 10px;
+      padding: 12px 18px;
+      max-width: 320px;
+      z-index: 9500;
+      box-shadow: 0 0 24px rgba(255, 215, 0, 0.3);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      pointer-events: none;
+      animation: tooltipFadeIn 0.3s ease;
+    }
+    .tutorial-tooltip::before {
+      content: '👆 ';
+      color: #ffd700;
+    }
+    @keyframes tooltipFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* 引导遮罩（非目标区域半透明） */
+    .tutorial-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: 8999;
+      pointer-events: all;
+    }
+    .tutorial-overlay-cutout {
+      position: relative;
+      z-index: 9001 !important;
+    }
+
+    /* 强制结束回合按钮高亮 */
+    .end-turn.tutorial-highlight {
+      animation: tutorialPulse 0.8s ease-in-out infinite;
+      background: linear-gradient(180deg, rgba(217, 173, 88, 0.5), rgba(120, 70, 20, 0.5)) !important;
+    }
+
+    /* SVG 城市节点高亮（box-shadow 不适用于 SVG，用 stroke/filter 替代） */
+    .city-node.tutorial-highlight,
+    polygon.tutorial-highlight {
+      animation: svgTutorialPulse 1.2s ease-in-out infinite;
+      stroke: #ffd700 !important;
+      stroke-width: 3 !important;
+      stroke-opacity: 1 !important;
+      filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.8)) drop-shadow(0 0 20px rgba(255, 215, 0, 0.4)) !important;
+      cursor: pointer !important;
+    }
+    @keyframes svgTutorialPulse {
+      0%, 100% { stroke-opacity: 0.6; filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.5)); }
+      50% { stroke-opacity: 1; filter: drop-shadow(0 0 14px rgba(255, 215, 0, 0.9)) drop-shadow(0 0 28px rgba(255, 215, 0, 0.4)); }
     }
 
     /* Tab 锁定样式 */

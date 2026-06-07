@@ -133,7 +133,11 @@ const MAX_MAP_ZOOM = 4.2;
         weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses : [],
         recruitmentDifficulty: Number(data.recruitmentDifficulty ?? 52),
         discoveredBy: data.discoveredBy || '',
-        recruitedBy: data.recruitedBy || ''
+        recruitedBy: data.recruitedBy || '',
+        originFaction: data.originFaction || data.faction || 'local',
+        possibleFactions: Array.isArray(data.possibleFactions) ? data.possibleFactions : [data.faction || 'local'],
+        defectionTriggers: Array.isArray(data.defectionTriggers) ? data.defectionTriggers : [],
+        offMapLocation: data.offMapLocation || ''
       };
     }
 
@@ -153,7 +157,884 @@ const MAX_MAP_ZOOM = 4.2;
       return character && !isInternalPlayerCharacterId(character.id);
     }
 
-    const CHARACTER_BLUEPRINTS = {
+    function isFactionLordCharacter(character) {
+      if (!character) return false;
+      const lordIds = new Set([
+        'caoCao',
+        'sunQuan',
+        'liuBei',
+        'yuanShao',
+        'liuZhang',
+        'zhangLu',
+        'maTeng',
+        'hanSui',
+        'gongsunZan',
+        'yuanShu'
+      ]);
+      const roleText = String(character.role || character.title || '');
+      return lordIds.has(character.id) || /诸侯|之主|军阀/.test(roleText);
+    }
+
+    function normalizeAppointments(state) {
+      state.appointments ||= {};
+      state.appointments.cityOfficials ||= {};
+      state.appointments.campaignCommanders ||= {};
+      state.appointments.autoTasks ||= {};
+      state.appointments.autoGovSpentThisTurn ||= 0;
+      state.appointments.autoMilSpentThisTurn ||= 0;
+
+      Object.values(state.appointments.cityOfficials || {}).forEach(slots => {
+        if (!slots || typeof slots !== 'object') return;
+        if (!Array.isArray(slots.administratorIds)) {
+          slots.administratorIds = slots.administratorId ? [slots.administratorId] : [];
+        }
+        if (!Array.isArray(slots.militaryOfficerIds)) {
+          slots.militaryOfficerIds = slots.militaryOfficerId ? [slots.militaryOfficerId] : [];
+        }
+        slots.administratorIds = [...new Set(slots.administratorIds.filter(Boolean))];
+        slots.militaryOfficerIds = [...new Set(slots.militaryOfficerIds.filter(Boolean))];
+        slots.administratorId = slots.administratorIds[0] || slots.administratorId || null;
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || slots.militaryOfficerId || null;
+        slots.policyOfficerId ||= null;
+      });
+
+      Object.values(state.appointments.autoTasks || {}).forEach(task => {
+        if (!task || typeof task !== 'object') return;
+        task.enabled = task.enabled === true;
+        task.militaryMode ||= 'none';
+        task.civilMode ||= 'none';
+        task.policyMode ||= 'none';
+        task.militaryPrepMode ||= 'none';
+        if (!Array.isArray(task.civilModes)) {
+          task.civilModes = task.civilMode && task.civilMode !== 'none' ? [task.civilMode] : [];
+        }
+        if (!Array.isArray(task.militaryPrepModes)) {
+          task.militaryPrepModes = task.militaryPrepMode && task.militaryPrepMode !== 'none' ? [task.militaryPrepMode] : [];
+        }
+        task.civilModes = [...new Set(task.civilModes.filter(mode => mode && mode !== 'none'))];
+        task.militaryPrepModes = [...new Set(task.militaryPrepModes.filter(mode => mode && mode !== 'none'))];
+      });
+      return state.appointments;
+    }
+
+    function getCityAdministratorLimit(city) {
+      if (!city) return 1;
+      let limit = 2;
+      if (Number(city.level || 1) >= 3) limit += 1;
+      if (Number(city.population || 0) >= 90000) limit += 1;
+      return clamp(limit, 2, 4);
+    }
+
+    function getCityMilitaryOfficerLimit(city) {
+      if (!city) return 1;
+      let limit = 1;
+      if (Number(city.level || 1) >= 3) limit += 1;
+      if (realTroops(city.garrison) >= 5000) limit += 1;
+      return clamp(limit, 1, 3);
+    }
+
+    function getCityOfficials(cityId, role) {
+      normalizeAppointments(gameState);
+      const slots = gameState.appointments?.cityOfficials?.[cityId] || {};
+
+      if (role === 'administratorId') {
+        const ids = Array.isArray(slots.administratorIds)
+          ? slots.administratorIds
+          : (slots.administratorId ? [slots.administratorId] : []);
+        return ids
+          .map(id => gameState.characterRoster?.[id])
+          .filter(c => c && c.status === 'recruited' && canManageCity(c));
+      }
+
+      if (role === 'militaryOfficerId') {
+        const ids = Array.isArray(slots.militaryOfficerIds)
+          ? slots.militaryOfficerIds
+          : (slots.militaryOfficerId ? [slots.militaryOfficerId] : []);
+        return ids
+          .map(id => gameState.characterRoster?.[id])
+          .filter(c => c && c.status === 'recruited' && canLeadArmy(c));
+      }
+
+      if (role === 'policyOfficerId') {
+        const c = gameState.characterRoster?.[slots.policyOfficerId];
+        return c && c.status === 'recruited' && canManageCity(c) ? [c] : [];
+      }
+
+      return [];
+    }
+
+    function getCityOfficialEffect(cityId, role) {
+      const character = getCityOfficials(cityId, role)[0] || null;
+
+      if (!character || character.status !== 'recruited') {
+        return { character: null, multiplier: 1 };
+      }
+
+      const s = character.stats || {};
+      let multiplier = 1;
+
+      if (role === 'militaryOfficerId') {
+        multiplier = clamp(1 + (Number(s.command || 50) - 50) * 0.005, 0.9, 1.25);
+      } else if (role === 'administratorId') {
+        multiplier = clamp(1 + (Number(s.politics || 50) - 50) * 0.005, 0.9, 1.25);
+      } else if (role === 'policyOfficerId') {
+        multiplier = clamp(
+          1 + (Number(s.politics || 50) - 50) * 0.004 + (Number(s.charm || 50) - 50) * 0.003,
+          0.9,
+          1.25
+        );
+      }
+
+      return { character, multiplier };
+    }
+
+    function setCityAutoTask(cityId, field, value) {
+      const city = gameState.cities?.[cityId];
+      if (!city || !isControlledBy(city.id, 'player')) return;
+      const allowed = ['enabled', 'militaryMode', 'civilMode', 'civilModes', 'policyMode', 'militaryPrepMode', 'militaryPrepModes'];
+      if (!allowed.includes(field)) return;
+
+      normalizeAppointments(gameState);
+      gameState.appointments.autoTasks[cityId] ||= {
+        enabled: false,
+        militaryMode: 'none',
+        civilMode: 'none',
+        civilModes: [],
+        policyMode: 'none',
+        militaryPrepMode: 'none',
+        militaryPrepModes: []
+      };
+      if (field === 'civilModes' || field === 'militaryPrepModes') {
+        const values = Array.isArray(value) ? value : String(value || '').split(',');
+        gameState.appointments.autoTasks[cityId][field] = [...new Set(values.map(v => String(v).trim()).filter(v => v && v !== 'none'))];
+      } else {
+        gameState.appointments.autoTasks[cityId][field] = value;
+      }
+      saveToStorage(false);
+      render();
+    }
+
+    function toggleCityAutoTaskMode(cityId, field, mode) {
+      if (!['civilModes', 'militaryPrepModes'].includes(field)) return;
+      const city = gameState.cities?.[cityId];
+      if (!city || !isControlledBy(city.id, 'player')) return;
+      normalizeAppointments(gameState);
+      const task = gameState.appointments.autoTasks[cityId] ||= {};
+      const list = Array.isArray(task[field]) ? task[field] : [];
+
+      if (list.includes(mode)) {
+        task[field] = list.filter(x => x !== mode);
+      } else if (mode && mode !== 'none') {
+        task[field] = [...list, mode];
+      }
+
+      saveToStorage(false);
+      render();
+    }
+
+    function getUniqueAutoTaskModes(task, field, legacyField, allowedModes) {
+      const list = Array.isArray(task?.[field]) && task[field].length
+        ? task[field]
+        : (task?.[legacyField] && task[legacyField] !== 'none' ? [task[legacyField]] : []);
+      return [...new Set(list)]
+        .filter(mode => mode && mode !== 'none')
+        .filter(mode => !allowedModes || allowedModes.includes(mode));
+    }
+
+    function canBeAppointed(character) {
+      return character
+        && isExternalCharacter(character)
+        && character.status === 'recruited'
+        && !['dead', 'captured'].includes(character.status);
+    }
+
+    function canLeadArmy(character) {
+      return canBeAppointed(character)
+        && ['武将', '谋士'].includes(character.type);
+    }
+
+    function canManageCity(character) {
+      return canBeAppointed(character)
+        && ['政务', '谋士', '名士'].includes(character.type);
+    }
+
+    function getAppointedCharacter(id) {
+      return gameState.characterRoster?.[id] || null;
+    }
+
+    function getCampaignCommander(campaign) {
+      if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack') return null;
+
+      const commanderId = gameState.appointments?.campaignCommanders?.[campaign.id];
+      const commander = gameState.characterRoster?.[commanderId];
+
+      if (!commander) return null;
+      if (!canLeadArmy(commander)) return null;
+
+      return commander;
+    }
+
+    function getCommanderBattleModifier(campaign) {
+      const commander = getCampaignCommander(campaign);
+      if (!commander) return { attack: 1, morale: 0, supply: 0, text: '' };
+
+      const s = commander.stats || {};
+      const command = Number(s.command || 50);
+      const strategy = Number(s.strategy || 50);
+      const loyalty = Number(s.loyalty || 50);
+      const ambition = Number(s.ambition || 30);
+
+      const attack = clamp(
+        1 + (command - 50) * 0.006 + (strategy - 50) * 0.003 - Math.max(0, ambition - 80) * 0.002,
+        0.9,
+        1.35
+      );
+
+      const morale = Math.round((command - 50) / 12 + (loyalty - 50) / 20);
+      const supply = Math.max(0, Math.round((strategy - 60) / 15));
+
+      return {
+        commander,
+        attack,
+        morale,
+        supply,
+        text: commander.name + '统军，攻势修正 x' + attack.toFixed(2)
+      };
+    }
+
+    function shouldCommanderSaveSupply(campaign) {
+      if (Number(campaign.supply || 0) <= 0) return false;
+
+      const commander = getCampaignCommander(campaign);
+      if (!commander) return false;
+
+      const strategy = Number(commander.stats?.strategy || 50);
+      let interval = 0;
+
+      if (strategy >= 90) interval = 3;
+      else if (strategy >= 78) interval = 4;
+      else if (strategy >= 68) interval = 5;
+
+      if (!interval) return false;
+
+      campaign.commanderSupplyTick = (campaign.commanderSupplyTick || 0) + 1;
+
+      if (campaign.commanderSupplyTick >= interval) {
+        campaign.commanderSupplyTick = 0;
+        return true;
+      }
+
+      return false;
+    }
+
+    function processCommanderCampaignActions(campaign, reports) {
+      if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || campaign.status !== 'siege') {
+        return { triggered: false, reason: 'not-player-siege' };
+      }
+
+      const commander = getCampaignCommander(campaign);
+      if (!commander) {
+        return { triggered: false, reason: 'no-commander' };
+      }
+
+      if (Number(campaign.commanderActionCooldown || 0) > 0) {
+        return { triggered: false, reason: 'cooldown' };
+      }
+
+      const target = gameState.cities?.[campaign.target];
+      if (!target) {
+        return { triggered: false, reason: 'no-target' };
+      }
+
+      const stats = commander.stats || {};
+      const command = Number(stats.command || 50);
+      const strategy = Number(stats.strategy || 50);
+      const charm = Number(stats.charm || 50);
+      const loyalty = Number(stats.loyalty || 50);
+
+      let chance = 20;
+      if (strategy >= 70) chance += 10;
+      if (command >= 70) chance += 8;
+      if (['名将', '传奇'].includes(commander.rarity)) chance += 8;
+      chance = clamp(chance, 15, 45);
+
+      if (Math.random() * 100 >= chance) {
+        return { triggered: false, reason: 'chance-failed', chance };
+      }
+
+      const actions = [];
+
+      if (strategy >= 65) {
+        actions.push({
+          id: 'cutSupply',
+          text: commander.name + '遣细作绕袭粮道，' + target.name + '粮草受损，守军士气动摇。',
+          run: function() {
+            target.food = Math.max(0, Number(target.food || 0) - Math.round(120 + strategy * 2));
+            target.morale = clamp(Number(target.morale || 0) - 2, 0, 100);
+          }
+        });
+      }
+
+      if (strategy >= 60 || charm >= 65) {
+        actions.push({
+          id: 'disturbDefenders',
+          text: commander.name + '散布虚实消息，扰乱' + target.name + '守军。',
+          run: function() {
+            target.morale = clamp(Number(target.morale || 0) - 4, 0, 100);
+            target.defense = clamp(Number(target.defense || 0) - 1, 0, 100);
+          }
+        });
+      }
+
+      if (command >= 70) {
+        actions.push({
+          id: 'stormOuterCamp',
+          text: commander.name + '亲督锐卒强攻外营，敌城防线受损，我军亦有折损。',
+          run: function() {
+            target.defense = clamp(Number(target.defense || 0) - 2, 0, 100);
+
+            const loss = Math.max(20, Math.round(realTroops(campaign.army) * 0.08));
+            removeTroops(campaign.army, loss);
+
+            if (Math.random() < 0.5) {
+              campaign.siegeRemaining = Math.max(0, Number(campaign.siegeRemaining || 0) - 1);
+            }
+          }
+        });
+      }
+
+      if (loyalty >= 65 || command >= 65) {
+        actions.push({
+          id: 'steadyArmy',
+          text: commander.name + '巡营整伍，稳定军心，前线补给得以维持。',
+          run: function() {
+            campaign.supply = Math.max(0, Number(campaign.supply || 0) + 1);
+          }
+        });
+      }
+
+      if (!actions.length) {
+        return { triggered: false, reason: 'no-available-action', chance };
+      }
+
+      const action = actions[Math.floor(Math.random() * actions.length)];
+      action.run();
+
+      campaign.commanderActionCooldown = 2;
+
+      if (reports) {
+        reports.push({
+          tone: 'good',
+          text: '主将谋划：' + action.text
+        });
+      }
+
+      return {
+        triggered: true,
+        action: action.id,
+        commanderId: commander.id,
+        commanderName: commander.name,
+        chance
+      };
+    }
+
+    function findCharacterAppointment(characterId) {
+      const app = normalizeAppointments(gameState);
+
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        if ((slots.administratorIds || []).includes(characterId) || slots.administratorId === characterId) {
+          return { type: 'city', cityId, slot: 'administratorId' };
+        }
+        if ((slots.militaryOfficerIds || []).includes(characterId) || slots.militaryOfficerId === characterId) {
+          return { type: 'city', cityId, slot: 'militaryOfficerId' };
+        }
+        if (slots.policyOfficerId === characterId) {
+          return { type: 'city', cityId, slot: 'policyOfficerId' };
+        }
+      }
+
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        if (id === characterId) return { type: 'campaign', campaignId };
+      }
+
+      return null;
+    }
+
+    function getUnassignedRecruitedCharacters(filter = {}) {
+      normalizeAppointments(gameState);
+
+      return Object.values(gameState.characterRoster || {})
+        .filter(c =>
+          c &&
+          c.status === 'recruited' &&
+          isExternalCharacter(c) &&
+          !(typeof isFactionLordCharacter === 'function' && isFactionLordCharacter(c)) &&
+          !findCharacterAppointment(c.id)
+        )
+        .filter(c => {
+          if (filter.role === 'administratorId') return canManageCity(c);
+          if (filter.role === 'policyOfficerId') return canManageCity(c);
+          if (filter.role === 'militaryOfficerId') return canLeadArmy(c);
+          if (filter.role === 'campaignCommander') return canLeadArmy(c);
+          return true;
+        });
+    }
+
+    function appointmentRoleLabel(role) {
+      if (role === 'administratorId') return '主政官';
+      if (role === 'militaryOfficerId') return '军事官';
+      if (role === 'policyOfficerId') return '政策官';
+      if (role === 'campaignCommander') return '战役主将';
+      return '官员';
+    }
+
+    function openAppointmentPicker({ cityId, role, campaignId }) {
+      const candidates = getUnassignedRecruitedCharacters({
+        role: role || (campaignId ? 'campaignCommander' : '')
+      });
+
+      gameState.activeModal = {
+        type: 'appointmentPicker',
+        cityId,
+        role,
+        campaignId,
+        candidates: candidates.map(c => c.id)
+      };
+
+      renderModal();
+    }
+
+    function appointmentCityControllerFromState(state, cityId) {
+      const city = state.cities?.[cityId];
+      return city?.controller || city?.actual || city?.faction || city?.owner || 'local';
+    }
+
+    function cleanupInvalidAppointments(state = gameState) {
+      const app = normalizeAppointments(state);
+
+      // 清理 cityOfficials 和 autoTasks
+      for (const cityId of Object.keys(app.cityOfficials)) {
+        const city = state.cities?.[cityId];
+        const controller = appointmentCityControllerFromState(state, cityId);
+
+        if (!city || city.isActive === false || controller !== 'player') {
+          delete app.cityOfficials[cityId];
+          delete app.autoTasks?.[cityId];
+          continue;
+        }
+        const slots = app.cityOfficials[cityId];
+        const validAdmin = charId => {
+          const char = state.characterRoster?.[charId];
+          return char && !isInternalPlayerCharacterId(charId) && char.status === 'recruited' && !['dead', 'captured'].includes(char.status) && canManageCity(char);
+        };
+        const validMilitary = charId => {
+          const char = state.characterRoster?.[charId];
+          return char && !isInternalPlayerCharacterId(charId) && char.status === 'recruited' && !['dead', 'captured'].includes(char.status) && canLeadArmy(char);
+        };
+        slots.administratorIds = [...new Set((slots.administratorIds || (slots.administratorId ? [slots.administratorId] : [])).filter(validAdmin))];
+        slots.militaryOfficerIds = [...new Set((slots.militaryOfficerIds || (slots.militaryOfficerId ? [slots.militaryOfficerId] : [])).filter(validMilitary))];
+        slots.administratorId = slots.administratorIds[0] || null;
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+        if (slots.policyOfficerId) {
+          const char = state.characterRoster?.[slots.policyOfficerId];
+          if (!char || isInternalPlayerCharacterId(slots.policyOfficerId) || char.status !== 'recruited' || ['dead', 'captured'].includes(char.status) || !canManageCity(char)) {
+            slots.policyOfficerId = null;
+          }
+        }
+      }
+
+      // 清理 autoTasks 中不属于玩家的城市
+      for (const cityId of Object.keys(app.autoTasks || {})) {
+        const city = state.cities?.[cityId];
+        const controller = appointmentCityControllerFromState(state, cityId);
+        if (!city || city.isActive === false || controller !== 'player') {
+          delete app.autoTasks[cityId];
+        }
+      }
+
+      // 清理 campaignCommanders
+      for (const campaignId of Object.keys(app.campaignCommanders)) {
+        const campaign = (state.campaigns || []).find(c => c.id === campaignId);
+        if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || !isActiveCampaign(campaign)) {
+          delete app.campaignCommanders[campaignId];
+          continue;
+        }
+        const charId = app.campaignCommanders[campaignId];
+        if (charId) {
+          const char = state.characterRoster?.[charId];
+          if (!char || isInternalPlayerCharacterId(charId) || char.status !== 'recruited' || ['dead', 'captured'].includes(char.status)) {
+            delete app.campaignCommanders[campaignId];
+          }
+        }
+      }
+    }
+
+    function appointCityOfficial(cityId, slot, characterId) {
+      if (!['administratorId', 'militaryOfficerId', 'policyOfficerId'].includes(slot)) {
+        return toast('无效的职位类型');
+      }
+      const city = gameState.cities?.[cityId];
+      if (!city || !isActiveMapCity(cityId) || cityController(cityId) !== 'player') {
+        return toast('该城池不属于你');
+      }
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || !canBeAppointed(character)) {
+        return toast('该人物不可被任命');
+      }
+      if (slot === 'administratorId' || slot === 'policyOfficerId') {
+        if (!canManageCity(character)) return toast('主政和政策官只能由政务、谋士、名士担任');
+      }
+      if (slot === 'militaryOfficerId') {
+        if (!canLeadArmy(character)) return toast('军事官只能由武将、谋士担任');
+      }
+      const existing = findCharacterAppointment(characterId);
+      if (existing) return toast('此人已有任命，请先撤任。');
+
+      normalizeAppointments(gameState);
+      gameState.appointments.cityOfficials[cityId] ||= {};
+      const slots = gameState.appointments.cityOfficials[cityId];
+      if (slot === 'administratorId') {
+        slots.administratorIds ||= [];
+        if (slots.administratorIds.length >= getCityAdministratorLimit(city)) return toast('该城主政官已满');
+        slots.administratorIds.push(characterId);
+        slots.administratorId = slots.administratorIds[0] || null;
+      } else if (slot === 'militaryOfficerId') {
+        slots.militaryOfficerIds ||= [];
+        if (slots.militaryOfficerIds.length >= getCityMilitaryOfficerLimit(city)) return toast('该城军事官已满');
+        slots.militaryOfficerIds.push(characterId);
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+      } else {
+        slots.policyOfficerId = characterId;
+      }
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCityOfficialAt(cityId, role, characterId) {
+      normalizeAppointments(gameState);
+      const slots = gameState.appointments.cityOfficials?.[cityId];
+      if (!slots) return;
+
+      if (role === 'administratorId') {
+        slots.administratorIds = (slots.administratorIds || []).filter(id => id !== characterId);
+        slots.administratorId = slots.administratorIds[0] || null;
+      } else if (role === 'militaryOfficerId') {
+        slots.militaryOfficerIds = (slots.militaryOfficerIds || []).filter(id => id !== characterId);
+        slots.militaryOfficerId = slots.militaryOfficerIds[0] || null;
+      } else if (role === 'policyOfficerId') {
+        slots.policyOfficerId = null;
+      }
+
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCityOfficial(cityId, slot, characterId) {
+      if (!['administratorId', 'militaryOfficerId', 'policyOfficerId'].includes(slot)) {
+        return toast('无效的职位类型');
+      }
+      if (characterId) return removeCityOfficialAt(cityId, slot, characterId);
+      normalizeAppointments(gameState);
+      const officials = gameState.appointments.cityOfficials[cityId];
+      if (officials) {
+        if (slot === 'administratorId') {
+          officials.administratorIds = [];
+          officials.administratorId = null;
+        } else if (slot === 'militaryOfficerId') {
+          officials.militaryOfficerIds = [];
+          officials.militaryOfficerId = null;
+        } else {
+          officials[slot] = null;
+        }
+      }
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function appointCampaignCommander(campaignId, characterId) {
+      const campaign = (gameState.campaigns || []).find(c => c.id === campaignId);
+      if (!campaign) return toast('战役不存在');
+      if (campaign.faction !== 'player') return toast('只能任命我方战役的主将');
+      if (campaign.type !== 'attack') return toast('只能为进攻战役任命主将');
+      if (!isActiveCampaign(campaign)) return toast('该战役已结束或未激活');
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || !canBeAppointed(character)) {
+        return toast('该人物不可被任命');
+      }
+      if (!canLeadArmy(character)) return toast('主将只能由武将、谋士担任');
+      const existing = findCharacterAppointment(characterId);
+      if (existing) return toast('此人已有任命，请先撤任。');
+
+      normalizeAppointments(gameState);
+      gameState.appointments.campaignCommanders[campaignId] = characterId;
+      campaign.commanderSupplyTick = 0;
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    function removeCampaignCommander(campaignId) {
+      normalizeAppointments(gameState);
+      delete gameState.appointments.campaignCommanders[campaignId];
+      const campaign = gameState.campaigns?.find(c => c.id === campaignId);
+      if (campaign) campaign.commanderSupplyTick = 0;
+      cleanupInvalidAppointments();
+      saveToStorage(false);
+      render();
+    }
+
+    const CHARACTER_STATUS_RANK = {
+      hidden: 0,
+      rumored: 1,
+      discovered: 2,
+      contactable: 3,
+      recruited: 4,
+      dead: -1,
+      captured: -1
+    };
+
+    function promoteCharacterStatus(current, next) {
+      const currentRank = CHARACTER_STATUS_RANK[current] ?? 0;
+      const nextRank = CHARACTER_STATUS_RANK[next] ?? 1;
+      return nextRank > currentRank ? next : current;
+    }
+
+    function revealCharacter(characterId, status = 'rumored', reason = '') {
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || isInternalPlayerCharacterId(characterId)) return false;
+
+      const allowed = ['rumored', 'discovered', 'contactable', 'recruited'];
+      const nextStatus = allowed.includes(status) ? status : 'rumored';
+
+      const promoted = promoteCharacterStatus(character.status, nextStatus);
+      if (promoted !== character.status) {
+        character.status = promoted;
+      }
+
+      if (reason) {
+        character.discoveredBy = reason;
+      } else if (!character.discoveredBy) {
+        character.discoveredBy = '传闻';
+      }
+
+      addCharacterMemory?.(character, {
+        turn: gameState.turn,
+        type: 'discovery',
+        summary: '因' + (reason || '传闻') + '被玩家得知。',
+        text: '因' + (reason || '传闻') + '被玩家得知。'
+      });
+
+      return true;
+    }
+
+    function promoteRumoredCharacter(characterId, reason = '调查传闻') {
+      const character = gameState.characterRoster?.[characterId];
+      if (!character || isInternalPlayerCharacterId(characterId)) return false;
+
+      if (character.status !== 'rumored') {
+        toast('此人不需要调查');
+        return false;
+      }
+
+      character.status = 'discovered';
+      character.discoveredBy = reason;
+
+      gameState.selectedCharacterId = characterId;
+      gameState.characterFilter = 'contactable';
+      gameState.characterProfileId = characterId;
+
+      addCharacterMemory?.(character, {
+        turn: gameState.turn,
+        type: 'discovery',
+        summary: '通过' + reason + '确认其行踪。',
+        text: '通过' + reason + '确认其行踪。'
+      });
+
+      toast(character.name + '的行踪已经确认，可以尝试接触。');
+      saveToStorage(false);
+      render();
+      return true;
+    }
+
+    function investigateCharacter(characterId) {
+      const character = gameState.characterRoster?.[characterId];
+
+      if (!character) return toast('未找到此人');
+      if (isInternalPlayerCharacterId(characterId)) return toast('内部班底不需要调查');
+      if (character.status !== 'rumored') return toast('此人不需要调查');
+
+      if (isTabUnlocked('scheme')) {
+        if (!spendPoint('scheme')) return;
+        promoteRumoredCharacter(characterId, '谋略调查');
+        return;
+      }
+
+      if (isTabUnlocked('inner')) {
+        if (!spendPoint('inner')) return;
+        promoteRumoredCharacter(characterId, '亲信打探');
+        return;
+      }
+
+      toast('需要先解锁亲信或谋略系统，才能调查人物传闻');
+    }
+
+    function characterRevealPriority(character) {
+      let score = 0;
+      if (character.rarity === '传奇') score += 30;
+      if (character.rarity === '名将') score += 18;
+      if (character.type === '谋士') score += 8;
+      if (character.type === '武将') score += 6;
+      if (character.location && gameState.cities?.[character.location]) score += 5;
+      return score;
+    }
+
+    function unlockCharactersByFaction(factionId, reason = '', limit = 4) {
+      const candidates = Object.values(gameState.characterRoster || {})
+        .filter(c => isExternalCharacter(c))
+        .filter(c => c.faction === factionId)
+        .filter(c => c.status === 'hidden')
+        .filter(c => c.status !== 'dead' && c.status !== 'captured')
+        .sort((a, b) => characterRevealPriority(b) - characterRevealPriority(a));
+
+      let count = 0;
+      candidates.forEach(character => {
+        if (count >= limit) return;
+        character.status = 'rumored';
+        character.discoveredBy = reason || '天下大事';
+        count++;
+      });
+
+      return count;
+    }
+
+    function getCurrentBorderFactions() {
+      const result = new Set();
+
+      controlledCities().forEach(city => {
+        cityNeighborIds(city.id).forEach(neighborId => {
+          const neighbor = gameState.cities?.[neighborId];
+          if (!neighbor) return;
+
+          const factionId = cityController(neighborId);
+          if (!factionId || factionId === 'player' || factionId === 'local') return;
+
+          result.add(factionId);
+        });
+      });
+
+      return Array.from(result);
+    }
+
+    function checkNewBorderFactions() {
+      gameState.knownBorderFactions ||= [];
+
+      const current = getCurrentBorderFactions();
+      const known = new Set(gameState.knownBorderFactions);
+
+      current.forEach(factionId => {
+        if (known.has(factionId)) return;
+        gameState.knownBorderFactions.push(factionId);
+        unlockCharactersByFaction(factionId, '与该势力接壤', 3);
+      });
+    }
+
+    function checkIntelligenceNetworkUnlocks() {
+      gameState.characterUnlockFlags ||= {};
+
+      const network = gameState.characters?.retinue?.network || 0;
+
+      if (network >= 30 && !gameState.characterUnlockFlags.intel30) {
+        gameState.characterUnlockFlags.intel30 = true;
+        revealCharacter('siMaHui', 'rumored', '荆州名士传闻');
+        revealCharacter('pangDeGong', 'rumored', '荆州名士传闻');
+        revealCharacter('huangChengYan', 'rumored', '荆州名士传闻');
+      }
+
+      if (network >= 60 && !gameState.characterUnlockFlags.intel60) {
+        gameState.characterUnlockFlags.intel60 = true;
+        revealCharacter('zhugeLiang', 'rumored', '情报网络探知');
+        revealCharacter('pangTong', 'rumored', '情报网络探知');
+        revealCharacter('xuShu', 'rumored', '情报网络探知');
+      }
+
+      if (network >= 90 && !gameState.characterUnlockFlags.intel90) {
+        gameState.characterUnlockFlags.intel90 = true;
+        revealCharacter('zhugeLiang', 'discovered', '情报详查');
+        revealCharacter('pangTong', 'discovered', '情报详查');
+        revealCharacter('xuShu', 'discovered', '情报详查');
+      }
+    }
+
+    function getDiplomacyActionFaction(action) {
+      const map = {
+        allyLiu: 'liubiao',
+        useGongsun: 'gongsun',
+        caoFood: 'cao',
+        sunTrade: 'sun',
+        yuanContact: 'yuan',
+        liuzhangEnvoy: 'liuzhang',
+        zhangluEnvoy: 'zhanglu',
+        matengContact: 'mateng',
+        yuanshuContact: 'yuanshu'
+      };
+      return map[action] || null;
+    }
+
+    function maybeRevealCharactersFromWar(factionId, campaign) {
+      if (!campaign) return 0;
+      if (campaign.visibility === 'hidden') return 0;
+      if (['raid', 'night', 'stealth'].includes(campaign.routeMode)) return 0;
+
+      gameState.characterUnlockFlags ||= {};
+      gameState.characterUnlockFlags.warRevealTurnByFaction ||= {};
+
+      const last = gameState.characterUnlockFlags.warRevealTurnByFaction[factionId] ?? -99;
+      if (gameState.turn - last < 5) return 0;
+
+      gameState.characterUnlockFlags.warRevealTurnByFaction[factionId] = gameState.turn;
+      return unlockCharactersByFaction(factionId, '天下战事', 2);
+    }
+
+    function isMajorNpcForInitiative(character) {
+      if (!isExternalCharacter(character)) return false;
+      if (!character || character.status === 'hidden' || character.status === 'dead' || character.status === 'captured') return false;
+
+      if (character.status === 'recruited') return true;
+      if (character.status === 'contactable') return true;
+      if (character.status === 'discovered') return true;
+
+      if (character.status === 'rumored') {
+        return character.rarity === '传奇'
+          && !!character.discoveredBy
+          && Number(character.attitudeToPlayer || 0) >= 58;
+      }
+
+      return false;
+    }
+
+    function triggerScholarRecommendation() {
+      revealCharacter('siMaHui', 'discovered', '荆州名士传闻');
+      revealCharacter('zhugeLiang', 'rumored', '水镜先生荐才');
+      revealCharacter('pangTong', 'rumored', '水镜先生荐才');
+      revealCharacter('xuShu', 'rumored', '水镜先生荐才');
+      toast('荆州名士传闻渐起。');
+      render();
+    }
+
+    function revealAllHistoricalCharacters() {
+      Object.values(gameState.characterRoster || {}).forEach(c => {
+        if (!isInternalPlayerCharacterId(c.id) && c.status === 'hidden') {
+          c.status = 'rumored';
+          c.discoveredBy = '调试解锁';
+        }
+      });
+      render();
+    }
+
+    const BASE_CHARACTER_BLUEPRINTS = {
       guardCaptain: characterBlueprint('guardCaptain', '亲兵统领', { faction: 'player', role: '亲信', type: '武将', status: 'recruited', rarity: '良才', summary: '负责统领桂阳亲兵，性情直爽。', stats: { command: 68, strategy: 42, politics: 32, charm: 44, loyalty: 78, ambition: 20 }, passiveBonuses: ['训练郡兵效率提高'] }),
       chiefClerk: characterBlueprint('chiefClerk', '主簿', { faction: 'player', role: '亲信', type: '政务', status: 'recruited', rarity: '良才', summary: '熟悉文书、士族与府衙脉络。', stats: { command: 34, strategy: 57, politics: 72, charm: 58, loyalty: 74, ambition: 24 }, passiveBonuses: ['整顿治安效果提高'] }),
       quartermaster: characterBlueprint('quartermaster', '粮官', { faction: 'player', role: '亲信', type: '政务', status: 'recruited', rarity: '普通', summary: '掌管军粮和屯田账册。', stats: { command: 30, strategy: 46, politics: 66, charm: 40, loyalty: 70, ambition: 18 }, passiveBonuses: ['行军补给损耗降低'] }),
@@ -171,6 +1052,222 @@ const MAX_MAP_ZOOM = 4.2;
       liuBei: characterBlueprint('liuBei', '刘备', { faction: 'liu', location: 'xiaopei', role: '汉室宗亲', type: '武将', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' }),
       yuanShao: characterBlueprint('yuanShao', '袁绍', { faction: 'yuan', location: 'yecheng', role: '河北诸侯', type: '政务', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' })
     };
+
+    const HISTORICAL_CHARACTER_PACKS = {
+      liu: [
+        { id: 'guanYu', name: '关羽', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xiaopei', role: '万人敌', title: '虎臣', type: '武将', status: 'hidden', rarity: '传奇', summary: '关羽以忠义与武勇闻名，善统精兵，傲气极重。', stats: { command: 96, strategy: 72, politics: 42, charm: 70, loyalty: 96, ambition: 38 }, personality: { brave: 96, cautious: 36, greedy: 18, loyal: 98, proud: 88, ruthless: 30, idealistic: 80 }, values: ['忠诚', '武名', '义气'], boundaries: ['不事二主', '不屈辱求全'], longTermGoal: '辅佐明主，成就忠义之名', privateAgenda: '观察主君是否值得托付生死', speechStyle: { register: '刚正', rhythm: '简洁', habit: '言辞带压迫感', metaphor: '刀与义' }, specialSchemes: ['威震敌胆', '单骑压阵'], passiveBonuses: ['同阵营武将士气提高'], weaknesses: ['傲气重', '轻视寻常将领'], recruitmentDifficulty: 92, defectionTriggers: [] },
+        { id: 'zhangFei', name: '张飞', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xiaopei', role: '猛将', title: '万人敌', type: '武将', status: 'hidden', rarity: '传奇', summary: '张飞勇猛无双，性烈如火，然敬君子而不恤小人。', stats: { command: 92, strategy: 48, politics: 28, charm: 54, loyalty: 94, ambition: 30 }, personality: { brave: 98, cautious: 16, greedy: 22, loyal: 94, proud: 72, ruthless: 56, idealistic: 50 }, values: ['忠义', '勇武', '豪爽'], boundaries: ['不背兄长', '不惧强敌'], longTermGoal: '随兄长征战天下', privateAgenda: '以勇力证明自己非只莽夫', speechStyle: { register: '粗豪', rhythm: '短促', habit: '声大气粗', metaphor: '雷与火' }, specialSchemes: ['据水断桥', '怒吼破胆'], passiveBonuses: ['冲锋时敌军士气下降'], weaknesses: ['暴虐士卒', '酒后失德'], recruitmentDifficulty: 88, defectionTriggers: [] },
+        { id: 'zhugeLiang', name: '诸葛亮', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xinye', offMapLocation: 'longzhong', role: '卧龙', title: '军师', type: '谋士', status: 'hidden', rarity: '传奇', summary: '卧龙诸葛亮，未出茅庐已知三分天下。', stats: { command: 78, strategy: 98, politics: 96, charm: 88, loyalty: 92, ambition: 36 }, personality: { brave: 52, cautious: 82, greedy: 10, loyal: 94, proud: 60, ruthless: 28, idealistic: 88 }, values: ['天下苍生', '忠诚', '谋略'], boundaries: ['不事不明之主', '不违本心'], longTermGoal: '辅佐明主，兴复汉室', privateAgenda: '寻值得托付的明主以施展平生所学', speechStyle: { register: '儒雅', rhythm: '从容', habit: '引古喻今', metaphor: '风与棋' }, specialSchemes: ['空城计', '火烧博望', '草船借箭'], passiveBonuses: ['谋略成功率大幅提高'], weaknesses: ['事必躬亲', '过于谨慎'], recruitmentDifficulty: 96, defectionTriggers: [] },
+        { id: 'pangTong', name: '庞统', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xinye', offMapLocation: 'longzhong', role: '凤雏', title: '副军师', type: '谋士', status: 'hidden', rarity: '传奇', summary: '凤雏庞统，与卧龙齐名，善出奇谋。', stats: { command: 72, strategy: 94, politics: 80, charm: 62, loyalty: 78, ambition: 48 }, personality: { brave: 58, cautious: 42, greedy: 28, loyal: 72, proud: 74, ruthless: 50, idealistic: 60 }, values: ['奇谋', '功名', '证明自己'], boundaries: ['不甘居人下', '不守常规'], longTermGoal: '以奇谋建功立业，证明凤雏不逊卧龙', privateAgenda: '急于证明才能超越诸葛亮', speechStyle: { register: '狂放', rhythm: '跳跃', habit: '言辞尖锐', metaphor: '火与险' }, specialSchemes: ['连环计', '献策取蜀'], passiveBonuses: ['奇谋成功时额外收益'], weaknesses: ['急功近利', '貌陋易遭轻视'], recruitmentDifficulty: 82, defectionTriggers: [] },
+        { id: 'xuShu', name: '徐庶', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu', 'cao'], location: 'xinye', role: '游侠谋士', title: '军师', type: '谋士', status: 'hidden', rarity: '名将', summary: '徐庶先为游侠后为谋士，因母被执而被迫归曹。', stats: { command: 56, strategy: 88, politics: 68, charm: 74, loyalty: 72, ambition: 32 }, personality: { brave: 68, cautious: 56, greedy: 14, loyal: 82, proud: 40, ruthless: 20, idealistic: 70 }, values: ['孝义', '知己', '忠信'], boundaries: ['不为曹操献一策', '不以孝换功名'], longTermGoal: '守孝义之名，不仕不义之主', privateAgenda: '身在曹营心在汉，终身不设一谋', speechStyle: { register: '沉稳', rhythm: '舒缓', habit: '话少意深', metaphor: '归路与母' }, specialSchemes: ['走马荐诸葛'], passiveBonuses: ['识人能力提高'], weaknesses: ['孝心过重可被利用', '终不设谋'], recruitmentDifficulty: 78, defectionTriggers: ['母亲被执'] },
+        { id: 'jianYong', name: '简雍', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xiaopei', role: '旧友', title: '幕僚', type: '谋士', status: 'hidden', rarity: '良才', summary: '刘备同乡旧友，善辩辞，性情洒脱。', stats: { command: 34, strategy: 62, politics: 58, charm: 76, loyalty: 82, ambition: 22 }, personality: { brave: 40, cautious: 34, greedy: 20, loyal: 84, proud: 30, ruthless: 12, idealistic: 52 }, values: ['故旧情谊', '自由', '洒脱'], boundaries: ['不弃旧主', '不拘礼法'], longTermGoal: '随刘备周旋，享逍遥人生', privateAgenda: '用幽默化解紧张局面', speechStyle: { register: '诙谐', rhythm: '随意', habit: '善用比喻说理', metaphor: '酒与闲' }, specialSchemes: ['巧言说服'], passiveBonuses: ['外交谈判效果提高'], weaknesses: ['不擅军务', '散漫无拘'], recruitmentDifficulty: 40, defectionTriggers: [] },
+        { id: 'miZhu', name: '糜竺', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xiaopei', role: '豪门商贾', title: '别驾', type: '政务', status: 'hidden', rarity: '良才', summary: '徐州巨商，倾家助刘备，忠厚长者。', stats: { command: 28, strategy: 52, politics: 70, charm: 78, loyalty: 90, ambition: 18 }, personality: { brave: 30, cautious: 64, greedy: 20, loyal: 92, proud: 28, ruthless: 8, idealistic: 56 }, values: ['忠诚', '家业', '仁义'], boundaries: ['不背刘备', '不亏待士卒'], longTermGoal: '保全家族并辅佐刘备', privateAgenda: '用商贾资源支撑刘备基业', speechStyle: { register: '谦恭', rhythm: '平稳', habit: '以利弊分析进言', metaphor: '金与粮' }, specialSchemes: ['倾财助军'], passiveBonuses: ['商路收入提高'], weaknesses: ['无军事才能', '过于依赖刘备'], recruitmentDifficulty: 35, defectionTriggers: [] },
+        { id: 'sunQian', name: '孙乾', faction: 'liu', originFaction: 'liu', possibleFactions: ['liu'], location: 'xiaopei', role: '外交幕僚', title: '从事', type: '政务', status: 'hidden', rarity: '良才', summary: '刘备早期幕僚，善往来交涉，忠心耿耿。', stats: { command: 26, strategy: 50, politics: 64, charm: 72, loyalty: 86, ambition: 16 }, personality: { brave: 32, cautious: 60, greedy: 14, loyal: 88, proud: 22, ruthless: 10, idealistic: 48 }, values: ['忠诚', '和气', '务实'], boundaries: ['不背主', '不挑事'], longTermGoal: '辅佐刘备站稳脚跟', privateAgenda: '在外交上为刘备争取喘息之机', speechStyle: { register: '谦和', rhythm: '平稳', habit: '先赞对方再提己方诉求', metaphor: '桥与路' }, specialSchemes: ['奔走求援'], passiveBonuses: ['外交出使成功率提高'], weaknesses: ['军事能力不足', '性格过于温和'], recruitmentDifficulty: 32, defectionTriggers: [] }
+      ],
+      cao: [
+        { id: 'zhangLiao', name: '张辽', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '五子良将之首', title: '征东将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '张辽文远，合肥之战以八百破十万，威震逍遥津。', stats: { command: 92, strategy: 76, politics: 48, charm: 70, loyalty: 82, ambition: 40 }, personality: { brave: 94, cautious: 58, greedy: 18, loyal: 80, proud: 52, ruthless: 36, idealistic: 50 }, values: ['军功', '信义', '勇武'], boundaries: ['不背信弃义', '不临阵退缩'], longTermGoal: '以战功立身，名垂青史', privateAgenda: '证明降将亦可忠勇无双', speechStyle: { register: '刚毅', rhythm: '利落', habit: '言出必行', metaphor: '矛与盾' }, specialSchemes: ['威震逍遥津', '夜袭敌营'], passiveBonuses: ['守城时防御大幅提高'], weaknesses: ['降将出身受猜忌', '不善朝堂周旋'], recruitmentDifficulty: 80, defectionTriggers: [] },
+        { id: 'yueJin', name: '乐进', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '五子良将', title: '右将军', type: '武将', status: 'hidden', rarity: '名将', summary: '乐进以胆烈闻名，每战先登，攻城无数。', stats: { command: 82, strategy: 58, politics: 38, charm: 50, loyalty: 84, ambition: 34 }, personality: { brave: 92, cautious: 30, greedy: 20, loyal: 86, proud: 40, ruthless: 40, idealistic: 38 }, values: ['勇武', '先登之功', '忠诚'], boundaries: ['不畏惧攻城', '不违背军令'], longTermGoal: '以攻城先登之功扬名', privateAgenda: '每次攻城都要争先', speechStyle: { register: '简朴', rhythm: '短促', habit: '少言多做', metaphor: '梯与城' }, specialSchemes: ['先登破城'], passiveBonuses: ['攻城效率提高'], weaknesses: ['过于冒进', '不善谋略'], recruitmentDifficulty: 58, defectionTriggers: [] },
+        { id: 'yuJin', name: '于禁', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '五子良将', title: '左将军', type: '武将', status: 'hidden', rarity: '名将', summary: '于禁治军严整，然晚年水淹七军而降关羽，晚节不保。', stats: { command: 80, strategy: 62, politics: 50, charm: 44, loyalty: 60, ambition: 42 }, personality: { brave: 64, cautious: 72, greedy: 30, loyal: 56, proud: 58, ruthless: 44, idealistic: 28 }, values: ['军法', '秩序', '功名'], boundaries: ['治军不可失严', '不愿身死无意义'], longTermGoal: '以严法治军，功成名就', privateAgenda: '维护自己军中威信', speechStyle: { register: '严厉', rhythm: '斩截', habit: '以军法压人', metaphor: '法与令' }, specialSchemes: ['严阵固守'], passiveBonuses: ['整顿军队效果提高'], weaknesses: ['晚节可能不保', '过于看重军法失人心'], recruitmentDifficulty: 55, defectionTriggers: ['兵败被围', '生死存亡之际'] },
+        { id: 'xuHuang', name: '徐晃', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '五子良将', title: '右将军', type: '武将', status: 'hidden', rarity: '名将', summary: '徐晃公明，治军有方，樊城之战击退关羽。', stats: { command: 86, strategy: 70, politics: 46, charm: 58, loyalty: 84, ambition: 36 }, personality: { brave: 78, cautious: 68, greedy: 14, loyal: 86, proud: 42, ruthless: 28, idealistic: 44 }, values: ['军令', '公义', '战功'], boundaries: ['不违军令', '不贪财货'], longTermGoal: '以公心立战功', privateAgenda: '做周亚夫式的名将', speechStyle: { register: '严正', rhythm: '沉稳', habit: '以古将自比', metaphor: '阵与法' }, specialSchemes: ['声东击西', '长驱直入'], passiveBonuses: ['反击时攻击力提高'], weaknesses: ['不善政治', '过于刻板'], recruitmentDifficulty: 60, defectionTriggers: [] },
+        { id: 'xiahouDun', name: '夏侯惇', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '宗族大将', title: '大将军', type: '武将', status: 'hidden', rarity: '名将', summary: '夏侯惇拔矢啖睛，曹操最为信重的宗族大将。', stats: { command: 78, strategy: 42, politics: 36, charm: 56, loyalty: 96, ambition: 28 }, personality: { brave: 94, cautious: 24, greedy: 16, loyal: 98, proud: 56, ruthless: 48, idealistic: 40 }, values: ['宗族', '忠勇', '义气'], boundaries: ['绝不背叛曹氏', '不惧伤痛'], longTermGoal: '为曹氏守护基业', privateAgenda: '以刚烈证明忠心', speechStyle: { register: '豪迈', rhythm: '直截', habit: '以身作则', metaphor: '血与铁' }, specialSchemes: ['拔矢啖睛', '死战不退'], passiveBonuses: ['受伤后战力不降'], weaknesses: ['常中伏计', '不善谋略'], recruitmentDifficulty: 90, defectionTriggers: [] },
+        { id: 'xiahouYuan', name: '夏侯渊', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '宗族猛将', title: '征西将军', type: '武将', status: 'hidden', rarity: '名将', summary: '夏侯渊千里袭敌，以疾速行军闻名，然定军山中伏殒命。', stats: { command: 82, strategy: 56, politics: 32, charm: 52, loyalty: 92, ambition: 38 }, personality: { brave: 90, cautious: 20, greedy: 18, loyal: 94, proud: 54, ruthless: 42, idealistic: 36 }, values: ['速度', '奇袭', '宗族'], boundaries: ['不违军令', '不落后于人'], longTermGoal: '以疾速征伐为曹氏开疆', privateAgenda: '证明三日五百里六日千里的能力', speechStyle: { register: '急促', rhythm: '快速', habit: '催促进军', metaphor: '风与马' }, specialSchemes: ['千里奔袭', '速攻破敌'], passiveBonuses: ['行军速度大幅提高'], weaknesses: ['过于冒进', '防守意识不足'], recruitmentDifficulty: 75, defectionTriggers: [] },
+        { id: 'caoRen', name: '曹仁', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '宗族守将', title: '大司马', type: '武将', status: 'hidden', rarity: '名将', summary: '曹仁善守，樊城之围坚守不屈，为曹氏柱石。', stats: { command: 84, strategy: 64, politics: 48, charm: 60, loyalty: 92, ambition: 32 }, personality: { brave: 80, cautious: 62, greedy: 16, loyal: 94, proud: 48, ruthless: 34, idealistic: 38 }, values: ['守御', '宗族', '忠诚'], boundaries: ['不弃城而走', '不违曹操之令'], longTermGoal: '为曹氏守土护疆', privateAgenda: '做最可靠的守城之将', speechStyle: { register: '沉稳', rhythm: '坚定', habit: '以身作则激励士卒', metaphor: '墙与城' }, specialSchemes: ['坚守孤城', '夜袭破围'], passiveBonuses: ['被围城时防御提高'], weaknesses: ['进攻不如防守', '过于依赖城防'], recruitmentDifficulty: 78, defectionTriggers: [] },
+        { id: 'caoHong', name: '曹洪', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '宗族将领', title: '骠骑将军', type: '武将', status: 'hidden', rarity: '良才', summary: '曹洪救曹操于危难，然贪财好货，品行有亏。', stats: { command: 68, strategy: 44, politics: 38, charm: 48, loyalty: 80, ambition: 44 }, personality: { brave: 74, cautious: 38, greedy: 68, loyal: 78, proud: 56, ruthless: 36, idealistic: 22 }, values: ['宗族', '财货', '功名'], boundaries: ['不弃曹操于危难', '不愿散财'], longTermGoal: '凭借宗族身份享荣华', privateAgenda: '保全自身并积累财富', speechStyle: { register: '直率', rhythm: '随意', habit: '提旧功邀赏', metaphor: '金与马' }, specialSchemes: ['舍马救主'], passiveBonuses: ['宗族兵力补充速度提高'], weaknesses: ['贪财吝啬', '与朝臣不和'], recruitmentDifficulty: 50, defectionTriggers: [] },
+        { id: 'dianWei', name: '典韦', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '虎卫', title: '校尉', type: '武将', status: 'hidden', rarity: '名将', summary: '典韦古之恶来，力大无穷，宛城之战舍命护主。', stats: { command: 58, strategy: 28, politics: 14, charm: 44, loyalty: 98, ambition: 12 }, personality: { brave: 98, cautious: 10, greedy: 8, loyal: 100, proud: 38, ruthless: 52, idealistic: 28 }, values: ['忠诚', '勇力', '保护主公'], boundaries: ['绝不离开主公', '不惧任何敌人'], longTermGoal: '以命护主', privateAgenda: '做主公最坚固的盾', speechStyle: { register: '粗朴', rhythm: '极少言语', habit: '以行动代替言语', metaphor: '铁与血' }, specialSchemes: ['死战护主', '双戟破阵'], passiveBonuses: ['主公遇险时防御暴增'], weaknesses: ['无谋略', '易被算计'], recruitmentDifficulty: 95, defectionTriggers: [] },
+        { id: 'xuChu', name: '许褚', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '虎痴', title: '武卫中郎将', type: '武将', status: 'hidden', rarity: '名将', summary: '许褚号虎痴，力大如牛，忠心护主不输典韦。', stats: { command: 54, strategy: 30, politics: 18, charm: 42, loyalty: 96, ambition: 14 }, personality: { brave: 96, cautious: 22, greedy: 12, loyal: 98, proud: 36, ruthless: 46, idealistic: 26 }, values: ['忠诚', '勇力', '主公安危'], boundaries: ['不远离主公', '不惧任何对手'], longTermGoal: '护卫主公安全', privateAgenda: '延续典韦未竟的护卫使命', speechStyle: { register: '粗直', rhythm: '简短', habit: '以行动表达忠心', metaphor: '虎与山' }, specialSchemes: ['裸衣斗马超', '虎卫坚守'], passiveBonuses: ['护卫时主公受伤概率降低'], weaknesses: ['无谋', '不善言辞'], recruitmentDifficulty: 88, defectionTriggers: [] },
+        { id: 'liDian', name: '李典', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '儒将', title: '破虏将军', type: '谋士', status: 'hidden', rarity: '良才', summary: '李典好学问，贵儒雅，不与诸将争功。', stats: { command: 72, strategy: 74, politics: 60, charm: 66, loyalty: 80, ambition: 28 }, personality: { brave: 60, cautious: 70, greedy: 12, loyal: 78, proud: 28, ruthless: 18, idealistic: 58 }, values: ['学问', '谦让', '大局'], boundaries: ['不争功', '不冒进'], longTermGoal: '以儒将之风辅助军务', privateAgenda: '用智谋弥补武将的莽撞', speechStyle: { register: '儒雅', rhythm: '从容', habit: '引经据典', metaphor: '书与剑' }, specialSchemes: ['博望之识', '合兵破敌'], passiveBonuses: ['与友军协同时效果提高'], weaknesses: ['不喜争功', '与张辽不和'], recruitmentDifficulty: 48, defectionTriggers: [] },
+        { id: 'zangBa', name: '臧霸', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '泰山豪强', title: '镇东将军', type: '武将', status: 'hidden', rarity: '良才', summary: '臧霸据泰山，后归曹操，镇守东方。', stats: { command: 74, strategy: 54, politics: 44, charm: 56, loyalty: 68, ambition: 48 }, personality: { brave: 76, cautious: 44, greedy: 38, loyal: 64, proud: 52, ruthless: 46, idealistic: 30 }, values: ['自立', '地盘', '功名'], boundaries: ['不轻易臣服', '不做无谓牺牲'], longTermGoal: '保泰山根基，在曹操麾下谋发展', privateAgenda: '维持半独立地位', speechStyle: { register: '豪横', rhythm: '直白', habit: '先看利益再决定', metaphor: '山与路' }, specialSchemes: ['泰山据守'], passiveBonuses: ['山地作战能力提高'], weaknesses: ['半独立心态', '忠诚度有限'], recruitmentDifficulty: 62, defectionTriggers: ['利益受损', '被削藩'] },
+        { id: 'xunYu', name: '荀彧', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '王佐之才', title: '尚书令', type: '谋士', status: 'hidden', rarity: '传奇', summary: '荀彧王佐之才，为曹操规划大略，然反对加九锡而终。', stats: { command: 44, strategy: 96, politics: 98, charm: 86, loyalty: 72, ambition: 30 }, personality: { brave: 38, cautious: 82, greedy: 6, loyal: 74, proud: 64, ruthless: 22, idealistic: 86 }, values: ['汉室', '礼法', '天下秩序'], boundaries: ['不容篡汉', '不做乱臣'], longTermGoal: '辅佐明主平定天下，恢复汉室秩序', privateAgenda: '阻止曹操走向篡位', speechStyle: { register: '端庄', rhythm: '从容', habit: '以大义进言', metaphor: '鼎与器' }, specialSchemes: ['十胜十败', '驱虎吞狼'], passiveBonuses: ['内政效率大幅提高'], weaknesses: ['忠于汉室而非曹操', '反对篡位终遭忌'], recruitmentDifficulty: 85, defectionTriggers: ['曹操称王'] },
+        { id: 'xunYou', name: '荀攸', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '谋主', title: '尚书', type: '谋士', status: 'hidden', rarity: '名将', summary: '荀攸为曹操谋主，十二奇策，深藏不露。', stats: { command: 40, strategy: 92, politics: 82, charm: 72, loyalty: 80, ambition: 26 }, personality: { brave: 36, cautious: 78, greedy: 8, loyal: 82, proud: 42, ruthless: 32, idealistic: 62 }, values: ['智谋', '谦逊', '克己'], boundaries: ['不炫耀功劳', '不冒险行事'], longTermGoal: '以谋略助曹操平天下', privateAgenda: '做最好的幕后谋士', speechStyle: { register: '温厚', rhythm: '平缓', habit: '只说关键一句', metaphor: '暗与明' }, specialSchemes: ['十二奇策', '水淹下邳'], passiveBonuses: ['计策成功率提高'], weaknesses: ['过于内敛', '不善临阵指挥'], recruitmentDifficulty: 72, defectionTriggers: [] },
+        { id: 'guoJia', name: '郭嘉', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '鬼才', title: '军师祭酒', type: '谋士', status: 'hidden', rarity: '传奇', summary: '郭嘉鬼才，识人断事如神，惜英年早逝。', stats: { command: 40, strategy: 96, politics: 74, charm: 82, loyalty: 74, ambition: 42 }, personality: { brave: 44, cautious: 36, greedy: 28, loyal: 72, proud: 68, ruthless: 56, idealistic: 40 }, values: ['洞察', '奇谋', '享乐'], boundaries: ['不做无趣之事', '不拘常理'], longTermGoal: '以智谋助曹操统一北方', privateAgenda: '享受推演天下大势的快感', speechStyle: { register: '洒脱', rhythm: '跳跃', habit: '一针见血', metaphor: '棋与局' }, specialSchemes: ['遗计定辽东', '十胜论'], passiveBonuses: ['识破敌军计策概率提高'], weaknesses: ['体弱多病', '生活放浪'], recruitmentDifficulty: 90, defectionTriggers: [] },
+        { id: 'chengYu', name: '程昱', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '刚烈谋士', title: '卫尉', type: '谋士', status: 'hidden', rarity: '名将', summary: '程昱性刚烈，守鄄城三城有功，善断大事。', stats: { command: 62, strategy: 88, politics: 72, charm: 48, loyalty: 82, ambition: 40 }, personality: { brave: 72, cautious: 48, greedy: 22, loyal: 84, proud: 68, ruthless: 64, idealistic: 34 }, values: ['果决', '功名', '威权'], boundaries: ['不优柔寡断', '不做妇人之为'], longTermGoal: '以刚毅辅佐曹操成霸业', privateAgenda: '证明谋士亦需铁血', speechStyle: { register: '刚硬', rhythm: '短句', habit: '直言不讳', metaphor: '刀与断' }, specialSchemes: ['三城固守', '毒计绝粮'], passiveBonuses: ['守城时民心不易动摇'], weaknesses: ['性格过于刚烈', '手段狠辣失人心'], recruitmentDifficulty: 65, defectionTriggers: [] },
+        { id: 'jiaXu', name: '贾诩', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '毒士', title: '太尉', type: '谋士', status: 'hidden', rarity: '传奇', summary: '贾诩文和，号称毒士，算无遗策，三易其主终得善终。', stats: { command: 46, strategy: 94, politics: 86, charm: 64, loyalty: 52, ambition: 34 }, personality: { brave: 30, cautious: 92, greedy: 24, loyal: 48, proud: 50, ruthless: 78, idealistic: 14 }, values: ['自保', '智谋', '审时度势'], boundaries: ['不涉立嗣之争', '不结交权贵'], longTermGoal: '在乱世中全身而退', privateAgenda: '只求自保，不做多余的表态', speechStyle: { register: '寡言', rhythm: '缓慢', habit: '非不得已不开口', metaphor: '影与水' }, specialSchemes: ['反间计', '劝李傕反长安'], passiveBonuses: ['识破敌方计策概率大幅提高'], weaknesses: ['过于自保', '毒计遭人忌惮'], recruitmentDifficulty: 70, defectionTriggers: ['主公势危', '有更好靠山'] },
+        { id: 'liuYe', name: '刘晔', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '宗室谋臣', title: '侍中', type: '谋士', status: 'hidden', rarity: '良才', summary: '刘晔汉宗室，佐曹操多出奇策，发明霹雳车。', stats: { command: 50, strategy: 82, politics: 70, charm: 62, loyalty: 76, ambition: 36 }, personality: { brave: 46, cautious: 64, greedy: 18, loyal: 78, proud: 48, ruthless: 38, idealistic: 44 }, values: ['技术', '奇策', '宗室体面'], boundaries: ['不以宗室身份倨傲', '不提不得体的建议'], longTermGoal: '以技术革新和奇策助曹', privateAgenda: '发明更多攻城器械', speechStyle: { register: '精微', rhythm: '细致', habit: '以技术细节说服人', metaphor: '器与术' }, specialSchemes: ['霹雳车攻城', '预言刘蜀必亡'], passiveBonuses: ['攻城器械效果提高'], weaknesses: ['言多有时不被采纳', '宗室身份敏感'], recruitmentDifficulty: 52, defectionTriggers: [] },
+        { id: 'manChong', name: '满宠', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '执法之臣', title: '太尉', type: '政务', status: 'hidden', rarity: '良才', summary: '满宠执法严明，不避权贵，善守城池。', stats: { command: 68, strategy: 72, politics: 78, charm: 42, loyalty: 86, ambition: 30 }, personality: { brave: 62, cautious: 70, greedy: 10, loyal: 88, proud: 46, ruthless: 52, idealistic: 40 }, values: ['法度', '公正', '守御'], boundaries: ['不以私废公', '不畏权贵'], longTermGoal: '以严法治国守疆', privateAgenda: '做曹操最可靠的执法者', speechStyle: { register: '冷峻', rhythm: '简明', habit: '以法理说服', metaphor: '法与尺' }, specialSchemes: ['执法安民', '焚城退敌'], passiveBonuses: ['治安整顿效果提高'], weaknesses: ['执法过严少人情', '不善外交'], recruitmentDifficulty: 48, defectionTriggers: [] },
+        { id: 'simaYi', name: '司马懿', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '隐忍谋臣', title: '太傅', type: '谋士', status: 'hidden', rarity: '传奇', summary: '司马懿隐忍深算，鹰视狼顾，终成司马氏基业。', stats: { command: 76, strategy: 96, politics: 94, charm: 62, loyalty: 48, ambition: 92 }, personality: { brave: 44, cautious: 94, greedy: 40, loyal: 38, proud: 72, ruthless: 82, idealistic: 18 }, values: ['权力', '家族', '忍耐'], boundaries: ['不做无把握之事', '不显露真实意图'], longTermGoal: '为司马氏夺取天下奠基', privateAgenda: '等待时机取代曹氏', speechStyle: { register: '深沉', rhythm: '缓慢', habit: '话中有话', metaphor: '渊与冰' }, specialSchemes: ['空营退蜀', '高平陵之变'], passiveBonuses: ['长期对峙时对方先耗尽耐心'], weaknesses: ['多疑', '野心过大'], recruitmentDifficulty: 96, defectionTriggers: ['曹氏衰弱', '掌权时机成熟'] },
+        { id: 'chenQun', name: '陈群', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '制度之臣', title: '司空', type: '政务', status: 'hidden', rarity: '良才', summary: '陈群创九品中正制，为曹魏定选官之法。', stats: { command: 30, strategy: 72, politics: 90, charm: 68, loyalty: 78, ambition: 42 }, personality: { brave: 24, cautious: 80, greedy: 30, loyal: 76, proud: 56, ruthless: 34, idealistic: 38 }, values: ['制度', '秩序', '门第'], boundaries: ['不破坏等级秩序', '不逾越本分'], longTermGoal: '建立完善的选官制度', privateAgenda: '为士族争取制度性保障', speechStyle: { register: '端方', rhythm: '条理', habit: '引制度论事', metaphor: '尺与度' }, specialSchemes: ['九品中正制', '制礼作乐'], passiveBonuses: ['政务效率提高'], weaknesses: ['过于维护士族利益', '缺乏军事才能'], recruitmentDifficulty: 50, defectionTriggers: [] }
+      ],
+      yuan: [
+        { id: 'juShou', name: '沮授', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '首席谋臣', title: '监军', type: '谋士', status: 'hidden', rarity: '名将', summary: '沮授智谋出众，屡谏袁绍不听，终被俘殉主。', stats: { command: 52, strategy: 90, politics: 82, charm: 58, loyalty: 88, ambition: 28 }, personality: { brave: 50, cautious: 76, greedy: 12, loyal: 90, proud: 46, ruthless: 30, idealistic: 64 }, values: ['忠义', '大局', '谋略'], boundaries: ['不背旧主', '不随波逐流'], longTermGoal: '辅佐袁绍统一河北', privateAgenda: '纠正袁绍的决策失误', speechStyle: { register: '恳切', rhythm: '长句', habit: '反复劝谏', metaphor: '舟与舵' }, specialSchemes: ['缓进耗曹'], passiveBonuses: ['战略规划效果提高'], weaknesses: ['谏言不被采纳', '过于执着忠义'], recruitmentDifficulty: 72, defectionTriggers: [] },
+        { id: 'tianFeng', name: '田丰', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '直谏之臣', title: '别驾', type: '谋士', status: 'hidden', rarity: '名将', summary: '田丰刚直敢谏，因反对南征被下狱，后被袁绍所杀。', stats: { command: 46, strategy: 88, politics: 76, charm: 40, loyalty: 84, ambition: 24 }, personality: { brave: 58, cautious: 72, greedy: 8, loyal: 86, proud: 62, ruthless: 22, idealistic: 72 }, values: ['直谏', '大义', '正确决策'], boundaries: ['不阿谀奉承', '不畏惧获罪'], longTermGoal: '阻止袁绍犯致命错误', privateAgenda: '以死谏证明忠心', speechStyle: { register: '激烈', rhythm: '紧迫', habit: '言辞尖锐不留情', metaphor: '霜与剑' }, specialSchemes: ['急攻许都'], passiveBonuses: ['谏言被采纳时效果加倍'], weaknesses: ['过于刚直', '不谙人情世故'], recruitmentDifficulty: 68, defectionTriggers: [] },
+        { id: 'xuYou', name: '许攸', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '贪功谋士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '许攸因家属犯罪而投曹操，献计火烧乌巢。', stats: { command: 38, strategy: 78, politics: 56, charm: 48, loyalty: 36, ambition: 62 }, personality: { brave: 34, cautious: 32, greedy: 72, loyal: 32, proud: 76, ruthless: 48, idealistic: 18 }, values: ['功名', '利益', '报复'], boundaries: ['不受屈辱', '不放过获利机会'], longTermGoal: '以谋略获取最大功名', privateAgenda: '谁给我更多就投谁', speechStyle: { register: '刻薄', rhythm: '急切', habit: '居功自傲', metaphor: '火与粮' }, specialSchemes: ['火烧乌巢'], passiveBonuses: ['截获敌方粮草时效果提高'], weaknesses: ['贪功傲慢', '忠诚度极低'], recruitmentDifficulty: 40, defectionTriggers: ['家属犯罪被抓', '不被重用', '受到屈辱'] },
+        { id: 'shenPei', name: '审配', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '忠烈之臣', title: '治中', type: '政务', status: 'hidden', rarity: '良才', summary: '审配坚守邺城，城破殉主，忠烈可嘉。', stats: { command: 60, strategy: 68, politics: 78, charm: 38, loyalty: 92, ambition: 30 }, personality: { brave: 72, cautious: 60, greedy: 14, loyal: 94, proud: 58, ruthless: 52, idealistic: 50 }, values: ['忠诚', '坚守', '法度'], boundaries: ['不投降', '不背袁氏'], longTermGoal: '死守邺城保全袁氏基业', privateAgenda: '以死殉主证明忠节', speechStyle: { register: '严厉', rhythm: '坚定', habit: '以法纪约束众人', metaphor: '城与义' }, specialSchemes: ['坚守邺城'], passiveBonuses: ['守城时士卒不溃散'], weaknesses: ['过于固执', '不善变通'], recruitmentDifficulty: 65, defectionTriggers: [] },
+        { id: 'guoTu', name: '郭图', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '党争谋士', title: '军师', type: '谋士', status: 'hidden', rarity: '良才', summary: '郭图党同伐异，屡进谗言，为袁绍集团内耗推手。', stats: { command: 36, strategy: 66, politics: 64, charm: 52, loyalty: 42, ambition: 68 }, personality: { brave: 28, cautious: 40, greedy: 58, loyal: 40, proud: 64, ruthless: 62, idealistic: 14 }, values: ['权位', '党争', '私利'], boundaries: ['不放过打击对手机会', '不做不利己之事'], longTermGoal: '在袁绍集团中争得最大话语权', privateAgenda: '打压异己，巩固自身地位', speechStyle: { register: '阴柔', rhythm: '迂回', habit: '进谗不露痕迹', metaphor: '暗与影' }, specialSchemes: ['谗言害人', '党争夺权'], passiveBonuses: ['党争中胜率提高'], weaknesses: ['不顾大局', '军略有限'], recruitmentDifficulty: 35, defectionTriggers: ['主公势败', '有更好靠山'] },
+        { id: 'fengJi', name: '逢纪', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '阴谋之士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '逢纪善阴谋，矫诏立袁尚，加剧袁氏内斗。', stats: { command: 34, strategy: 72, politics: 66, charm: 38, loyalty: 50, ambition: 64 }, personality: { brave: 30, cautious: 48, greedy: 52, loyal: 48, proud: 58, ruthless: 72, idealistic: 12 }, values: ['阴谋', '权力', '私利'], boundaries: ['不做无利益之事', '不忠于已败之主'], longTermGoal: '在袁氏内斗中获利', privateAgenda: '操控继承人之争谋利', speechStyle: { register: '阴沉', rhythm: '低语', habit: '暗中进言', metaphor: '刀与背' }, specialSchemes: ['矫诏立嗣', '暗害异己'], passiveBonuses: ['密谋成功率提高'], weaknesses: ['不得人心', '过于阴险'], recruitmentDifficulty: 38, defectionTriggers: ['主公势败'] },
+        { id: 'yanLiang', name: '颜良', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北上将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '颜良勇冠三军，为袁绍麾下头号猛将。', stats: { command: 82, strategy: 42, politics: 24, charm: 48, loyalty: 78, ambition: 44 }, personality: { brave: 92, cautious: 18, greedy: 34, loyal: 76, proud: 72, ruthless: 52, idealistic: 28 }, values: ['勇武', '战功', '颜面'], boundaries: ['不畏惧任何对手', '不退缩'], longTermGoal: '以武勇扬名河北', privateAgenda: '证明自己天下无双', speechStyle: { register: '傲慢', rhythm: '短促', habit: '轻视对手', metaphor: '矛与力' }, specialSchemes: ['河北冲锋', '先阵突杀'], passiveBonuses: ['首战攻击力大幅提高'], weaknesses: ['过于轻敌', '不防暗算'], recruitmentDifficulty: 62, defectionTriggers: [] },
+        { id: 'wenChou', name: '文丑', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '文丑与颜良齐名，并称袁绍双璧。', stats: { command: 80, strategy: 38, politics: 22, charm: 44, loyalty: 76, ambition: 42 }, personality: { brave: 90, cautious: 16, greedy: 36, loyal: 74, proud: 68, ruthless: 50, idealistic: 26 }, values: ['勇武', '义气', '战功'], boundaries: ['不弃战友', '不避强敌'], longTermGoal: '与颜良并肩征战天下', privateAgenda: '为颜良之死复仇', speechStyle: { register: '粗猛', rhythm: '急切', habit: '怒吼冲锋', metaphor: '铁与风' }, specialSchemes: ['追击破敌', '河北骑突'], passiveBonuses: ['骑兵冲锋效果提高'], weaknesses: ['冲动易怒', '不善谋略'], recruitmentDifficulty: 60, defectionTriggers: [] },
+        { id: 'zhangHe', name: '张郃', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '张郃以巧变闻名，官渡后归曹操，为五子良将之一。', stats: { command: 86, strategy: 72, politics: 44, charm: 56, loyalty: 58, ambition: 46 }, personality: { brave: 72, cautious: 68, greedy: 28, loyal: 56, proud: 48, ruthless: 38, idealistic: 36 }, values: ['巧变', '生存', '功名'], boundaries: ['不做无意义的牺牲', '不拘泥于一种战术'], longTermGoal: '在乱世中以巧变立身', privateAgenda: '找到真正值得效力的明主', speechStyle: { register: '务实', rhythm: '灵活', habit: '因地制宜', metaphor: '水与势' }, specialSchemes: ['巧变设伏', '山地游击'], passiveBonuses: ['地形适应力提高'], weaknesses: ['忠诚度随局势摇摆', '过于审时度势'], recruitmentDifficulty: 58, defectionTriggers: ['袁绍猜忌', '官渡压力', '曹操招降'] },
+        { id: 'gaoLan', name: '高览', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北将领', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '高览与张郃齐名，官渡后同降曹操。', stats: { command: 74, strategy: 54, politics: 36, charm: 48, loyalty: 56, ambition: 38 }, personality: { brave: 70, cautious: 52, greedy: 24, loyal: 54, proud: 42, ruthless: 34, idealistic: 30 }, values: ['功名', '生存', '战友'], boundaries: ['不盲从错误命令', '不做无谓牺牲'], longTermGoal: '在乱世中找到出路', privateAgenda: '随张郃寻找更好的归宿', speechStyle: { register: '沉稳', rhythm: '平实', habit: '不多说话', metaphor: '盾与守' }, specialSchemes: ['阵地防御'], passiveBonuses: ['防御阵型效果提高'], weaknesses: ['随波逐流', '缺乏主见'], recruitmentDifficulty: 42, defectionTriggers: ['主公势败', '同僚投降'] }
+      ],
+      sun: [
+        { id: 'sunCe', name: '孙策', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '小霸王', title: '讨逆将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '孙策小霸王，以猛锐平定江东，英年早逝。', stats: { command: 94, strategy: 68, politics: 52, charm: 86, loyalty: 88, ambition: 74 }, personality: { brave: 98, cautious: 28, greedy: 24, loyal: 86, proud: 78, ruthless: 52, idealistic: 58 }, values: ['武勇', '江东基业', '父亲遗志'], boundaries: ['不辱孙氏之名', '不惧任何对手'], longTermGoal: '继承父志，平定江东', privateAgenda: '以武力证明孙氏不可辱', speechStyle: { register: '豪爽', rhythm: '快捷', habit: '先战再说', metaphor: '枪与风' }, specialSchemes: ['横扫江东', '太史慈单挑'], passiveBonuses: ['进攻时攻击力大幅提高'], weaknesses: ['好杀降', '轻信易中计'], recruitmentDifficulty: 92, defectionTriggers: [] },
+        { id: 'sunJian', name: '孙坚', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '江东猛虎', title: '破虏将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '孙坚江东猛虎，讨董先锋，得传国玉玺，殒命襄阳。', stats: { command: 92, strategy: 64, politics: 50, charm: 78, loyalty: 82, ambition: 68 }, personality: { brave: 98, cautious: 24, greedy: 38, loyal: 80, proud: 72, ruthless: 56, idealistic: 54 }, values: ['勇武', '忠汉', '江东'], boundaries: ['不背汉室名义', '不惧强敌'], longTermGoal: '以勇武为孙氏立基', privateAgenda: '得玉玺后暗中筹划大业', speechStyle: { register: '勇决', rhythm: '利落', habit: '以行动说话', metaphor: '虎与山' }, specialSchemes: ['破董先锋', '跨江击刘表'], passiveBonuses: ['先手攻击时伤害提高'], weaknesses: ['过于冒进', '对玉玺执念深'], recruitmentDifficulty: 95, defectionTriggers: [] },
+        { id: 'zhouYu', name: '周瑜', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '美周郎', title: '大都督', type: '谋士', status: 'hidden', rarity: '传奇', summary: '周瑜文武双全，赤壁之战名垂千古。', stats: { command: 88, strategy: 94, politics: 78, charm: 90, loyalty: 84, ambition: 46 }, personality: { brave: 74, cautious: 58, greedy: 14, loyal: 84, proud: 72, ruthless: 40, idealistic: 56 }, values: ['才华', '江东', '知己'], boundaries: ['不辱孙氏之托', '不容他人轻视'], longTermGoal: '为孙氏守江东并图天下', privateAgenda: '在天下人面前证明才华', speechStyle: { register: '风雅', rhythm: '从容', habit: '抚琴论兵', metaphor: '琴与火' }, specialSchemes: ['赤壁火攻', '苦肉计', '群英会'], passiveBonuses: ['水战指挥效果大幅提高'], weaknesses: ['心胸有隙', '英年早逝'], recruitmentDifficulty: 90, defectionTriggers: [] },
+        { id: 'luSu', name: '鲁肃', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '长者谋臣', title: '赞军校尉', type: '谋士', status: 'hidden', rarity: '名将', summary: '鲁肃忠厚长者，促成孙刘联盟，榻上策定三分。', stats: { command: 56, strategy: 88, politics: 84, charm: 82, loyalty: 82, ambition: 28 }, personality: { brave: 48, cautious: 66, greedy: 10, loyal: 84, proud: 36, ruthless: 16, idealistic: 74 }, values: ['联盟', '大局', '和平'], boundaries: ['不让孙刘开战', '不做背信之事'], longTermGoal: '维持孙刘联盟抗曹', privateAgenda: '以双方共存换取天下太平', speechStyle: { register: '厚道', rhythm: '和缓', habit: '先夸对方再讲道理', metaphor: '桥与水' }, specialSchemes: ['榻上策', '单刀赴会'], passiveBonuses: ['外交联盟成功率大幅提高'], weaknesses: ['过于信任刘备', '外交手腕偏软'], recruitmentDifficulty: 68, defectionTriggers: [] },
+        { id: 'luMeng', name: '吕蒙', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '白衣渡江', title: '大都督', type: '武将', status: 'hidden', rarity: '名将', summary: '吕蒙从武夫到儒将，白衣渡江取荆州。', stats: { command: 84, strategy: 82, politics: 64, charm: 56, loyalty: 80, ambition: 46 }, personality: { brave: 78, cautious: 64, greedy: 30, loyal: 82, proud: 52, ruthless: 50, idealistic: 36 }, values: ['学习', '功名', '进取'], boundaries: ['不让轻视成为现实', '不做莽夫'], longTermGoal: '从武夫蜕变为智将', privateAgenda: '用学识证明自己非只莽夫', speechStyle: { register: '沉稳', rhythm: '由粗转细', habit: '以实例论战', metaphor: '书与刀' }, specialSchemes: ['白衣渡江', '士别三日'], passiveBonuses: ['偷袭成功率大幅提高'], weaknesses: ['曾因粗鲁误事', '与关羽关系恶化'], recruitmentDifficulty: 65, defectionTriggers: [] },
+        { id: 'luXun', name: '陆逊', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '书生拜将', title: '大都督', type: '谋士', status: 'hidden', rarity: '名将', summary: '陆逊书生拜将，夷陵之战火烧连营七百里。', stats: { command: 82, strategy: 92, politics: 76, charm: 70, loyalty: 82, ambition: 38 }, personality: { brave: 56, cautious: 80, greedy: 10, loyal: 84, proud: 48, ruthless: 46, idealistic: 48 }, values: ['耐心', '计谋', '江东'], boundaries: ['不急于求战', '不轻敌冒进'], longTermGoal: '守护江东基业', privateAgenda: '以耐心和智慧取胜', speechStyle: { register: '儒雅', rhythm: '沉稳', habit: '谦逊中藏锋芒', metaphor: '火与林' }, specialSchemes: ['火烧连营', '骄兵之计'], passiveBonuses: ['被攻击时防御随回合提高'], weaknesses: ['年少资浅被轻视', '朝中受排挤'], recruitmentDifficulty: 72, defectionTriggers: [] },
+        { id: 'taishiCi', name: '太史慈', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '神箭手', title: '建昌都尉', type: '武将', status: 'hidden', rarity: '名将', summary: '太史慈信义笃烈，猿臂善射，与孙策惺惺相惜。', stats: { command: 84, strategy: 54, politics: 38, charm: 68, loyalty: 84, ambition: 36 }, personality: { brave: 92, cautious: 44, greedy: 16, loyal: 86, proud: 56, ruthless: 34, idealistic: 58 }, values: ['信义', '武勇', '知遇之恩'], boundaries: ['不负承诺', '不背信义'], longTermGoal: '以武勇报知遇之恩', privateAgenda: '在天下人面前证明信义之重', speechStyle: { register: '刚烈', rhythm: '利落', habit: '言出必行', metaphor: '箭与义' }, specialSchemes: ['北海突围', '神箭退敌'], passiveBonuses: ['弓兵攻击力提高'], weaknesses: ['过于重信', '不善谋略'], recruitmentDifficulty: 68, defectionTriggers: [] },
+        { id: 'ganNing', name: '甘宁', faction: 'sun', originFaction: 'liubiao', possibleFactions: ['liubiao', 'sun'], location: 'jianye', role: '锦帆贼', title: '折冲将军', type: '武将', status: 'hidden', rarity: '名将', summary: '甘宁原为荆州水贼，后投东吴，百骑劫曹营。', stats: { command: 82, strategy: 60, politics: 34, charm: 62, loyalty: 68, ambition: 54 }, personality: { brave: 94, cautious: 28, greedy: 52, loyal: 66, proud: 68, ruthless: 56, idealistic: 30 }, values: ['勇武', '自由', '功名'], boundaries: ['不受轻视', '不做无趣之事'], longTermGoal: '以勇武在乱世扬名', privateAgenda: '证明锦帆贼也能成大事', speechStyle: { register: '粗豪', rhythm: '直爽', habit: '以行动说话', metaphor: '帆与浪' }, specialSchemes: ['百骑劫营', '夜袭破敌'], passiveBonuses: ['夜袭成功率大幅提高'], weaknesses: ['出身低微受轻视', '性情暴烈'], recruitmentDifficulty: 55, defectionTriggers: ['不受重用', '被轻视'] },
+        { id: 'huangGai', name: '黄盖', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '三世老臣', title: '武锋校尉', type: '武将', status: 'hidden', rarity: '良才', summary: '黄盖历仕三代，赤壁之战苦肉计舍身诈降。', stats: { command: 76, strategy: 56, politics: 52, charm: 60, loyalty: 90, ambition: 22 }, personality: { brave: 86, cautious: 48, greedy: 10, loyal: 92, proud: 40, ruthless: 34, idealistic: 52 }, values: ['忠诚', '苦战', '孙氏基业'], boundaries: ['不背孙氏', '不惧皮肉之苦'], longTermGoal: '为孙氏守江东', privateAgenda: '以老将之身完成最后的壮举', speechStyle: { register: '老辣', rhythm: '沉稳', habit: '以身作则', metaphor: '火与铁' }, specialSchemes: ['苦肉计', '火船突阵'], passiveBonuses: ['诈降成功率提高'], weaknesses: ['年事已高', '过于刚直'], recruitmentDifficulty: 42, defectionTriggers: [] },
+        { id: 'chengPu', name: '程普', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '三世老将', title: '荡寇将军', type: '武将', status: 'hidden', rarity: '良才', summary: '程普历仕三代，德高望重，为江东众将之首。', stats: { command: 78, strategy: 60, politics: 58, charm: 68, loyalty: 90, ambition: 20 }, personality: { brave: 76, cautious: 56, greedy: 8, loyal: 92, proud: 48, ruthless: 30, idealistic: 50 }, values: ['忠义', '资历', '孙氏基业'], boundaries: ['不轻视后辈', '不背孙氏'], longTermGoal: '以老将之身辅佐孙氏', privateAgenda: '维护老将的尊严和话语权', speechStyle: { register: '沉稳', rhythm: '从容', habit: '以资历说话', metaphor: '根与树' }, specialSchemes: ['老将压阵'], passiveBonuses: ['友军士气不易下降'], weaknesses: ['年迈力衰', '资历思想重'], recruitmentDifficulty: 38, defectionTriggers: [] },
+        { id: 'hanDang', name: '韩当', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '三世将领', title: '昭武将军', type: '武将', status: 'hidden', rarity: '良才', summary: '韩当历仕三代，弓马娴熟，忠诚可靠。', stats: { command: 72, strategy: 48, politics: 40, charm: 52, loyalty: 86, ambition: 22 }, personality: { brave: 74, cautious: 52, greedy: 14, loyal: 88, proud: 36, ruthless: 28, idealistic: 42 }, values: ['忠诚', '弓马', '本分'], boundaries: ['不逾本分', '不背孙氏'], longTermGoal: '以弓马技艺为孙氏效力', privateAgenda: '做好本职不争功', speechStyle: { register: '朴实', rhythm: '平直', habit: '少言多做', metaphor: '弓与马' }, specialSchemes: ['骑射游击'], passiveBonuses: ['弓骑兵效果提高'], weaknesses: ['能力中庸', '不善独立领兵'], recruitmentDifficulty: 34, defectionTriggers: [] },
+        { id: 'zhouTai', name: '周泰', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '忠勇护卫', title: '陵阳侯', type: '武将', status: 'hidden', rarity: '良才', summary: '周泰数次舍命救孙权，遍体鳞伤而不退。', stats: { command: 70, strategy: 38, politics: 24, charm: 50, loyalty: 98, ambition: 14 }, personality: { brave: 96, cautious: 20, greedy: 8, loyal: 100, proud: 28, ruthless: 42, idealistic: 38 }, values: ['忠诚', '护卫', '不退'], boundaries: ['绝不弃主', '不惧任何危险'], longTermGoal: '以命守护孙权安全', privateAgenda: '只要主公安全便心满意足', speechStyle: { register: '沉默', rhythm: '极少言语', habit: '以行动表达', metaphor: '伤与盾' }, specialSchemes: ['舍命护主', '死战不退'], passiveBonuses: ['主公遇险时防御暴增'], weaknesses: ['无谋略', '不善指挥'], recruitmentDifficulty: 52, defectionTriggers: [] },
+        { id: 'lingTong', name: '凌统', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '少壮将领', title: '偏将军', type: '武将', status: 'hidden', rarity: '良才', summary: '凌统少壮勇烈，与甘宁有杀父之仇后和解。', stats: { command: 74, strategy: 50, politics: 36, charm: 58, loyalty: 78, ambition: 40 }, personality: { brave: 84, cautious: 36, greedy: 18, loyal: 80, proud: 62, ruthless: 42, idealistic: 44 }, values: ['勇武', '报仇', '义气'], boundaries: ['不背父仇', '不惧强敌'], longTermGoal: '为父报仇后以武勇立身', privateAgenda: '与甘宁竞争并超越他', speechStyle: { register: '刚烈', rhythm: '急切', habit: '年轻气盛', metaphor: '刃与血' }, specialSchemes: ['少壮突阵'], passiveBonuses: ['与敌将单挑时攻击力提高'], weaknesses: ['年轻冲动', '与甘宁不睦'], recruitmentDifficulty: 45, defectionTriggers: [] },
+        { id: 'zhangZhao', name: '张昭', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '内政之臣', title: '长史', type: '政务', status: 'hidden', rarity: '名将', summary: '张昭内政之才，孙策托孤之臣，然赤壁主降。', stats: { command: 28, strategy: 72, politics: 90, charm: 64, loyalty: 78, ambition: 30 }, personality: { brave: 22, cautious: 84, greedy: 16, loyal: 80, proud: 74, ruthless: 28, idealistic: 40 }, values: ['秩序', '稳健', '士大夫体面'], boundaries: ['不赞同冒险', '不丢士大夫脸面'], longTermGoal: '维持江东内部稳定', privateAgenda: '以内政才能守住基业', speechStyle: { register: '严正', rhythm: '训诫式', habit: '引经据典教训人', metaphor: '墙与基' }, specialSchemes: ['安定后方'], passiveBonuses: ['内政效率大幅提高'], weaknesses: ['过于保守', '赤壁主降失声望'], recruitmentDifficulty: 55, defectionTriggers: [] },
+        { id: 'zhangHong', name: '张纮', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '文士谋臣', title: '长史', type: '谋士', status: 'hidden', rarity: '良才', summary: '张纮与张昭并称二张，善文章，识大局。', stats: { command: 26, strategy: 76, politics: 82, charm: 68, loyalty: 80, ambition: 26 }, personality: { brave: 24, cautious: 72, greedy: 12, loyal: 82, proud: 46, ruthless: 18, idealistic: 54 }, values: ['文采', '大局', '稳健'], boundaries: ['不做越界之事', '不写违心之文'], longTermGoal: '以文才辅佐孙氏', privateAgenda: '为孙氏撰写讨伐檄文和治国方略', speechStyle: { register: '文雅', rhythm: '工整', habit: '以文章论事', metaphor: '笔与墨' }, specialSchemes: ['檄文安民', '战略建议'], passiveBonuses: ['文官管理效果提高'], weaknesses: ['不善军事', '过于温和'], recruitmentDifficulty: 40, defectionTriggers: [] },
+        { id: 'buZhi', name: '步骘', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '沉稳文臣', title: '骠骑将军', type: '政务', status: 'hidden', rarity: '良才', summary: '步骘沉稳有度，镇守西陵，治理有方。', stats: { command: 58, strategy: 70, politics: 80, charm: 62, loyalty: 80, ambition: 32 }, personality: { brave: 42, cautious: 74, greedy: 14, loyal: 82, proud: 38, ruthless: 26, idealistic: 48 }, values: ['治理', '安定', '本分'], boundaries: ['不冒进', '不越权'], longTermGoal: '为孙氏守好边疆', privateAgenda: '以治理才能证明价值', speechStyle: { register: '沉稳', rhythm: '平实', habit: '以理服人', metaphor: '墙与路' }, specialSchemes: ['镇守西陵'], passiveBonuses: ['边境城市治安提高'], weaknesses: ['缺乏进攻性', '过于保守'], recruitmentDifficulty: 38, defectionTriggers: [] },
+        { id: 'zhuGeJin', name: '诸葛瑾', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '外交之臣', title: '大将军', type: '政务', status: 'hidden', rarity: '良才', summary: '诸葛瑾诸葛亮之兄，为东吴出使蜀汉，善调和。', stats: { command: 42, strategy: 68, politics: 78, charm: 76, loyalty: 82, ambition: 26 }, personality: { brave: 34, cautious: 72, greedy: 10, loyal: 84, proud: 36, ruthless: 16, idealistic: 56 }, values: ['兄弟情', '外交', '和平'], boundaries: ['不因公废私', '不背孙氏'], longTermGoal: '维持孙刘联盟', privateAgenda: '在兄弟与主公之间找平衡', speechStyle: { register: '温厚', rhythm: '和缓', habit: '以亲情打动人', metaphor: '桥与亲' }, specialSchemes: ['出使修好', '兄弟外交'], passiveBonuses: ['与蜀汉交涉成功率提高'], weaknesses: ['才能不如其弟', '过于温和'], recruitmentDifficulty: 42, defectionTriggers: [] }
+      ],
+      liubiao: [
+        { id: 'kuaiLiang', name: '蒯良', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao'], location: 'xiangyang', role: '荆州谋臣', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '蒯良与蒯越兄弟，为刘表定荆州之策。', stats: { command: 38, strategy: 78, politics: 80, charm: 66, loyalty: 70, ambition: 38 }, personality: { brave: 32, cautious: 72, greedy: 26, loyal: 70, proud: 52, ruthless: 30, idealistic: 48 }, values: ['荆州', '士族', '安定'], boundaries: ['不容荆州大乱', '不轻言战争'], longTermGoal: '维护荆州士族利益', privateAgenda: '保持蒯氏在荆州的影响力', speechStyle: { register: '从容', rhythm: '沉稳', habit: '以形势分析进言', metaphor: '棋与势' }, specialSchemes: ['定荆之策'], passiveBonuses: ['士族支持度提高'], weaknesses: ['过于保守', '与蒯越意见不合'], recruitmentDifficulty: 48, defectionTriggers: [] },
+        { id: 'yiJi', name: '伊籍', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'xiangyang', role: '外交幕僚', title: '从事', type: '政务', status: 'rumored', rarity: '良才', summary: '伊籍与刘备交好，后随刘备入蜀。', stats: { command: 30, strategy: 58, politics: 70, charm: 74, loyalty: 64, ambition: 28 }, personality: { brave: 34, cautious: 56, greedy: 12, loyal: 66, proud: 30, ruthless: 14, idealistic: 56 }, values: ['仁义', '识人', '忠主'], boundaries: ['不事暴虐之主', '不违背良心'], longTermGoal: '追随值得辅佐的明主', privateAgenda: '暗中亲近刘备观察其是否值得投奔', speechStyle: { register: '谦和', rhythm: '平缓', habit: '低调表态', metaphor: '风与草' }, specialSchemes: ['暗中通好'], passiveBonuses: ['外交好感度提高'], weaknesses: ['立场摇摆', '军事能力不足'], recruitmentDifficulty: 38, defectionTriggers: ['刘表去世', '刘备入荆'] },
+        { id: 'maLiang', name: '马良', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'xiangyang', role: '白眉最良', title: '侍中', type: '谋士', status: 'rumored', rarity: '名将', summary: '马良白眉，兄弟五人中最贤，善外交谋略。', stats: { command: 48, strategy: 82, politics: 78, charm: 76, loyalty: 74, ambition: 34 }, personality: { brave: 40, cautious: 68, greedy: 10, loyal: 76, proud: 38, ruthless: 18, idealistic: 66 }, values: ['贤才', '谋略', '忠义'], boundaries: ['不做不义之事', '不违背道义'], longTermGoal: '辅佐明主治理天下', privateAgenda: '以才能在荆州和蜀汉间找到出路', speechStyle: { register: '儒雅', rhythm: '清晰', habit: '以理服人', metaphor: '眉与识' }, specialSchemes: ['白眉献策', '外交斡旋'], passiveBonuses: ['谋略成功率提高'], weaknesses: ['过于理想化', '不善军事指挥'], recruitmentDifficulty: 55, defectionTriggers: ['刘备入荆'] },
+        { id: 'maSu', name: '马谡', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'xiangyang', role: '纸上谈兵', title: '参军', type: '谋士', status: 'rumored', rarity: '良才', summary: '马谡才器过人，然言过其实，街亭之失为千古教训。', stats: { command: 42, strategy: 72, politics: 60, charm: 64, loyalty: 66, ambition: 52 }, personality: { brave: 38, cautious: 36, greedy: 20, loyal: 68, proud: 78, ruthless: 28, idealistic: 52 }, values: ['理论', '功名', '被认可'], boundaries: ['不承认自己错了', '不服从认为不如己者'], longTermGoal: '以谋略证明自己非纸上谈兵', privateAgenda: '急于获得独当一面的机会', speechStyle: { register: '自信', rhythm: '流畅', habit: '好谈兵法大略', metaphor: '书与战' }, specialSchemes: ['攻心为上'], passiveBonuses: ['理论谋略效果提高'], weaknesses: ['言过其实', '不听劝阻', '缺乏实战经验'], recruitmentDifficulty: 40, defectionTriggers: ['刘备入荆'] },
+        { id: 'huangZhong', name: '黄忠', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'changsha', role: '老将', title: '后将军', type: '武将', status: 'rumored', rarity: '传奇', summary: '黄忠老当益壮，定军山斩夏侯渊，勇冠三军。', stats: { command: 88, strategy: 52, politics: 30, charm: 64, loyalty: 78, ambition: 32 }, personality: { brave: 90, cautious: 48, greedy: 12, loyal: 80, proud: 56, ruthless: 36, idealistic: 44 }, values: ['武勇', '忠义', '不服老'], boundaries: ['不被年龄定义', '不临阵退缩'], longTermGoal: '以老将之身再立大功', privateAgenda: '证明老将仍有万夫不当之勇', speechStyle: { register: '豪迈', rhythm: '沉稳', habit: '不服老', metaphor: '弓与铁' }, specialSchemes: ['定军山斩将', '百步穿杨'], passiveBonuses: ['远距离攻击力提高'], weaknesses: ['年事已高', '易被激将'], recruitmentDifficulty: 62, defectionTriggers: ['荆南动荡', '刘备入荆', '长沙易主'] },
+        { id: 'weiYan', name: '魏延', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'changsha', role: '勇悍之将', title: '镇北将军', type: '武将', status: 'rumored', rarity: '名将', summary: '魏延勇猛过人，然性情孤傲，不被信任。', stats: { command: 84, strategy: 62, politics: 34, charm: 40, loyalty: 52, ambition: 68 }, personality: { brave: 88, cautious: 32, greedy: 32, loyal: 50, proud: 82, ruthless: 54, idealistic: 30 }, values: ['功名', '才能', '被认可'], boundaries: ['不忍受轻视', '不服从庸才'], longTermGoal: '以奇谋和勇武建立不世之功', privateAgenda: '证明子午谷奇谋的正确性', speechStyle: { register: '傲慢', rhythm: '急切', habit: '常提自己的策略', metaphor: '险与功' }, specialSchemes: ['子午谷奇谋', '勇夺城门'], passiveBonuses: ['进攻时攻击力提高'], weaknesses: ['与同僚不和', '不被信任', '过于自负'], recruitmentDifficulty: 58, defectionTriggers: ['不受重用', '被猜忌'] },
+        { id: 'liuQi', name: '刘琦', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'liu'], location: 'xiangyang', role: '刘表长子', title: '江夏太守', type: '政务', status: 'hidden', rarity: '良才', summary: '刘琦为刘表长子，受蔡氏排挤，求计诸葛亮出镇江夏。', stats: { command: 42, strategy: 44, politics: 54, charm: 62, loyalty: 70, ambition: 20 }, personality: { brave: 38, cautious: 62, greedy: 8, loyal: 72, proud: 30, ruthless: 10, idealistic: 56 }, values: ['自保', '孝道', '仁厚'], boundaries: ['不与弟争权', '不害人'], longTermGoal: '在蔡氏排挤下保全自身', privateAgenda: '寻求外部力量支持以自保', speechStyle: { register: '谦弱', rhythm: '犹豫', habit: '请人出主意', metaphor: '叶与风' }, specialSchemes: ['求计出镇江夏'], passiveBonuses: ['与刘备势力好感度提高'], weaknesses: ['性格软弱', '缺乏主见'], recruitmentDifficulty: 30, defectionTriggers: ['刘表去世'] },
+        { id: 'liuCong', name: '刘琮', faction: 'liubiao', originFaction: 'liubiao', possibleFactions: ['liubiao', 'cao'], location: 'xiangyang', role: '刘表次子', title: '荆州牧', type: '政务', status: 'hidden', rarity: '良才', summary: '刘琮受蔡氏拥立，降曹操，失荆州。', stats: { command: 22, strategy: 30, politics: 42, charm: 44, loyalty: 40, ambition: 18 }, personality: { brave: 16, cautious: 68, greedy: 24, loyal: 38, proud: 24, ruthless: 12, idealistic: 22 }, values: ['安逸', '听从母族', '自保'], boundaries: ['不做冒险之事', '听从蔡氏安排'], longTermGoal: '保住自身和蔡氏地位', privateAgenda: '只想安安稳稳不做争斗', speechStyle: { register: '怯弱', rhythm: '犹豫', habit: '凡事请示蔡氏', metaphor: '雀与笼' }, specialSchemes: ['献州降曹'], passiveBonuses: ['降伏时保留部分资源'], weaknesses: ['懦弱无能', '完全受蔡氏操控'], recruitmentDifficulty: 20, defectionTriggers: ['曹操南征', '蔡氏劝降'] }
+      ],
+      liuzhang: [
+        { id: 'liuZhang', name: '刘璋', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang'], location: '', offMapLocation: 'chengdu', role: '益州牧', title: '益州牧', type: '政务', status: 'hidden', rarity: '名将', summary: '刘璋暗弱，守益州而不能用，终为刘备所取。', stats: { command: 32, strategy: 38, politics: 54, charm: 56, loyalty: 56, ambition: 16 }, personality: { brave: 18, cautious: 72, greedy: 22, loyal: 56, proud: 28, ruthless: 8, idealistic: 40 }, values: ['安逸', '守成', '仁厚'], boundaries: ['不主动攻伐', '不残暴待下'], longTermGoal: '守住益州一隅太平', privateAgenda: '不想打仗只想过太平日子', speechStyle: { register: '温弱', rhythm: '缓慢', habit: '犹豫不决', metaphor: '室与安' }, specialSchemes: [], passiveBonuses: ['益州民心不易下降'], weaknesses: ['暗弱无能', '用人不当', '过于优柔'], recruitmentDifficulty: 25, defectionTriggers: [] },
+        { id: 'zhangRen', name: '张任', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang'], location: '', offMapLocation: 'chengdu', role: '忠烈之将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '张任忠勇，落凤坡射杀庞统，宁死不降。', stats: { command: 78, strategy: 58, politics: 40, charm: 52, loyalty: 96, ambition: 22 }, personality: { brave: 84, cautious: 56, greedy: 8, loyal: 98, proud: 52, ruthless: 44, idealistic: 50 }, values: ['忠诚', '守土', '节义'], boundaries: ['绝不投降', '不背旧主'], longTermGoal: '以死守益州', privateAgenda: '做忠臣的典范', speechStyle: { register: '刚毅', rhythm: '斩截', habit: '言辞不屈', metaphor: '关与铁' }, specialSchemes: ['落凤坡设伏'], passiveBonuses: ['设伏成功率大幅提高'], weaknesses: ['过于刚烈', '不识时务'], recruitmentDifficulty: 72, defectionTriggers: [] },
+        { id: 'yanYan', name: '严颜', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu'], location: '', offMapLocation: 'chengdu', role: '老将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '严颜巴郡老将，被俘后只断头无降将，为张飞义释。', stats: { command: 76, strategy: 52, politics: 44, charm: 62, loyalty: 82, ambition: 24 }, personality: { brave: 86, cautious: 52, greedy: 10, loyal: 84, proud: 70, ruthless: 34, idealistic: 52 }, values: ['忠义', '老将尊严', '骨气'], boundaries: ['只有断头将军无降将军', '不畏惧死亡'], longTermGoal: '守巴郡尽忠职守', privateAgenda: '以老将之骨气令天下人敬佩', speechStyle: { register: '刚烈', rhythm: '短促', habit: '宁死不屈的气概', metaphor: '骨与铁' }, specialSchemes: ['老将坚守', '义释归心'], passiveBonuses: ['守城时士卒忠诚度不降'], weaknesses: ['年事已高', '兵力不足'], recruitmentDifficulty: 58, defectionTriggers: ['被义释', '主公降伏'] },
+        { id: 'faZheng', name: '法正', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu'], location: '', offMapLocation: 'chengdu', role: '奇谋之士', title: '尚书令', type: '谋士', status: 'hidden', rarity: '名将', summary: '法正善奇谋，献策刘备取汉中，然心胸偏狭。', stats: { command: 54, strategy: 90, politics: 72, charm: 52, loyalty: 58, ambition: 56 }, personality: { brave: 46, cautious: 40, greedy: 38, loyal: 56, proud: 74, ruthless: 64, idealistic: 28 }, values: ['奇谋', '功名', '一饭之恩必报'], boundaries: ['不放过任何报复机会', '不做无利之事'], longTermGoal: '以奇谋助明主取天下', privateAgenda: '摆脱刘璋的冷落，投奔值得效力的明主', speechStyle: { register: '锐利', rhythm: '快速', habit: '一语中的', metaphor: '箭与隙' }, specialSchemes: ['献策取汉中', '奇谋定蜀'], passiveBonuses: ['奇谋成功率大幅提高'], weaknesses: ['心胸狭隘', '必报私怨'], recruitmentDifficulty: 62, defectionTriggers: ['刘璋冷落', '刘备入蜀'] },
+        { id: 'liYan', name: '李严', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu'], location: '', offMapLocation: 'chengdu', role: '才干之臣', title: '中都护', type: '政务', status: 'hidden', rarity: '名将', summary: '李严才干出众，与诸葛亮同受托孤，后因争权被废。', stats: { command: 64, strategy: 74, politics: 82, charm: 56, loyalty: 52, ambition: 64 }, personality: { brave: 50, cautious: 58, greedy: 48, loyal: 50, proud: 70, ruthless: 44, idealistic: 26 }, values: ['才能', '权位', '功名'], boundaries: ['不屈服于人下', '不做无利之事'], longTermGoal: '在蜀汉权力结构中占据核心位置', privateAgenda: '与诸葛亮分庭抗礼', speechStyle: { register: '自负', rhythm: '条理', habit: '展示才能', metaphor: '权与术' }, specialSchemes: ['屯田积粮', '权谋固位'], passiveBonuses: ['后勤补给效率提高'], weaknesses: ['争权夺利', '忠诚度不足'], recruitmentDifficulty: 52, defectionTriggers: ['有更大权力诱惑'] },
+        { id: 'huangQuan', name: '黄权', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu', 'cao'], location: '', offMapLocation: 'chengdu', role: '忠义之臣', title: '镇北将军', type: '谋士', status: 'hidden', rarity: '良才', summary: '黄权忠直，劝刘璋不听，后归刘备，夷陵之战降魏。', stats: { command: 56, strategy: 76, politics: 74, charm: 56, loyalty: 64, ambition: 34 }, personality: { brave: 48, cautious: 72, greedy: 12, loyal: 66, proud: 48, ruthless: 26, idealistic: 54 }, values: ['忠义', '大局', '务实'], boundaries: ['不做无意义的牺牲', '不违心进言'], longTermGoal: '找到值得效力的明主', privateAgenda: '以务实态度在乱世中生存', speechStyle: { register: '正直', rhythm: '平稳', habit: '直言利害', metaphor: '路与人' }, specialSchemes: ['战略建议'], passiveBonuses: ['战略判断准确率提高'], weaknesses: ['命运多舛', '归路被断'], recruitmentDifficulty: 48, defectionTriggers: ['归路被断', '主公败亡'] },
+        { id: 'wuYi', name: '吴懿', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu'], location: '', offMapLocation: 'chengdu', role: '益州将领', title: '车骑将军', type: '武将', status: 'hidden', rarity: '良才', summary: '吴懿为益州重要将领，后随刘备，守汉中。', stats: { command: 68, strategy: 54, politics: 50, charm: 56, loyalty: 62, ambition: 36 }, personality: { brave: 62, cautious: 58, greedy: 24, loyal: 64, proud: 38, ruthless: 28, idealistic: 38 }, values: ['功名', '家族', '务实'], boundaries: ['不做无利之事', '不盲目牺牲'], longTermGoal: '在益州权力更迭中保全家族', privateAgenda: '随大势而动', speechStyle: { register: '沉稳', rhythm: '平实', habit: '审时度势', metaphor: '船与水' }, specialSchemes: ['守城固防'], passiveBonuses: ['城防效果提高'], weaknesses: ['缺乏主见', '随波逐流'], recruitmentDifficulty: 40, defectionTriggers: ['主公更替'] },
+        { id: 'mengDa', name: '孟达', faction: 'liuzhang', originFaction: 'liuzhang', possibleFactions: ['liuzhang', 'liu', 'cao'], location: '', offMapLocation: 'chengdu', role: '反复之人', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '孟达反复无常，先叛刘璋，再叛刘备，终为司马懿所杀。', stats: { command: 62, strategy: 58, politics: 52, charm: 54, loyalty: 28, ambition: 62 }, personality: { brave: 48, cautious: 44, greedy: 56, loyal: 26, proud: 56, ruthless: 52, idealistic: 14 }, values: ['自保', '利益', '权力'], boundaries: ['不做无利之事', '不忠于已败之主'], longTermGoal: '在夹缝中求生存谋利益', privateAgenda: '谁强就投谁', speechStyle: { register: '机巧', rhythm: '灵活', habit: '见风使舵', metaphor: '墙与草' }, specialSchemes: ['反复倒戈'], passiveBonuses: ['倒戈时保留兵力'], weaknesses: ['忠诚度极低', '反复无常'], recruitmentDifficulty: 28, defectionTriggers: ['主公势危', '有更好靠山', '利益诱惑'] }
+      ],
+      zhanglu: [
+        { id: 'zhangLu', name: '张鲁', faction: 'zhanglu', originFaction: 'zhanglu', possibleFactions: ['zhanglu'], location: '', offMapLocation: 'hanzhong', role: '五斗米道', title: '汉中太守', type: '政务', status: 'hidden', rarity: '名将', summary: '张鲁以五斗米道治汉中三十年，后降曹操。', stats: { command: 40, strategy: 56, politics: 72, charm: 70, loyalty: 56, ambition: 24 }, personality: { brave: 30, cautious: 64, greedy: 22, loyal: 56, proud: 40, ruthless: 16, idealistic: 62 }, values: ['道教', '仁政', '天命'], boundaries: ['不残暴治民', '不违背道法'], longTermGoal: '以五斗米道教化一方', privateAgenda: '保汉中太平，传布道法', speechStyle: { register: '玄虚', rhythm: '舒缓', habit: '引道经论事', metaphor: '道与天' }, specialSchemes: ['义舍济民', '鬼道治民'], passiveBonuses: ['民心不易下降'], weaknesses: ['军事能力有限', '过于理想化'], recruitmentDifficulty: 35, defectionTriggers: ['曹操征讨'] },
+        { id: 'yangSong', name: '杨松', faction: 'zhanglu', originFaction: 'zhanglu', possibleFactions: ['zhanglu'], location: '', offMapLocation: 'hanzhong', role: '贪贿谋臣', title: '谋士', type: '政务', status: 'hidden', rarity: '良才', summary: '杨松贪财好货，受贿害马超，为人不齿。', stats: { command: 24, strategy: 48, politics: 52, charm: 34, loyalty: 28, ambition: 54 }, personality: { brave: 18, cautious: 42, greedy: 88, loyal: 24, proud: 30, ruthless: 56, idealistic: 6 }, values: ['财货', '享乐', '权力'], boundaries: ['不为义气做事', '不为廉耻约束'], longTermGoal: '聚敛财富', privateAgenda: '收受贿赂出卖情报', speechStyle: { register: '谄媚', rhythm: '讨好', habit: '见钱眼开', metaphor: '金与手' }, specialSchemes: ['受贿害人'], passiveBonuses: ['收买成功率提高'], weaknesses: ['贪得无厌', '毫无底线'], recruitmentDifficulty: 18, defectionTriggers: ['有人出更高价'] },
+        { id: 'yanPu', name: '阎圃', faction: 'zhanglu', originFaction: 'zhanglu', possibleFactions: ['zhanglu'], location: '', offMapLocation: 'hanzhong', role: '忠直之臣', title: '功曹', type: '谋士', status: 'hidden', rarity: '良才', summary: '阎圃忠直，劝张鲁称王不可，后劝降曹操得善终。', stats: { command: 32, strategy: 68, politics: 72, charm: 54, loyalty: 74, ambition: 22 }, personality: { brave: 28, cautious: 72, greedy: 14, loyal: 76, proud: 34, ruthless: 16, idealistic: 50 }, values: ['务实', '忠主', '审时度势'], boundaries: ['不阿谀奉承', '不做无把握之事'], longTermGoal: '保全张鲁势力', privateAgenda: '在大势不可违时选择最优出路', speechStyle: { register: '沉稳', rhythm: '平实', habit: '以利弊分析进言', metaphor: '势与人' }, specialSchemes: ['劝降保身'], passiveBonuses: ['投降时保留更多资源'], weaknesses: ['缺乏进取心', '过于务实'], recruitmentDifficulty: 34, defectionTriggers: [] },
+        { id: 'zhangWei', name: '张卫', faction: 'zhanglu', originFaction: 'zhanglu', possibleFactions: ['zhanglu'], location: '', offMapLocation: 'hanzhong', role: '张鲁之弟', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '张卫为张鲁之弟，守阳平关，力抗曹操。', stats: { command: 64, strategy: 46, politics: 38, charm: 44, loyalty: 78, ambition: 30 }, personality: { brave: 70, cautious: 50, greedy: 18, loyal: 80, proud: 42, ruthless: 30, idealistic: 38 }, values: ['家族', '守御', '忠义'], boundaries: ['不弃兄长', '不降敌'], longTermGoal: '守护汉中和张鲁', privateAgenda: '以武勇证明张氏不只是道士', speechStyle: { register: '刚直', rhythm: '短促', habit: '以军人方式说话', metaphor: '关与山' }, specialSchemes: ['阳平关固守'], passiveBonuses: ['关隘防御效果提高'], weaknesses: ['军事才能一般', '过于固执'], recruitmentDifficulty: 38, defectionTriggers: [] },
+        { id: 'yangBai', name: '杨柏', faction: 'zhanglu', originFaction: 'zhanglu', possibleFactions: ['zhanglu'], location: '', offMapLocation: 'hanzhong', role: '汉中部将', title: '将军', type: '武将', status: 'hidden', rarity: '普通', summary: '杨柏为张鲁部将，与杨松同族。', stats: { command: 52, strategy: 38, politics: 34, charm: 38, loyalty: 50, ambition: 38 }, personality: { brave: 48, cautious: 40, greedy: 42, loyal: 48, proud: 34, ruthless: 36, idealistic: 22 }, values: ['自保', '利益', '家族'], boundaries: ['不做必死之事', '随杨松行事'], longTermGoal: '在汉中保持地位', privateAgenda: '依附杨松获取利益', speechStyle: { register: '平淡', rhythm: '随和', habit: '附和他人', metaphor: '草与风' }, specialSchemes: [], passiveBonuses: [], weaknesses: ['缺乏主见', '能力平庸'], recruitmentDifficulty: 24, defectionTriggers: ['主公势败'] }
+      ],
+      mateng: [
+        { id: 'maTeng', name: '马腾', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng'], location: '', offMapLocation: 'liangzhou', role: '西凉军阀', title: '征西将军', type: '武将', status: 'hidden', rarity: '名将', summary: '马腾伏波将军之后，忠汉室，入朝被曹操所杀。', stats: { command: 78, strategy: 56, politics: 54, charm: 68, loyalty: 76, ambition: 42 }, personality: { brave: 82, cautious: 46, greedy: 22, loyal: 78, proud: 60, ruthless: 40, idealistic: 56 }, values: ['忠汉', '西凉', '义气'], boundaries: ['不背叛汉室', '不轻信曹操'], longTermGoal: '以伏波之后忠义立身', privateAgenda: '联合反曹力量', speechStyle: { register: '豪迈', rhythm: '直率', habit: '以忠义号召', metaphor: '马与汉旗' }, specialSchemes: ['衣带诏'], passiveBonuses: ['西凉骑兵效果提高'], weaknesses: ['入朝被控制', '过于忠义轻信'], recruitmentDifficulty: 60, defectionTriggers: [] },
+        { id: 'hanSui', name: '韩遂', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng', 'cao'], location: '', offMapLocation: 'liangzhou', role: '西凉军阀', title: '镇西将军', type: '武将', status: 'hidden', rarity: '名将', summary: '韩遂与马腾亦友亦敌，老于世故，终为曹操所破。', stats: { command: 72, strategy: 66, politics: 58, charm: 54, loyalty: 40, ambition: 56 }, personality: { brave: 56, cautious: 68, greedy: 42, loyal: 38, proud: 52, ruthless: 58, idealistic: 18 }, values: ['自保', '西凉', '利益'], boundaries: ['不信任任何人', '不做亏本买卖'], longTermGoal: '在西凉保持半独立地位', privateAgenda: '与马腾既合作又竞争', speechStyle: { register: '老辣', rhythm: '迂回', habit: '话里有话', metaphor: '沙与风' }, specialSchemes: ['离间计', '反间马超'], passiveBonuses: ['离间成功率提高'], weaknesses: ['反复无常', '年迈力衰'], recruitmentDifficulty: 50, defectionTriggers: ['被离间', '利益受损'] },
+        { id: 'maChao', name: '马超', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng', 'liu'], location: '', offMapLocation: 'liangzhou', role: '锦马超', title: '骠骑将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '马超锦马超，西凉猛将，渭水之战杀得曹操割须弃袍。', stats: { command: 90, strategy: 56, politics: 30, charm: 78, loyalty: 52, ambition: 66 }, personality: { brave: 96, cautious: 22, greedy: 28, loyal: 50, proud: 82, ruthless: 62, idealistic: 34 }, values: ['勇武', '复仇', '家族荣誉'], boundaries: ['不放过杀父仇人', '不屈服于强者'], longTermGoal: '为父报仇，重振西凉马氏', privateAgenda: '以武力证明马氏不可辱', speechStyle: { register: '冷傲', rhythm: '短促', habit: '以武服人', metaphor: '枪与血' }, specialSchemes: ['渭水六战', '西凉铁骑'], passiveBonuses: ['骑兵攻击力大幅提高'], weaknesses: ['中计轻信', '不善政治', '过于冲动'], recruitmentDifficulty: 78, defectionTriggers: ['西凉变乱', '曹操压迫', '刘备入蜀'] },
+        { id: 'maDai', name: '马岱', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng', 'liu'], location: '', offMapLocation: 'liangzhou', role: '马超从弟', title: '平北将军', type: '武将', status: 'hidden', rarity: '良才', summary: '马岱随马超征战，后归刘备，斩魏延。', stats: { command: 68, strategy: 50, politics: 36, charm: 48, loyalty: 72, ambition: 34 }, personality: { brave: 66, cautious: 52, greedy: 16, loyal: 74, proud: 38, ruthless: 40, idealistic: 40 }, values: ['从兄', '忠义', '功名'], boundaries: ['不违马超之命', '不背主'], longTermGoal: '随马超建功立业', privateAgenda: '做马超最可靠的副手', speechStyle: { register: '沉稳', rhythm: '平实', habit: '不多言语', metaphor: '盾与从' }, specialSchemes: ['斩魏延'], passiveBonuses: ['跟随主将时攻击力提高'], weaknesses: ['缺乏独立指挥能力', '过于依附马超'], recruitmentDifficulty: 42, defectionTriggers: ['马超归蜀'] },
+        { id: 'pangDe', name: '庞德', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng', 'cao'], location: '', offMapLocation: 'liangzhou', role: '白马将军', title: '立义将军', type: '武将', status: 'hidden', rarity: '名将', summary: '庞德抬棺决战，宁死不降关羽，忠勇可嘉。', stats: { command: 82, strategy: 54, politics: 34, charm: 52, loyalty: 76, ambition: 40 }, personality: { brave: 90, cautious: 42, greedy: 14, loyal: 78, proud: 60, ruthless: 48, idealistic: 40 }, values: ['忠勇', '武名', '不屈'], boundaries: ['不降敌', '不畏死'], longTermGoal: '以忠勇扬名天下', privateAgenda: '证明自己的忠诚和勇武', speechStyle: { register: '刚烈', rhythm: '决绝', habit: '以死明志', metaphor: '棺与刀' }, specialSchemes: ['抬棺决战', '白马义从'], passiveBonuses: ['决死攻击时伤害暴增'], weaknesses: ['过于刚烈', '归降曹操后受猜忌'], recruitmentDifficulty: 62, defectionTriggers: ['马超离去', '被曹操重用'] },
+        { id: 'maYunlu', name: '马云禄', faction: 'mateng', originFaction: 'mateng', possibleFactions: ['mateng', 'liu'], location: '', offMapLocation: 'liangzhou', role: '马氏女将', title: '女将', type: '武将', status: 'hidden', rarity: '良才', summary: '马云禄为马超之妹，传为赵云之妻，武艺不俗。', stats: { command: 66, strategy: 48, politics: 36, charm: 72, loyalty: 74, ambition: 32 }, personality: { brave: 76, cautious: 40, greedy: 10, loyal: 76, proud: 52, ruthless: 28, idealistic: 52 }, values: ['家族', '武艺', '自由'], boundaries: ['不违背兄长', '不退缩'], longTermGoal: '为马氏家族征战', privateAgenda: '证明女子亦可沙场立功', speechStyle: { register: '英气', rhythm: '快捷', habit: '以行动说话', metaphor: '枪与风' }, specialSchemes: ['女将突阵'], passiveBonuses: ['女将出战时友军士气提高'], weaknesses: ['实战经验有限', '身份特殊受限制'], recruitmentDifficulty: 48, defectionTriggers: ['马超归蜀'] }
+      ],
+      gongsun: [
+        { id: 'gongsunZan', name: '公孙瓒', faction: 'gongsun', originFaction: 'gongsun', possibleFactions: ['gongsun'], location: '', offMapLocation: 'youzhou', role: '白马将军', title: '前将军', type: '武将', status: 'hidden', rarity: '名将', summary: '公孙瓒白马义从，雄踞幽州，终为袁绍所灭。', stats: { command: 80, strategy: 52, politics: 38, charm: 58, loyalty: 60, ambition: 64 }, personality: { brave: 84, cautious: 28, greedy: 40, loyal: 56, proud: 76, ruthless: 62, idealistic: 28 }, values: ['武勇', '自立', '白马'], boundaries: ['不向袁绍屈服', '不信任士族'], longTermGoal: '以白马义从雄踞北方', privateAgenda: '做北方最强的军阀', speechStyle: { register: '傲慢', rhythm: '急促', habit: '以武力压人', metaphor: '马与冰' }, specialSchemes: ['白马义从冲锋'], passiveBonuses: ['骑兵战力提高'], weaknesses: ['过于骄傲', '不善治理', '忌惮士族'], recruitmentDifficulty: 58, defectionTriggers: [] },
+        { id: 'zhaoYun', name: '赵云', faction: 'gongsun', originFaction: 'gongsun', possibleFactions: ['gongsun', 'liu'], location: '', offMapLocation: 'youzhou', role: '常山赵子龙', title: '镇军将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '赵云常山真定人，长坂坡七进七出，忠勇无双。', stats: { command: 88, strategy: 68, politics: 52, charm: 80, loyalty: 96, ambition: 24 }, personality: { brave: 96, cautious: 62, greedy: 6, loyal: 98, proud: 38, ruthless: 18, idealistic: 72 }, values: ['忠义', '仁德', '救民'], boundaries: ['不事不义之主', '不抛弃弱者'], longTermGoal: '追随仁德之主安定天下', privateAgenda: '在公孙瓒处观察刘备是否值得追随', speechStyle: { register: '沉稳', rhythm: '利落', habit: '少言多做', metaphor: '枪与盾' }, specialSchemes: ['长坂坡七进七出', '截江夺斗', '空营计'], passiveBonuses: ['护卫时防御大幅提高'], weaknesses: ['过于忠义不善争权', '不争功'], recruitmentDifficulty: 85, defectionTriggers: ['公孙瓒败亡', '刘备仁名', '长坂旧缘'] },
+        { id: 'tianKai', name: '田楷', faction: 'gongsun', originFaction: 'gongsun', possibleFactions: ['gongsun'], location: '', offMapLocation: 'youzhou', role: '幽州将领', title: '徐州刺史', type: '武将', status: 'hidden', rarity: '普通', summary: '田楷为公孙瓒部将，曾守青州。', stats: { command: 56, strategy: 42, politics: 36, charm: 44, loyalty: 62, ambition: 28 }, personality: { brave: 52, cautious: 50, greedy: 18, loyal: 64, proud: 32, ruthless: 26, idealistic: 34 }, values: ['忠诚', '守土', '本分'], boundaries: ['不违军令', '不做非分之想'], longTermGoal: '守住公孙瓒的青州地盘', privateAgenda: '做可靠的守将', speechStyle: { register: '朴实', rhythm: '平直', habit: '不多言语', metaphor: '墙与土' }, specialSchemes: [], passiveBonuses: ['守城时防御小幅提高'], weaknesses: ['能力平庸', '缺乏主见'], recruitmentDifficulty: 26, defectionTriggers: [] },
+        { id: 'yanGang', name: '严纲', faction: 'gongsun', originFaction: 'gongsun', possibleFactions: ['gongsun'], location: '', offMapLocation: 'youzhou', role: '幽州猛将', title: '冀州刺史', type: '武将', status: 'hidden', rarity: '良才', summary: '严纲为公孙瓒前锋，界桥之战阵亡。', stats: { command: 64, strategy: 36, politics: 26, charm: 44, loyalty: 74, ambition: 34 }, personality: { brave: 82, cautious: 20, greedy: 22, loyal: 76, proud: 46, ruthless: 40, idealistic: 32 }, values: ['勇武', '冲锋', '忠义'], boundaries: ['不退缩', '不违主将之命'], longTermGoal: '以先锋之勇为公孙瓒开路', privateAgenda: '做白马义从的锋刃', speechStyle: { register: '急切', rhythm: '短促', habit: '求战心切', metaphor: '矛与冲' }, specialSchemes: ['白马冲锋'], passiveBonuses: ['首战攻击力提高'], weaknesses: ['过于冒进', '不善谋略'], recruitmentDifficulty: 32, defectionTriggers: [] }
+      ],
+      yuanshu: [
+        { id: 'yuanShu', name: '袁术', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '僭越之主', title: '仲家帝', type: '政务', status: 'hidden', rarity: '名将', summary: '袁术妄称帝号，荒淫无道，众叛亲离而亡。', stats: { command: 44, strategy: 46, politics: 50, charm: 58, loyalty: 42, ambition: 92 }, personality: { brave: 30, cautious: 28, greedy: 82, loyal: 38, proud: 92, ruthless: 58, idealistic: 10 }, values: ['称帝', '享乐', '门第'], boundaries: ['不承认他人高于己', '不委屈自己'], longTermGoal: '称帝号令天下', privateAgenda: '以袁氏嫡出之名凌驾天下', speechStyle: { register: '狂妄', rhythm: '傲慢', habit: '自称为帝', metaphor: '玺与座' }, specialSchemes: ['称帝号令'], passiveBonuses: ['初期声望提高'], weaknesses: ['荒淫无道', '众叛亲离', '妄称帝号'], recruitmentDifficulty: 30, defectionTriggers: [] },
+        { id: 'jiLing', name: '纪灵', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '袁术大将', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '纪灵为袁术麾下第一勇将，使三尖两刃刀。', stats: { command: 74, strategy: 44, politics: 28, charm: 46, loyalty: 70, ambition: 38 }, personality: { brave: 78, cautious: 42, greedy: 30, loyal: 72, proud: 48, ruthless: 44, idealistic: 26 }, values: ['武勇', '忠主', '战功'], boundaries: ['不违主公之命', '不惧强敌'], longTermGoal: '以武勇为袁术征战', privateAgenda: '做袁术最可靠的武将', speechStyle: { register: '粗豪', rhythm: '直率', habit: '以武力论事', metaphor: '刀与阵' }, specialSchemes: ['三尖刀破阵'], passiveBonuses: ['对阵时攻击力提高'], weaknesses: ['不善谋略', '主公无能'], recruitmentDifficulty: 40, defectionTriggers: ['袁术败亡'] },
+        { id: 'yanXiang', name: '阎象', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '忠谏之臣', title: '主簿', type: '谋士', status: 'hidden', rarity: '良才', summary: '阎象力谏袁术不可称帝，不听。', stats: { command: 28, strategy: 66, politics: 68, charm: 50, loyalty: 78, ambition: 20 }, personality: { brave: 30, cautious: 72, greedy: 10, loyal: 80, proud: 34, ruthless: 14, idealistic: 60 }, values: ['忠谏', '大义', '法度'], boundaries: ['不阿谀奉承', '不违背良心'], longTermGoal: '阻止袁术称帝', privateAgenda: '以死谏保全名节', speechStyle: { register: '恳切', rhythm: '沉重', habit: '反复劝谏', metaphor: '言与危' }, specialSchemes: ['谏阻称帝'], passiveBonuses: ['谏言效果提高'], weaknesses: ['谏言不听', '无力改变局势'], recruitmentDifficulty: 30, defectionTriggers: [] },
+        { id: 'qiaoRui', name: '桥蕤', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '袁术将领', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '桥蕤为袁术部将，守寿春，兵败而亡。', stats: { command: 60, strategy: 40, politics: 32, charm: 42, loyalty: 66, ambition: 34 }, personality: { brave: 64, cautious: 44, greedy: 24, loyal: 68, proud: 38, ruthless: 34, idealistic: 28 }, values: ['忠主', '战功', '守土'], boundaries: ['不弃城', '不降敌'], longTermGoal: '守住袁术的城池', privateAgenda: '尽力为袁术续命', speechStyle: { register: '坚定', rhythm: '平实', habit: '以守城为要', metaphor: '城与血' }, specialSchemes: ['坚守寿春'], passiveBonuses: ['守城时防御提高'], weaknesses: ['能力有限', '主公无能'], recruitmentDifficulty: 28, defectionTriggers: ['袁术败亡'] },
+        { id: 'zhangXun', name: '张勋', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '袁术大将', title: '大将军', type: '武将', status: 'hidden', rarity: '良才', summary: '张勋为袁术后期主将，率军攻吕布大败。', stats: { command: 62, strategy: 42, politics: 30, charm: 40, loyalty: 58, ambition: 42 }, personality: { brave: 56, cautious: 40, greedy: 36, loyal: 56, proud: 44, ruthless: 38, idealistic: 22 }, values: ['功名', '地位', '自保'], boundaries: ['不做必死之事', '不轻易投降'], longTermGoal: '在袁术麾下保持地位', privateAgenda: '在乱局中自保', speechStyle: { register: '平淡', rhythm: '普通', habit: '按部就班', metaphor: '旗与步' }, specialSchemes: [], passiveBonuses: [], weaknesses: ['才能有限', '缺乏战略眼光'], recruitmentDifficulty: 26, defectionTriggers: ['袁术败亡'] },
+        { id: 'leiBo', name: '雷薄', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '袁术部将', title: '将军', type: '武将', status: 'hidden', rarity: '普通', summary: '雷薄为袁术部将，后叛逃。', stats: { command: 50, strategy: 34, politics: 28, charm: 34, loyalty: 30, ambition: 44 }, personality: { brave: 44, cautious: 38, greedy: 50, loyal: 28, proud: 34, ruthless: 44, idealistic: 10 }, values: ['自保', '利益', '自由'], boundaries: ['不做必死之事', '不忠于必败之主'], longTermGoal: '在乱世中保全自己', privateAgenda: '看局势决定去留', speechStyle: { register: '粗朴', rhythm: '短促', habit: '少言', metaphor: '草与风' }, specialSchemes: [], passiveBonuses: [], weaknesses: ['忠诚度低', '随时可能叛逃'], recruitmentDifficulty: 20, defectionTriggers: ['主公势败', '有利可图'] },
+        { id: 'chenLan', name: '陈兰', faction: 'yuanshu', originFaction: 'yuanshu', possibleFactions: ['yuanshu'], location: '', offMapLocation: 'shouchun', role: '袁术部将', title: '将军', type: '武将', status: 'hidden', rarity: '普通', summary: '陈兰为袁术部将，与雷薄同叛。', stats: { command: 48, strategy: 32, politics: 26, charm: 32, loyalty: 28, ambition: 46 }, personality: { brave: 42, cautious: 36, greedy: 52, loyal: 26, proud: 32, ruthless: 42, idealistic: 8 }, values: ['自保', '利益', '自由'], boundaries: ['不做必死之事', '不忠于必败之主'], longTermGoal: '在乱世中保全自己', privateAgenda: '与雷薄共进退', speechStyle: { register: '粗朴', rhythm: '短促', habit: '附和雷薄', metaphor: '影与草' }, specialSchemes: [], passiveBonuses: [], weaknesses: ['忠诚度低', '随雷薄叛逃'], recruitmentDifficulty: 18, defectionTriggers: ['主公势败', '有利可图'] }
+      ],
+      local: [
+        { id: 'huaTuo', name: '华佗', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: 'xuchang', role: '神医', title: '神医', type: '医者', status: 'hidden', rarity: '传奇', summary: '华佗神医，发明麻沸散，为曹操所杀。', stats: { command: 18, strategy: 52, politics: 46, charm: 78, loyalty: 48, ambition: 12 }, personality: { brave: 34, cautious: 66, greedy: 6, loyal: 46, proud: 42, ruthless: 8, idealistic: 80 }, values: ['医术', '救人', '自由'], boundaries: ['不以医术害人', '不屈服于权贵'], longTermGoal: '以医术济世救人', privateAgenda: '完善外科手术术法', speechStyle: { register: '从容', rhythm: '温和', habit: '以病症喻事', metaphor: '药与脉' }, specialSchemes: ['麻沸散', '五禽戏'], passiveBonuses: ['治疗效果大幅提高'], weaknesses: ['不愿专为一人服务', '被曹操所忌'], recruitmentDifficulty: 75, defectionTriggers: [] },
+        { id: 'zuoCi', name: '左慈', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: 'xuchang', role: '方士', title: '乌角先生', type: '名士', status: 'hidden', rarity: '名将', summary: '左慈戏曹操，遁甲奇术，世人以为仙。', stats: { command: 20, strategy: 70, politics: 42, charm: 62, loyalty: 30, ambition: 8 }, personality: { brave: 40, cautious: 56, greedy: 4, loyal: 28, proud: 56, ruthless: 18, idealistic: 78 }, values: ['道术', '自由', '戏弄权贵'], boundaries: ['不为权贵所用', '不认真对待世俗权力'], longTermGoal: '以道术逍遥天地', privateAgenda: '戏弄天下权贵以证道法', speechStyle: { register: '玄虚', rhythm: '飘忽', habit: '言辞诡谲', metaphor: '云与幻' }, specialSchemes: ['掷杯戏曹', '遁甲奇术'], passiveBonuses: ['遁走成功率极高'], weaknesses: ['不涉世事', '道术不为正用'], recruitmentDifficulty: 80, defectionTriggers: [] },
+        { id: 'siMaHui', name: '司马徽', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: 'xinye', offMapLocation: 'longzhong', role: '水镜先生', title: '隐士', type: '谋士', status: 'rumored', rarity: '名将', summary: '水镜先生司马徽，识人如镜，荐卧龙凤雏。', stats: { command: 22, strategy: 82, politics: 72, charm: 78, loyalty: 40, ambition: 8 }, personality: { brave: 20, cautious: 78, greedy: 4, loyal: 38, proud: 40, ruthless: 6, idealistic: 88 }, values: ['识人', '隐逸', '教化'], boundaries: ['不出仕', '不推举不当之人'], longTermGoal: '以慧眼识天下英才', privateAgenda: '在幕后推动人才流向值得的明主', speechStyle: { register: '淡泊', rhythm: '舒缓', habit: '只说半句让自悟', metaphor: '镜与水' }, specialSchemes: ['水镜荐才'], passiveBonuses: ['识人准确率大幅提高'], weaknesses: ['不出仕', '只荐不助'], recruitmentDifficulty: 82, defectionTriggers: [] },
+        { id: 'huangChengYan', name: '黄承彦', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: 'xinye', offMapLocation: 'longzhong', role: '名士', title: '沔南名士', type: '谋士', status: 'rumored', rarity: '良才', summary: '黄承彦诸葛亮岳父，沔南名士。', stats: { command: 18, strategy: 64, politics: 58, charm: 62, loyalty: 38, ambition: 6 }, personality: { brave: 16, cautious: 72, greedy: 6, loyal: 36, proud: 32, ruthless: 4, idealistic: 76 }, values: ['学识', '嫁女得才', '隐逸'], boundaries: ['不干预女婿之事', '不出仕'], longTermGoal: '将女儿嫁给最有才华的人', privateAgenda: '在荆州名士圈中保持影响力', speechStyle: { register: '风雅', rhythm: '从容', habit: '以女婿自豪', metaphor: '花与才' }, specialSchemes: ['引荐诸葛'], passiveBonuses: ['名士圈好感度提高'], weaknesses: ['无实际权力', '仅限社交影响'], recruitmentDifficulty: 50, defectionTriggers: [] },
+        { id: 'pangDeGong', name: '庞德公', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: 'xinye', offMapLocation: 'longzhong', role: '荆州隐士', title: '襄阳隐士', type: '谋士', status: 'rumored', rarity: '良才', summary: '庞德公荆州隐士，品评人物，庞统之叔。', stats: { command: 16, strategy: 70, politics: 66, charm: 68, loyalty: 36, ambition: 6 }, personality: { brave: 14, cautious: 76, greedy: 4, loyal: 34, proud: 38, ruthless: 4, idealistic: 84 }, values: ['品评', '隐逸', '教化'], boundaries: ['不出仕', '不当面贬人'], longTermGoal: '品评天下人物传后世', privateAgenda: '维护荆州隐士圈的清流地位', speechStyle: { register: '清雅', rhythm: '从容', habit: '以品评定高下', metaphor: '尺与水' }, specialSchemes: ['品评天下'], passiveBonuses: ['识人准确率提高'], weaknesses: ['不出仕', '影响力限于名士圈'], recruitmentDifficulty: 60, defectionTriggers: [] },
+        { id: 'xuShao', name: '许劭', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: '', offMapLocation: 'runan', role: '月旦评', title: '汝南名士', type: '谋士', status: 'hidden', rarity: '良才', summary: '许劭月旦评天下人物，评曹操治世之能臣乱世之奸雄。', stats: { command: 14, strategy: 66, politics: 64, charm: 70, loyalty: 32, ambition: 8 }, personality: { brave: 12, cautious: 74, greedy: 8, loyal: 30, proud: 58, ruthless: 10, idealistic: 72 }, values: ['品评', '名节', '公正'], boundaries: ['不阿谀权贵', '不修改评价'], longTermGoal: '以月旦评传名后世', privateAgenda: '维持月旦评的公正和权威', speechStyle: { register: '尖锐', rhythm: '判语式', habit: '一语定论', metaphor: '秤与判' }, specialSchemes: ['月旦评'], passiveBonuses: ['识人准确率提高'], weaknesses: ['拒绝权贵邀约', '影响力有限'], recruitmentDifficulty: 55, defectionTriggers: [] },
+        { id: 'qiaoXuan', name: '乔玄', faction: 'local', originFaction: 'local', possibleFactions: ['local'], location: '', offMapLocation: 'wan', role: '汉室老臣', title: '太尉', type: '政务', status: 'hidden', rarity: '良才', summary: '乔玄汉室老臣，识曹操为非常之人，二乔之父。', stats: { command: 24, strategy: 58, politics: 72, charm: 74, loyalty: 46, ambition: 10 }, personality: { brave: 20, cautious: 70, greedy: 8, loyal: 48, proud: 36, ruthless: 8, idealistic: 68 }, values: ['识才', '汉室', '家风'], boundaries: ['不以权谋私', '不违礼法'], longTermGoal: '以老臣之身匡正朝纲', privateAgenda: '为二女寻良配', speechStyle: { register: '端方', rhythm: '庄重', habit: '以老臣身份论事', metaphor: '鼎与家' }, specialSchemes: ['识才举贤'], passiveBonuses: ['名士好感度提高'], weaknesses: ['年事已高', '无实权'], recruitmentDifficulty: 40, defectionTriggers: [] }
+      ]
+    };
+
+    function normalizeHistoricalCharacterRecord(record) {
+      const normalized = { ...record };
+
+      normalized.faction ||= 'local';
+      normalized.location ||= '';
+      normalized.role ||= normalized.type || '人物';
+      normalized.title ||= normalized.role;
+      normalized.type ||= '武将';
+      normalized.status ||= 'hidden';
+      normalized.rarity ||= '良才';
+      normalized.summary ||= normalized.name + '是乱世中可被发现的人物。';
+
+      normalized.stats ||= {};
+      normalized.stats.command ??= 50;
+      normalized.stats.strategy ??= 50;
+      normalized.stats.politics ??= 50;
+      normalized.stats.charm ??= 50;
+      normalized.stats.loyalty ??= 60;
+      normalized.stats.ambition ??= 40;
+
+      normalized.personality ||= { brave: 42, cautious: 52, greedy: 28, loyal: 52, proud: 40, ruthless: 28, idealistic: 44 };
+      normalized.values ||= ['功名'];
+      normalized.boundaries ||= ['不轻易背主'];
+      normalized.longTermGoal ||= '在乱世中建立功业';
+      normalized.privateAgenda ||= '观察天下局势';
+      normalized.speechStyle ||= { register: '沉稳', rhythm: '平衡', habit: '', metaphor: '' };
+      normalized.specialSchemes ||= [];
+      normalized.passiveBonuses ||= [];
+      normalized.weaknesses ||= ['立场未明'];
+      normalized.recruitmentDifficulty ??= 60;
+      normalized.discoveredBy ||= '';
+
+      normalized.originFaction ||= normalized.faction;
+      normalized.possibleFactions ||= [normalized.faction];
+      normalized.recruitedBy ||= null;
+      normalized.defectionTriggers ||= [];
+
+      return normalized;
+    }
+
+    function normalizeCharacterLocation(record) {
+      if (!record.location) return record;
+
+      const fallback = {
+        xuzhou: 'xiaopei',
+        longzhong: 'xinye',
+        chengdu: 'yongan',
+        liangzhou: 'mateng',
+        tianshui: 'mateng'
+      };
+
+      if (CITY_BLUEPRINTS?.[record.location]) return record;
+
+      const mapped = fallback[record.location];
+      if (mapped && CITY_BLUEPRINTS?.[mapped]) {
+        record.offMapLocation = record.location;
+        record.location = mapped;
+        return record;
+      }
+
+      record.offMapLocation = record.location;
+      record.location = '';
+      return record;
+    }
+
+    function buildHistoricalCharacterBlueprints() {
+      const result = {};
+      const seen = new Set();
+
+      Object.values(HISTORICAL_CHARACTER_PACKS).flat().forEach(record => {
+        if (!record || !record.id) return;
+
+        if (seen.has(record.id) || result[record.id] || BASE_CHARACTER_BLUEPRINTS?.[record.id]) {
+          console.warn('重复人物 id，已跳过：', record.id, record.name);
+          return;
+        }
+
+        seen.add(record.id);
+        result[record.id] = characterBlueprint(record.id, record.name, normalizeHistoricalCharacterRecord(record));
+      });
+
+      return result;
+    }
+
+    const CHARACTER_BLUEPRINTS = {
+      ...BASE_CHARACTER_BLUEPRINTS,
+      ...buildHistoricalCharacterBlueprints()
+    };
+
 
     const RANDOM_TALENT_NAMES = ['杜景', '韩绍', '程钧', '陆旻', '沈玠', '顾韬', '许岱', '钟仪', '谢衡', '苏靖', '林越', '赵宁'];
     const RANDOM_TALENT_TYPES = ['武将', '谋士', '政务', '豪强', '医者', '商人', '游侠'];
@@ -1134,7 +2231,7 @@ const MAX_MAP_ZOOM = 4.2;
           legitimacy: 54,
           fear: 8,
           independent: false,
-          commandSlots: 2
+          commandSlots: 5
         },
         actionPoints: { gov: 2, mil: 2, scheme: 2, dip: 1, inner: 1 },
         orders: [],
@@ -1142,6 +2239,7 @@ const MAX_MAP_ZOOM = 4.2;
         characterRoster: createCharacterRoster(randomTalentSeed),
         characterDiscovery: {},
         selectedCharacterId: 'liuBiao',
+        characterProfileId: null,
         characterFilter: 'all',
         conversations: [],
         npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
@@ -1153,6 +2251,11 @@ const MAX_MAP_ZOOM = 4.2;
         letters: [],
         militaryOrders: [],
         campaigns: [],
+        appointments: {
+          cityOfficials: {},
+          campaignCommanders: {},
+          autoTasks: {}
+        },
         urgentMatters: [],
         turnEvents: [],
         turnSummaries: [],
@@ -1209,7 +2312,11 @@ const MAX_MAP_ZOOM = 4.2;
           ],
           unlockedTabs: ['city', 'military'],
           trackedTaskId: null,
-          guideQueue: []
+          guideQueue: [],
+          guidePhase: 0,
+          forceAction: null,
+          guideCompleted: false,
+          highlightedElements: []
         }
       };
       return applyInitialPublicSupportProfiles(state);
@@ -1332,8 +2439,10 @@ const MAX_MAP_ZOOM = 4.2;
       state.turnSummaries ||= [];
       state.visualEffects ||= [];
       state.selectedCharacterId ||= 'liuBiao';
+      state.characterProfileId ||= null;
       state.characterFilter ||= 'all';
-      state.player.commandSlots = Number(state.player.commandSlots || 2);
+      state.player.commandSlots = Number(state.player.commandSlots || 5);
+      normalizeAppointments(state);
       state.schemaVersion = GAME_SCHEMA_VERSION;
       return state;
     }
@@ -2097,6 +3206,7 @@ const MAX_MAP_ZOOM = 4.2;
       const opening = getNpcSignatureOpening(npc, context.conversationType, attitude);
       const actionLine = getNpcActionLine(npc, context.conversationType, attitude, memoryProfile);
       const memoryLine = getNpcMemoryLine(npc, memoryProfile);
+
       const intentMap = {
         talk: '重新校准彼此的底线',
         probe: '守住秘密并反向试探你',
@@ -2114,7 +3224,7 @@ const MAX_MAP_ZOOM = 4.2;
         npcText: dialogueParts.join(' '),
         npcIntent: intentMap[context.conversationType] || action.label,
         emotionalShift: attitude,
-        memorySummary: npc.name + '把这次“' + action.label + '”记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
+        memorySummary: npc.name + '把这次"' + action.label + '"记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
         suggestedPlayerChoices: ['顺着其目标继续谈', '触碰其底线试探', '暂时收束承诺']
       };
     }
@@ -2286,16 +3396,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.selectedCharacterId = characterId;
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: true };
       renderModal();
-      const dialogue = await generateNpcDialogue({
-        npc,
-        player: gameState.player,
-        gameState,
-        conversationType,
-        recentMemory: npc.memory.slice(0, 6),
-        persona: buildNpcDialoguePersona(npc),
-        strategicContext: getNpcStrategicContext(npc),
-        availableIntentions: Object.keys(CONVERSATION_ACTIONS)
-      });
+      const dialogue = await generateNpcDialogue({ npc, player: gameState.player, gameState, conversationType });
       const effects = applyConversationResult({ npc, conversationType }, dialogue);
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: false, dialogue, effects };
       saveToStorage(false);
@@ -2673,7 +3774,7 @@ const MAX_MAP_ZOOM = 4.2;
       const opening = getNpcSignatureOpening(npc, 'talk', getNpcAttitudeLabel(npc));
       const bodyLines = {
         '庇护松动': '襄阳近来对桂阳的耐心正在变薄。若你仍要借刘表之名行事，就必须给出能让人安心的凭据。',
-        '野心渐显': '你的声势渐起，旁人会开始区分“能臣”和“异心”。我想听你亲口说明边界。',
+        '野心渐显': '你的声势渐起，旁人会开始区分"能臣"和"异心"。我想听你亲口说明边界。',
         '乡里不安': '乡里议论已经起了波澜。若官府只求快刀，豪强未必明着反，却会在暗处拖住你。',
         '军令后续': '军令既出，后勤、期限和退路都要有人盯着。我请见，是怕胜算被琐事磨坏。',
         '疑虑加深': '此前几件事让我心中生疑。若不把话说开，往后合作只会越来越薄。',
@@ -3794,9 +4895,14 @@ const MAX_MAP_ZOOM = 4.2;
         const matter = gameState.urgentMatters.find(item => item.id === gameState.activeModal.matterId);
         if (matter) matter.deferred = true;
       }
+      // If guide is active and we're closing an eventDetail modal, advance guide step
+      const wasGuideModal = isGuideActive() && gameState.activeModal?.type === 'eventDetail';
       gameState.activeModal = null;
       openNextCriticalModal();
       render();
+      if (wasGuideModal) {
+        advanceGuideStep();
+      }
     }
 
     function continueTurnSummary() {
@@ -4048,9 +5154,25 @@ const MAX_MAP_ZOOM = 4.2;
           choices: (letter.choices || []).map(choice => choice.label),
           turn: gameState.turn
         };
+        let letterGuideHint = '';
+        if (isGuideActive() && letter.choices && letter.choices.length > 0) {
+          letterGuideHint = '<div class="guide-options-list" style="margin-top:12px;">';
+          letter.choices.forEach(choice => {
+            letterGuideHint += '<div class="guide-option-card"><div class="option-name">' + escapeHtml(choice.label) + '</div>';
+            if (choice.guideHint) {
+              letterGuideHint += '<span class="pros">' + escapeHtml(choice.guideHint.pros || '') + '</span>';
+              letterGuideHint += '<span class="cons">' + escapeHtml(choice.guideHint.cons || '') + '</span>';
+            } else {
+              letterGuideHint += '<span class="pros">选择此项可能带来不同的后果</span>';
+            }
+            letterGuideHint += '</div>';
+          });
+          letterGuideHint += '</div>';
+        }
         root.innerHTML = `<div class="game-modal letter-modal ${getLetterBackdropClass(letter)}">
           <div class="letter-head"><div><h2>${escapeHtml(letter.title)}</h2><span class="tag">${escapeHtml(letter.senderName)}｜${escapeHtml(letter.date)}</span></div></div>
           <div class="letter-body">${escapeHtml(letter.body)}</div>
+          ${letterGuideHint}
           <div class="modal-actions">
             <button class="ghost-btn" data-ai-content-type="letterBody" data-ai-content-payload-id="${letterPayloadId}">展开信件原文</button>
             ${letter.resolved ? '<button data-close-modal="1">收起书信</button>' : letter.choices.map(choice => `<button data-letter-choice="${choice.id}" data-letter="${letter.id}">${escapeHtml(choice.label)}</button>`).join('')}
@@ -4099,6 +5221,10 @@ const MAX_MAP_ZOOM = 4.2;
           </div>
         </div>`;
       }
+      if (modal.type === 'aiContent') {
+        root.innerHTML = renderAiContentModal(modal);
+        return;
+      }
       if (modal.type === 'tutorialGuide') {
         root.innerHTML = renderGuideModal(modal.guideId);
         return;
@@ -4107,6 +5233,90 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = renderTaskDrawer();
         return;
       }
+      if (modal.type === 'tutorialStartChoice') {
+        root.innerHTML = `<div class="tutorial-guide-modal">
+          <div class="guide-header"><h2>是否开启新手引导？</h2></div>
+          <div class="guide-body">
+            <p>新手引导将带领你逐步了解游戏的核心玩法，共5个回合。</p>
+            <p>引导期间你将学习：城政、军事、刘表庇护、亲信系统、调兵、外交和谋略。</p>
+          </div>
+          <div class="guide-footer">
+            <button data-start-force-guide="1">开始引导</button>
+            <button class="btn-skip" data-skip-force-guide="1">跳过引导</button>
+          </div>
+        </div>`;
+        return;
+      }
+      if (modal.type === 'appointmentPicker') {
+        root.innerHTML = renderAppointmentPickerModal(modal);
+        return;
+      }
+    }
+
+    function renderAppointmentPickerModal(modal) {
+      const role = modal.role;
+      const city = gameState.cities?.[modal.cityId];
+      const campaign = gameState.campaigns?.find(c => c.id === modal.campaignId);
+
+      const title = campaign
+        ? '任命战役主将'
+        : '任命' + appointmentRoleLabel(role);
+
+      const candidates = (modal.candidates || [])
+        .map(id => gameState.characterRoster?.[id])
+        .filter(Boolean);
+
+      return `
+        <div class="game-modal">
+          <div class="modal-head">
+            <h2>${escapeHtml(title)}</h2>
+            <button class="ghost-btn" data-close-modal="1">关闭</button>
+          </div>
+
+          <div class="card">
+            <p class="muted">
+              ${campaign
+                ? '请选择一名已招募且未任命的武将或谋士作为战役主将。'
+                : '请选择一名已招募且未任命的人物担任 ' + escapeHtml(city?.name || '') + ' 的 ' + escapeHtml(appointmentRoleLabel(role)) + '。'}
+            </p>
+
+            ${
+              candidates.length
+                ? candidates.map(c => renderAppointmentCandidate(c, modal)).join('')
+                : '<p class="muted">暂无符合条件且未任命的人物。</p>'
+            }
+          </div>
+
+          <div class="modal-actions">
+            <button data-close-modal="1">取消</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAppointmentCandidate(character, modal) {
+      const stats = character.stats || {};
+      const mainStats = [
+        '统率 ' + Math.round(stats.command || 0),
+        '谋略 ' + Math.round(stats.strategy || 0),
+        '政务 ' + Math.round(stats.politics || 0),
+        '魅力 ' + Math.round(stats.charm || 0)
+      ].join('｜');
+
+      const actionAttrs = modal.campaignId
+        ? `data-appoint-campaign-commander-from-picker="${modal.campaignId}" data-character-id="${character.id}"`
+        : `data-appoint-city-from-picker="${modal.cityId}" data-appointment-role="${modal.role}" data-character-id="${character.id}"`;
+
+      return `
+        <div class="appointment-candidate">
+          <div>
+            <strong>${escapeHtml(character.name)}</strong>
+            <span class="muted">${escapeHtml(character.type || '')}｜${escapeHtml(character.role || '')}</span>
+            <p class="muted">${escapeHtml(mainStats)}</p>
+          </div>
+          <button ${actionAttrs}>任命</button>
+        </div>
+      `;
     }
 
     function renderAiContentModal(modal) {
@@ -4709,8 +5919,7 @@ const MAX_MAP_ZOOM = 4.2;
       render();
       const showIntroGuide = () => {
         if (launchScreen !== 'game' || !gameState.storyFlags.characterCreated) return;
-        gameState.activeModal = { type: 'tutorialGuide', guideId: 'introStart' };
-        render();
+        initTutorialGuide();
       };
       if (options.delayGuide) {
         setTimeout(showIntroGuide, 650);
@@ -4807,7 +6016,7 @@ const MAX_MAP_ZOOM = 4.2;
     function renderHud() {
       const totals = cityTotals();
       const items = [
-        ['回合 / 日期', '第' + gameState.turn + '回合｜' + formatDate()],
+        ['回合 / 日期', isGuideActive() ? '新手引导｜第' + gameState.tutorial.guidePhase + '回合' : '第' + gameState.turn + '回合｜' + formatDate()],
         ['当前篇章', getActName()],
         ['当前目标', gameState.currentGoal],
         ['粮草', fmt(totals.food)],
@@ -5367,6 +6576,12 @@ const MAX_MAP_ZOOM = 4.2;
         panel.innerHTML = renderCharacterPanel();
         return;
       }
+      if (gameState.activePanel === 'appointments') {
+        rightTitle.textContent = '任命府';
+        rightTag.textContent = controlledCities().length + ' 城｜' + getUnassignedRecruitedCharacters().length + ' 人可任';
+        panel.innerHTML = renderAppointmentPanel();
+        return;
+      }
       if (gameState.activePanel === 'military') {
         rightTitle.textContent = '军府';
         rightTag.textContent = activeCampaignSlotCount() + ' / ' + gameState.player.commandSlots + ' 战役槽';
@@ -5727,6 +6942,7 @@ const MAX_MAP_ZOOM = 4.2;
             ${cityNeighborIds(city.id).map(id => `<button class="ghost-btn" data-select-city="${id}">${regionName(id)}</button>`).join('')}
           </div>
         </div>
+        ${own ? renderCityAppointmentSummary(city) : ''}
         ${own ? renderOwnCityActions(city) : renderOtherCityActions(city, canAttack)}
       `;
     }
@@ -5776,6 +6992,236 @@ const MAX_MAP_ZOOM = 4.2;
       renderHud();
       renderLeftPanel();
       renderStrategyDock();
+    }
+
+    function renderAppointmentPanel() {
+      normalizeAppointments(gameState);
+      return [
+        renderAppointmentOverviewCard(),
+        renderCityAppointmentManagerList(),
+        renderCampaignCommanderAppointmentPanel(),
+        renderUnassignedCharactersCard()
+      ].join('');
+    }
+
+    function renderAppointmentOverviewCard() {
+      const cities = controlledCities();
+      const recruited = Object.values(gameState.characterRoster || {}).filter(c => c && c.status === 'recruited' && isExternalCharacter(c));
+      const administrators = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'administratorId').length, 0);
+      const military = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'militaryOfficerId').length, 0);
+      const policies = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'policyOfficerId').length, 0);
+      const commanders = (gameState.campaigns || []).filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c) && getCampaignCommander(c)).length;
+
+      return `<div class="card">
+        <h2>任命总览</h2>
+        <div class="kv-grid">
+          <div class="kv"><span>控制城池</span><strong>${cities.length}</strong></div>
+          <div class="kv"><span>已招募人物</span><strong>${recruited.length}</strong></div>
+          <div class="kv"><span>未任命人物</span><strong>${getUnassignedRecruitedCharacters().length}</strong></div>
+          <div class="kv"><span>已任主政官</span><strong>${administrators}</strong></div>
+          <div class="kv"><span>已任军事官</span><strong>${military}</strong></div>
+          <div class="kv"><span>已任政策官</span><strong>${policies}</strong></div>
+          <div class="kv"><span>已任战役主将</span><strong>${commanders}</strong></div>
+        </div>
+      </div>`;
+    }
+
+    function renderCityAppointmentSummary(city) {
+      if (!isControlledBy(city.id, 'player')) return '';
+
+      const admins = getCityOfficials(city.id, 'administratorId');
+      const military = getCityOfficials(city.id, 'militaryOfficerId');
+      const policies = getCityOfficials(city.id, 'policyOfficerId');
+
+      return `
+        <div class="card">
+          <h3>城政任命</h3>
+
+          <div class="kv appointment-row">
+            <span>主政官</span>
+            <strong>${admins.map(c => escapeHtml(c.name)).join('、') || '未任命'} (${admins.length}/${getCityAdministratorLimit(city)})</strong>
+            <button class="mini-btn" data-open-appointment-picker="administratorId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="kv appointment-row">
+            <span>军事官</span>
+            <strong>${military.map(c => escapeHtml(c.name)).join('、') || '未任命'} (${military.length}/${getCityMilitaryOfficerLimit(city)})</strong>
+            <button class="mini-btn" data-open-appointment-picker="militaryOfficerId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="kv appointment-row">
+            <span>政策官</span>
+            <strong>${policies[0] ? escapeHtml(policies[0].name) : '未任命'}</strong>
+            <button class="mini-btn" data-open-appointment-picker="policyOfficerId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="button-grid">
+            <button data-tab="appointments">前往任命府</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCityAppointmentManagerList() {
+      const cities = controlledCities();
+
+      return `
+        <div class="card">
+          <h3>城市任命</h3>
+          ${cities.length ? cities.map(city => renderCityAppointmentManager(city)).join('') : '<p class="muted">当前没有玩家控制城池。</p>'}
+        </div>
+      `;
+    }
+
+    function renderCityAppointmentManager(city) {
+      if (cityController(city.id) !== 'player') return '';
+      normalizeAppointments(gameState);
+      const officials = gameState.appointments.cityOfficials[city.id] || {};
+      const adminIds = Array.isArray(officials.administratorIds) ? officials.administratorIds : (officials.administratorId ? [officials.administratorId] : []);
+      const militaryIds = Array.isArray(officials.militaryOfficerIds) ? officials.militaryOfficerIds : (officials.militaryOfficerId ? [officials.militaryOfficerId] : []);
+      const policyId = officials.policyOfficerId || null;
+      const officialName = id => getAppointedCharacter(id) ? escapeHtml(getAppointedCharacter(id).name) : '<span class="muted">未任命</span>';
+      const renderOfficialSlots = (title, ids, limit, role) => {
+        const rows = [];
+        for (let i = 0; i < limit; i++) {
+          const id = ids[i] || null;
+          const removeBtn = id ? ` <button class="ghost-btn mini-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="${role}" data-remove-city-official-character="${id}">撤任</button>` : '';
+          rows.push(`<div class="appointment-row"><span>${title}${i + 1}/${limit}</span><strong>${id ? officialName(id) : '<span class="muted">未任命</span>'}</strong>${removeBtn}</div>`);
+        }
+        return rows.join('');
+      };
+      const policyRemoveBtn = policyId ? ` <button class="ghost-btn mini-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="policyOfficerId" data-remove-city-official-character="${policyId}">撤任</button>` : '';
+
+      return `
+        <div class="appointment-city-block">
+          <h4>${escapeHtml(city.name)}</h4>
+          <div class="kv"><span>主政官</span><strong>${adminIds.length}/${getCityAdministratorLimit(city)}</strong></div>
+          <div class="kv"><span>军事官</span><strong>${militaryIds.length}/${getCityMilitaryOfficerLimit(city)}</strong></div>
+          <div class="kv"><span>政策官</span><strong>${policyId ? officialName(policyId) : '未任命'}</strong></div>
+          ${renderOfficialSlots('主政官', adminIds, getCityAdministratorLimit(city), 'administratorId')}
+          ${renderOfficialSlots('军事官', militaryIds, getCityMilitaryOfficerLimit(city), 'militaryOfficerId')}
+          <div class="appointment-row"><span>政策官</span><strong>${policyId ? officialName(policyId) : '<span class="muted">未任命</span>'}</strong>${policyRemoveBtn}</div>
+          <div class="button-grid">
+            <button data-open-appointment-picker="administratorId" data-appointment-city="${city.id}">任命主政官</button>
+            <button data-open-appointment-picker="militaryOfficerId" data-appointment-city="${city.id}">任命军事官</button>
+            <button data-open-appointment-picker="policyOfficerId" data-appointment-city="${city.id}">任命政策官</button>
+          </div>
+          ${renderCityAutoTaskControls(city)}
+        </div>
+      `;
+    }
+
+    function renderCityAutoTaskControls(city) {
+      normalizeAppointments(gameState);
+      const autoTask = gameState.appointments.autoTasks?.[city.id] || { enabled: false, militaryMode: 'none', civilMode: 'none', civilModes: [], policyMode: 'none', militaryPrepMode: 'none', militaryPrepModes: [] };
+      const autoEnabled = autoTask.enabled === true;
+      const selectOpts = (current, options) => options.map(o => `<option value="${o[0]}" ${current === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+      const checked = (list, mode) => Array.isArray(list) && list.includes(mode) ? 'checked' : '';
+      const disabled = !autoEnabled ? 'disabled' : '';
+      const militaryOpts = [['none','不执行'],['recruit','自动征兵'],['train','自动练兵']];
+      const civilOpts = [['relief','自动赈济'],['farming','自动屯田'],['defense','自动修城防'],['order','自动维护治安']];
+      const policyOpts = [['none','不执行'],['taxLight','税率偏低'],['balanced','税粮平衡'],['grainHeavy','征粮偏高'],['publicFirst','民心优先']];
+      const prepOpts = [['drill','自动整军'],['defense','自动加固防线'],['reserve','自动部署预备队']];
+
+      return `<div class="appointment-auto-controls">
+        <h4>自动治理</h4>
+        <div style="margin-bottom:6px">
+          <label style="cursor:pointer">
+            <input type="checkbox" data-auto-task-field="enabled" data-auto-task-city="${city.id}" ${autoEnabled ? 'checked' : ''} />
+            自动治理：${autoEnabled ? '开启' : '关闭'}
+          </label>
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em">自动兵务：</span>
+          <select data-auto-task-field="militaryMode" data-auto-task-city="${city.id}" ${disabled}>
+            ${selectOpts(autoTask.militaryMode || 'none', militaryOpts)}
+          </select>
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em;display:block">自动城政：</span>
+          ${civilOpts.map(o => `<label style="display:inline-block;margin-right:8px;cursor:pointer"><input type="checkbox" data-auto-task-city="${city.id}" data-toggle-auto-mode="civilModes" data-auto-mode="${o[0]}" ${checked(autoTask.civilModes, o[0])} ${disabled} /> ${o[1]}</label>`).join('')}
+        </div>
+        <div style="margin-bottom:4px">
+          <span style="font-size:0.9em">自动政策：</span>
+          <select data-auto-task-field="policyMode" data-auto-task-city="${city.id}" ${disabled}>
+            ${selectOpts(autoTask.policyMode || 'none', policyOpts)}
+          </select>
+        </div>
+        <div>
+          <span style="font-size:0.9em;display:block">自动军事整备：</span>
+          ${prepOpts.map(o => `<label style="display:inline-block;margin-right:8px;cursor:pointer"><input type="checkbox" data-auto-task-city="${city.id}" data-toggle-auto-mode="militaryPrepModes" data-auto-mode="${o[0]}" ${checked(autoTask.militaryPrepModes, o[0])} ${disabled} /> ${o[1]}</label>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    function renderCampaignCommanderAppointmentPanel() {
+      const campaigns = (gameState.campaigns || [])
+        .filter(c =>
+          c &&
+          c.faction === 'player' &&
+          c.type === 'attack' &&
+          isActiveCampaign(c)
+        );
+
+      if (!campaigns.length) {
+        return `
+          <div class="card">
+            <h3>战役主将</h3>
+            <p class="muted">当前没有进行中的进攻战役。</p>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="card">
+          <h3>战役主将</h3>
+          ${campaigns.map(c => {
+            const commander = getCampaignCommander(c);
+            return `
+              <div class="appointment-row">
+                <div>
+                  <strong>${escapeHtml(regionName(c.source))} → ${escapeHtml(regionName(c.target))}</strong>
+                  <p class="muted">${escapeHtml(c.phase || c.status)}｜${commander ? '主将：' + escapeHtml(commander.name) : '未任命主将'}</p>
+                </div>
+                <div class="button-grid">
+                  <button data-open-campaign-commander-manager="${c.id}">${commander ? '更换主将' : '任命主将'}</button>
+                  ${commander ? `<button data-remove-campaign-commander="${c.id}">撤任</button>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderUnassignedCharactersCard() {
+      const candidates = getUnassignedRecruitedCharacters();
+      const roleTags = c => [
+        canManageCity(c) ? '<span class="tag">主政</span>' : '',
+        canLeadArmy(c) ? '<span class="tag">军事</span>' : '',
+        canManageCity(c) ? '<span class="tag">政策</span>' : '',
+        canLeadArmy(c) ? '<span class="tag">主将</span>' : ''
+      ].filter(Boolean).join('');
+
+      return `<div class="card">
+        <h3>未任命人物</h3>
+        ${candidates.length ? candidates.map(c => {
+          const stats = c.stats || {};
+          const mainStats = `统率 ${Math.round(stats.command || 0)}｜谋略 ${Math.round(stats.strategy || 0)}｜政务 ${Math.round(stats.politics || 0)}｜魅力 ${Math.round(stats.charm || 0)}`;
+          return `<div class="appointment-candidate">
+            <div>
+              <strong>${escapeHtml(c.name)}</strong>
+              <span class="muted">${escapeHtml(c.type || '')}｜${escapeHtml(c.role || '')}</span>
+              <p class="muted">${escapeHtml(mainStats)}</p>
+            </div>
+            <div class="tag-row">${roleTags(c)}</div>
+          </div>`;
+        }).join('') : '<p class="muted">暂无未任命人物。</p>'}
+      </div>`;
+    }
+
+    function renderCityAppointmentCard(city) {
+      return renderCityAppointmentManager(city);
     }
 
     function renderOwnCityActions(city) {
@@ -6429,6 +7875,9 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function endTurn() {
+      if (isGuideActive()) {
+        return endGuideTurn();
+      }
       if (gameState.pendingDefense) return toast('敌军来攻，必须先选择防守方针');
       if (gameState.activeModal) return toast('请先处理当前弹窗');
       const before = snapshotPlayerState();
@@ -6457,6 +7906,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.turnSummaries.unshift(summary);
       gameState.turnSummaries = gameState.turnSummaries.slice(0, 18);
       gameState.pendingTurnSummary = summary;
+      cleanupInvalidAppointments();
       normalizeAiContentCache();
       saveToStorage(false);
       gameState.lastAutoSave = Date.now();
@@ -7038,7 +8488,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (playerPower > 58) y.alert = clamp(y.alert + 4, 0, 100);
       if (y.alert >= 62 && !gameState.storyFlags.yuanDisarm) {
         gameState.storyFlags.yuanDisarm = true;
-        reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在“袁绍”面板选择表忠、拒绝或起兵。' });
+        reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在"袁绍"面板选择表忠、拒绝或起兵。' });
       }
       if (y.alert >= 84 && !gameState.storyFlags.openConflict && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
         createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800 }, reports);
@@ -7183,7 +8633,7 @@ const MAX_MAP_ZOOM = 4.2;
       captureRegion('yecheng', 'player', null);
       gameState.characters.yuanShao.status = method === 'coup' ? '被迫退位' : '兵败失权';
       gameState.characters.yuanShao.authority = 0;
-      reports.push({ tone: 'good', text: '河北夺袁篇结束：邺城已落入你手。游戏进入第二篇“北方霸权篇”，袁氏余党与曹操威胁仍未消失。' });
+      reports.push({ tone: 'good', text: '河北夺袁篇结束：邺城已落入你手。游戏进入第二篇"北方霸权篇"，袁氏余党与曹操威胁仍未消失。' });
     }
 
     function launchCoup() {
@@ -8078,6 +9528,7 @@ const MAX_MAP_ZOOM = 4.2;
         generateAiContent: async context => {
           const payload = await backendFetch('/api/ai/content', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ context })
           });
           return payload.text || payload.content || '';
@@ -8235,6 +9686,561 @@ const MAX_MAP_ZOOM = 4.2;
       return state;
     }
 
+    function validateCharacterSystemBase() {
+      const roster = gameState.characterRoster || {};
+      const visible = typeof visibleCharacters === 'function' ? visibleCharacters() : [];
+      const rows = Object.values(roster).map(c => ({
+        id: c.id,
+        name: c.name,
+        faction: c.faction,
+        location: c.location,
+        offMapLocation: c.offMapLocation,
+        type: c.type,
+        rarity: c.rarity,
+        status: c.status
+      }));
+
+      const duplicateIds = [];
+      const seen = new Set();
+      rows.forEach(c => {
+        if (seen.has(c.id)) duplicateIds.push(c.id);
+        seen.add(c.id);
+      });
+
+      const internalVisible = visible.filter(c => isInternalPlayerCharacterId(c.id)).map(c => c.id + ':' + c.name);
+
+      const invalidLocations = rows.filter(c =>
+        c.location && !gameState.cities?.[c.location] && !CITY_BLUEPRINTS?.[c.location]
+      );
+
+      const result = {
+        total: rows.length,
+        visible: visible.length,
+        duplicateIds,
+        internalVisible,
+        invalidLocations,
+        hasPlayerCard: !!roster.player,
+        selectedIsInternal: isInternalPlayerCharacterId(gameState.selectedCharacterId)
+      };
+
+      console.table(result);
+      console.table(rows);
+      return result;
+    }
+
+    window.validateCharacterSystemBase = validateCharacterSystemBase;
+    window.revealCharacter = revealCharacter;
+    window.unlockCharactersByFaction = unlockCharactersByFaction;
+    window.revealAllHistoricalCharacters = revealAllHistoricalCharacters;
+    window.triggerScholarRecommendation = triggerScholarRecommendation;
+    window.checkNewBorderFactions = checkNewBorderFactions;
+    window.checkIntelligenceNetworkUnlocks = checkIntelligenceNetworkUnlocks;
+    window.getCurrentBorderFactions = getCurrentBorderFactions;
+
+    function validateHistoricalCharacters() {
+      const roster = gameState.characterRoster || {};
+      const rows = Object.values(roster).map(c => ({
+        id: c.id,
+        name: c.name,
+        faction: c.faction,
+        originFaction: c.originFaction,
+        possibleFactions: c.possibleFactions,
+        location: c.location,
+        offMapLocation: c.offMapLocation,
+        type: c.type,
+        rarity: c.rarity,
+        status: c.status,
+        command: c.stats?.command,
+        strategy: c.stats?.strategy,
+        politics: c.stats?.politics,
+        charm: c.stats?.charm,
+        loyalty: c.stats?.loyalty,
+        ambition: c.stats?.ambition
+      }));
+
+      const ids = rows.map(r => r.id);
+      const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
+
+      const byFaction = rows.reduce((acc, c) => {
+        acc[c.faction] ||= 0;
+        acc[c.faction]++;
+        return acc;
+      }, {});
+
+      const internalVisible = typeof visibleCharacters === 'function'
+        ? visibleCharacters().filter(c => isInternalPlayerCharacterId(c.id)).map(c => c.id)
+        : [];
+
+      const invalidLocations = rows.filter(c =>
+        c.location && !gameState.cities?.[c.location] && !CITY_BLUEPRINTS?.[c.location]
+      );
+
+      const missingRequiredFields = rows.filter(c =>
+        !c.id || !c.name || !c.faction || !c.type || !c.rarity || !c.status || !c.stats
+      );
+
+      const invalidFieldTypes = Object.values(roster).filter(c =>
+        !c.stats
+        || typeof c.stats.command !== 'number'
+        || typeof c.stats.strategy !== 'number'
+        || typeof c.stats.politics !== 'number'
+        || typeof c.stats.charm !== 'number'
+        || typeof c.stats.loyalty !== 'number'
+        || typeof c.stats.ambition !== 'number'
+        || typeof c.personality !== 'object'
+        || Array.isArray(c.personality)
+        || typeof c.speechStyle !== 'object'
+        || Array.isArray(c.speechStyle)
+        || !Array.isArray(c.possibleFactions)
+        || !Array.isArray(c.defectionTriggers)
+      ).map(c => ({
+        id: c.id,
+        name: c.name,
+        personalityType: Array.isArray(c.personality) ? 'array' : typeof c.personality,
+        speechStyleType: Array.isArray(c.speechStyle) ? 'array' : typeof c.speechStyle,
+        possibleFactionsIsArray: Array.isArray(c.possibleFactions),
+        defectionTriggersIsArray: Array.isArray(c.defectionTriggers)
+      }));
+
+      const hiddenInitiativeCandidates = Object.values(roster).filter(c =>
+        c.status === 'hidden' && typeof isMajorNpcForInitiative === 'function' && isMajorNpcForInitiative(c)
+      ).map(c => ({ id: c.id, name: c.name }));
+
+      const visibleByStatus = rows.reduce((acc, c) => {
+        if (c.status !== 'hidden') {
+          acc[c.status] ||= 0;
+          acc[c.status]++;
+        }
+        return acc;
+      }, {});
+
+      const visibleByFaction = rows.reduce((acc, c) => {
+        if (c.status !== 'hidden') {
+          acc[c.faction] ||= 0;
+          acc[c.faction]++;
+        }
+        return acc;
+      }, {});
+
+      console.table(byFaction);
+      console.table(rows);
+
+      return {
+        total: rows.length,
+        visible: rows.filter(c => c.status !== 'hidden').length,
+        hidden: rows.filter(c => c.status === 'hidden').length,
+        duplicateIds,
+        byFaction,
+        internalVisible,
+        invalidLocations,
+        missingRequiredFields,
+        invalidFieldTypes,
+        hiddenInitiativeCandidates,
+        visibleByStatus,
+        visibleByFaction,
+        legendaryCount: rows.filter(c => c.rarity === '传奇').length,
+        contactableCount: rows.filter(c => c.status === 'contactable').length,
+        rows
+      };
+    }
+
+    window.validateHistoricalCharacters = validateHistoricalCharacters;
+
+    function validateHistoricalCharacterUnlocks() {
+      const rows = Object.values(gameState.characterRoster || {}).map(c => ({
+        id: c.id,
+        name: c.name,
+        faction: c.faction,
+        status: c.status,
+        rarity: c.rarity,
+        type: c.type,
+        discoveredBy: c.discoveredBy,
+        initiativeEligible: typeof isMajorNpcForInitiative === 'function' ? isMajorNpcForInitiative(c) : false,
+        internal: isInternalPlayerCharacterId(c.id)
+      }));
+
+      const hiddenInitiativeCandidates = rows.filter(c => c.status === 'hidden' && c.initiativeEligible);
+      const internalVisible = typeof visibleCharacters === 'function'
+        ? visibleCharacters().filter(c => isInternalPlayerCharacterId(c.id)).map(c => c.id)
+        : [];
+
+      const visibleByStatus = rows.reduce((acc, c) => {
+        if (c.status !== 'hidden') {
+          acc[c.status] ||= 0;
+          acc[c.status]++;
+        }
+        return acc;
+      }, {});
+
+      const visibleByFaction = rows.reduce((acc, c) => {
+        if (c.status !== 'hidden') {
+          acc[c.faction] ||= 0;
+          acc[c.faction]++;
+        }
+        return acc;
+      }, {});
+
+      const result = {
+        total: rows.length,
+        visible: rows.filter(c => c.status !== 'hidden').length,
+        hidden: rows.filter(c => c.status === 'hidden').length,
+        internalVisible,
+        hiddenInitiativeCandidates,
+        visibleByStatus,
+        visibleByFaction,
+        legendaryCount: rows.filter(c => c.rarity === '传奇').length,
+        contactableCount: rows.filter(c => c.status === 'contactable').length
+      };
+
+      console.table(result);
+      console.table(rows);
+      return result;
+    }
+
+    window.validateHistoricalCharacterUnlocks = validateHistoricalCharacterUnlocks;
+
+    function validateAppointmentSystem() {
+      normalizeAppointments(gameState);
+      const app = gameState.appointments;
+      const recruitedCharacters = Object.values(gameState.characterRoster || {})
+        .filter(c => c.status === 'recruited' && isExternalCharacter(c))
+        .map(c => ({ id: c.id, name: c.name, type: c.type, stats: c.stats }));
+      const allAppointedIds = new Set();
+      const duplicateAssignments = [];
+      const addAppointed = (id, location) => {
+        if (!id) return;
+        if (allAppointedIds.has(id)) duplicateAssignments.push({ characterId: id, location });
+        allAppointedIds.add(id);
+      };
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        (slots.administratorIds || []).forEach(id => addAppointed(id, 'city:' + cityId + '.administratorId'));
+        (slots.militaryOfficerIds || []).forEach(id => addAppointed(id, 'city:' + cityId + '.militaryOfficerId'));
+        addAppointed(slots.policyOfficerId, 'city:' + cityId + '.policyOfficerId');
+      }
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        addAppointed(id, 'campaign:' + campaignId);
+      }
+      const invalidCityAppointments = [];
+      for (const [cityId, slots] of Object.entries(app.cityOfficials || {})) {
+        const city = gameState.cities?.[cityId];
+        if (!city || !isActiveMapCity(cityId) || cityController(cityId) !== 'player') {
+          invalidCityAppointments.push({ cityId, reason: '城池无效或不属于玩家' });
+          continue;
+        }
+        const checks = [
+          ...((slots.administratorIds || []).map(id => ['administratorId', id])),
+          ...((slots.militaryOfficerIds || []).map(id => ['militaryOfficerId', id])),
+          ['policyOfficerId', slots.policyOfficerId]
+        ];
+        checks.forEach(([slot, id]) => {
+          if (!id) return;
+          const char = gameState.characterRoster?.[id];
+          const validRole = slot === 'militaryOfficerId' ? canLeadArmy(char) : canManageCity(char);
+          if (!char || isInternalPlayerCharacterId(id) || char.status !== 'recruited' || !validRole) {
+            invalidCityAppointments.push({ cityId, slot, characterId: id, reason: '人物无效' });
+          }
+        });
+      }
+      const invalidCampaignCommanders = [];
+      for (const [campaignId, id] of Object.entries(app.campaignCommanders || {})) {
+        const campaign = (gameState.campaigns || []).find(c => c.id === campaignId);
+        if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || !isActiveCampaign(campaign)) {
+          invalidCampaignCommanders.push({ campaignId, characterId: id, reason: '战役无效' });
+          continue;
+        }
+        if (id) {
+          const char = gameState.characterRoster?.[id];
+          if (!char || isInternalPlayerCharacterId(id) || char.status !== 'recruited') {
+            invalidCampaignCommanders.push({ campaignId, characterId: id, reason: '人物无效' });
+          }
+        }
+      }
+      return {
+        appointments: app,
+        cityOfficials: app.cityOfficials,
+        campaignCommanders: app.campaignCommanders,
+        autoTasks: app.autoTasks,
+        recruitedCharacters,
+        duplicateAssignments,
+        invalidCityAppointments,
+        invalidCampaignCommanders
+      };
+    }
+    window.validateAppointmentSystem = validateAppointmentSystem;
+
+    function validateAppointmentTabSystem() {
+      return {
+        activePanel: gameState.activePanel,
+        hasAppointmentsTab: !!document.querySelector('[data-tab="appointments"]'),
+        controlledCities: controlledCities().map(c => c.id),
+        unassignedCharacters: getUnassignedRecruitedCharacters().map(c => ({
+          id: c.id,
+          name: c.name,
+          type: c.type
+        })),
+        cityAppointments: controlledCities().map(city => ({
+          cityId: city.id,
+          cityName: city.name,
+          administrators: getCityOfficials(city.id, 'administratorId').map(c => c.name),
+          militaryOfficers: getCityOfficials(city.id, 'militaryOfficerId').map(c => c.name),
+          policyOfficer: getCityOfficials(city.id, 'policyOfficerId')[0]?.name || null
+        })),
+        campaignCommanders: (gameState.campaigns || [])
+          .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
+          .map(c => ({
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            commander: getCampaignCommander(c)?.name || null
+          }))
+      };
+    }
+    window.validateAppointmentTabSystem = validateAppointmentTabSystem;
+
+    function validateCommanderBattleModifiers() {
+      return (gameState.campaigns || [])
+        .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
+        .map(c => {
+          const commander = getCampaignCommander(c);
+          const mod = getCommanderBattleModifier(c);
+          return {
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            status: c.status,
+            commander: commander ? {
+              id: commander.id,
+              name: commander.name,
+              type: commander.type,
+              stats: commander.stats
+            } : null,
+            attackModifier: mod.attack,
+            moraleModifier: mod.morale,
+            supplyModifier: mod.supply,
+            commanderSupplyTick: c.commanderSupplyTick || 0,
+            supply: c.supply
+          };
+        });
+    }
+
+    window.validateCommanderBattleModifiers = validateCommanderBattleModifiers;
+
+    function validateCommanderCampaignActions() {
+      const active = (gameState.campaigns || [])
+        .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c));
+      return {
+        campaigns: active.map(c => {
+          const commander = getCampaignCommander(c);
+          return {
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            status: c.status,
+            phase: c.phase,
+            siegeRemaining: c.siegeRemaining,
+            supply: c.supply,
+            troops: realTroops(c.army),
+            commanderActionCooldown: c.commanderActionCooldown || 0,
+            lastCommanderActionResult: c.lastCommanderActionResult || null,
+            commander: commander ? {
+              id: commander.id,
+              name: commander.name,
+              rarity: commander.rarity,
+              type: commander.type,
+              stats: commander.stats
+            } : null
+          };
+        }),
+        zeroTroopActiveCampaigns: active
+          .filter(c => c.army && realTroops(c.army) <= 0)
+          .map(c => ({
+            campaignId: c.id,
+            status: c.status,
+            phase: c.phase,
+            troops: realTroops(c.army),
+            commanderActionCooldown: c.commanderActionCooldown || 0,
+            lastCommanderActionResult: c.lastCommanderActionResult || null
+          }))
+      };
+    }
+
+    window.validateCommanderCampaignActions = validateCommanderCampaignActions;
+
+    function validateAppointmentAutoTasks() {
+      normalizeAppointments(gameState);
+      cleanupInvalidAppointments();
+      const autoTasks = gameState.appointments.autoTasks || {};
+      const autoGovSpentThisTurn = gameState.appointments.autoGovSpentThisTurn || 0;
+      const autoMilSpentThisTurn = gameState.appointments.autoMilSpentThisTurn || 0;
+      const govPoints = gameState.actionPoints?.gov || 0;
+      const milPoints = gameState.actionPoints?.mil || 0;
+
+      const enabledCities = [];
+      const invalidAutoTasks = [];
+      const citiesWithAutoTasks = [];
+      const staleAutoTasks = [];
+      const executablePreview = [];
+      const multiCivilPreview = [];
+      const militaryPrepPreview = [];
+      const resourceWarnings = [];
+      const cityOfficialCapacity = [];
+      const invalidOfficials = [];
+      const duplicateAssignments = [];
+      const seen = new Map();
+
+      Object.entries(gameState.appointments.cityOfficials || {}).forEach(([cityId, slots]) => {
+        ['administratorIds', 'militaryOfficerIds'].forEach(field => {
+          (slots[field] || []).forEach(id => {
+            if (seen.has(id)) duplicateAssignments.push({ characterId: id, first: seen.get(id), duplicate: { cityId, field } });
+            else seen.set(id, { cityId, field });
+          });
+        });
+        if (slots.policyOfficerId) {
+          if (seen.has(slots.policyOfficerId)) duplicateAssignments.push({ characterId: slots.policyOfficerId, first: seen.get(slots.policyOfficerId), duplicate: { cityId, field: 'policyOfficerId' } });
+          else seen.set(slots.policyOfficerId, { cityId, field: 'policyOfficerId' });
+        }
+      });
+
+      Object.entries(autoTasks).forEach(([cityId, task]) => {
+        const city = gameState.cities?.[cityId];
+        const playerControlled = city ? isControlledBy(city.id, 'player') : false;
+        citiesWithAutoTasks.push({ cityId, cityName: city ? city.name : '未知', playerControlled, ...task });
+        if (!city || !playerControlled) {
+          staleAutoTasks.push({ cityId, cityName: city ? city.name : '未知', playerControlled, enabled: task.enabled, task });
+          return;
+        }
+
+        const administrators = getCityOfficials(cityId, 'administratorId');
+        const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
+        const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
+        const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
+        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
+        const executableCivilCount = Math.min(administrators.length, civilModes.length, getCityAdministratorLimit(city));
+        const executableMilitaryPrepCount = Math.min(militaryOfficers.length, militaryPrepModes.length, getCityMilitaryOfficerLimit(city));
+
+        cityOfficialCapacity.push({
+          cityId,
+          cityName: city.name,
+          administratorIds: administrators.map(c => c.id),
+          administratorLimit: getCityAdministratorLimit(city),
+          militaryOfficerIds: militaryOfficers.map(c => c.id),
+          militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+          policyOfficerId: policyOfficers[0]?.id || null
+        });
+
+        if (task.enabled === true) {
+          const info = {
+            cityId,
+            cityName: city.name,
+            militaryMode: task.militaryMode,
+            civilMode: task.civilMode,
+            civilModes,
+            policyMode: task.policyMode,
+            militaryPrepMode: task.militaryPrepMode,
+            militaryPrepModes,
+            administratorIds: administrators.map(c => c.id),
+            administratorLimit: getCityAdministratorLimit(city),
+            militaryOfficerIds: militaryOfficers.map(c => c.id),
+            militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+            executableCivilCount,
+            executableMilitaryPrepCount,
+            issues: []
+          };
+          if (task.militaryMode && task.militaryMode !== 'none' && !militaryOfficers.length) info.issues.push('军事官未任命');
+          if (civilModes.length && !administrators.length) info.issues.push('主政官未任命');
+          if (task.policyMode && task.policyMode !== 'none' && !policyOfficers.length) info.issues.push('政策官未任命');
+          if (militaryPrepModes.length && !militaryOfficers.length) info.issues.push('军事整备缺少军事官');
+          enabledCities.push(info);
+          if (info.issues.length) invalidAutoTasks.push(info);
+
+          executablePreview.push({
+            cityId,
+            cityName: city.name,
+            militaryMode: task.militaryMode,
+            civilModes,
+            policyMode: task.policyMode,
+            militaryPrepModes,
+            govPoints,
+            milPoints,
+            autoGovSpentThisTurn,
+            autoMilSpentThisTurn,
+            willExecute: task.militaryMode !== 'none' || civilModes.length > 0 || task.policyMode !== 'none' || militaryPrepModes.length > 0
+          });
+          multiCivilPreview.push({ cityId, cityName: city.name, civilModes, administrators: administrators.map(c => c.name), executableCivilCount });
+          militaryPrepPreview.push({ cityId, cityName: city.name, militaryPrepModes, militaryOfficers: militaryOfficers.map(c => c.name), executableMilitaryPrepCount });
+
+          civilModes.forEach(mode => {
+            const costFood = Math.round(city.population / 85);
+            const costMoney = mode === 'farming' ? Math.round(180 + city.population / 1000)
+              : mode === 'defense' ? Math.round(130 + city.level * 90 + city.defense * 4)
+              : mode === 'order' ? Math.round(90 + city.population / 1800) : 0;
+            if (mode === 'relief' && city.food < costFood) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
+            if (mode !== 'relief' && city.money < costMoney) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+          });
+          militaryPrepModes.forEach(mode => {
+            if (mode === 'drill' && city.food < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
+            if (mode === 'defense' && city.money < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+          });
+        }
+      });
+
+      return {
+        autoTasks,
+        autoGovBudgetLimit: getAutoGovBudgetLimit(),
+        autoMilBudgetLimit: getAutoMilBudgetLimit(),
+        autoGovUnlimited: true,
+        autoMilUnlimited: true,
+        autoGovSpentThisTurn,
+        autoMilSpentThisTurn,
+        govPoints,
+        milPoints,
+        enabledCities,
+        invalidAutoTasks,
+        staleAutoTasks,
+        executablePreview,
+        cityOfficialCapacity,
+        multiCivilPreview,
+        militaryPrepPreview,
+        resourceWarnings,
+        duplicateAssignments,
+        invalidOfficials,
+        citiesWithAutoTasks
+      };
+    }
+
+    window.validateAppointmentAutoTasks = validateAppointmentAutoTasks;
+
+    function validateMultiOfficialAutomation() {
+      normalizeAppointments(gameState);
+      return Object.values(gameState.cities || {})
+        .filter(city => isControlledBy(city.id, 'player'))
+        .map(city => {
+          const task = gameState.appointments?.autoTasks?.[city.id] || {};
+          const admins = getCityOfficials(city.id, 'administratorId');
+          const officers = getCityOfficials(city.id, 'militaryOfficerId');
+          const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
+          const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
+          return {
+            cityId: city.id,
+            cityName: city.name,
+            administratorLimit: getCityAdministratorLimit(city),
+            administrators: admins.map(c => c.name),
+            civilModes,
+            executableCivilCount: Math.min(admins.length, civilModes.length, getCityAdministratorLimit(city)),
+            militaryOfficerLimit: getCityMilitaryOfficerLimit(city),
+            militaryOfficers: officers.map(c => c.name),
+            militaryPrepModes: prepModes,
+            executableMilitaryPrepCount: Math.min(officers.length, prepModes.length, getCityMilitaryOfficerLimit(city)),
+            autoGovBudgetLimit: getAutoGovBudgetLimit(),
+            autoMilBudgetLimit: getAutoMilBudgetLimit(),
+            autoGovUnlimited: true,
+            autoMilUnlimited: true
+          };
+        });
+    }
+
+    window.validateMultiOfficialAutomation = validateMultiOfficialAutomation;
+
     function migrateGameState(loaded) {
       const migrated = loaded && typeof loaded === 'object' ? loaded : {};
       migrated.schemaVersion ||= 4;
@@ -8264,6 +10270,8 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.aiContentCache ||= {};
       migrated.aiContentPayloads ||= {};
       migrated.aiContentPending ||= {};
+      migrated.characterProfileId ||= null;
+      migrated.appointments ||= { cityOfficials: {}, campaignCommanders: {}, autoTasks: {} };
       migrated.aiUsage ||= {};
       migrated.aiUsage.turn ||= migrated.turn || 1;
       migrated.aiUsage.turnDialogueCalls ||= 0;
@@ -8271,6 +10279,7 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.aiUsage.turnContentCalls ||= 0;
       migrated.aiUsage.maxContentCallsPerTurn ||= 6;
       migrated.schemaVersion = GAME_SCHEMA_VERSION;
+      normalizeAppointments(migrated);
       return purgeRemovedCitiesFromState(migrated);
     }
 
@@ -8298,6 +10307,9 @@ const MAX_MAP_ZOOM = 4.2;
         if (!Array.isArray(loaded.tutorial.guideQueue)) loaded.tutorial.guideQueue = [];
         if (loaded.tutorial.skipped === undefined) loaded.tutorial.skipped = false;
       }
+      if (loaded.tutorial.unlockedTabs.includes('characters') && !loaded.tutorial.unlockedTabs.includes('appointments')) {
+        loaded.tutorial.unlockedTabs.push('appointments');
+      }
       let normalized = Object.assign(fresh, loaded, {
         factions: FACTIONS,
         cities: Object.assign(structuredClone(CITY_BLUEPRINTS), loaded.cities || {}),
@@ -8313,7 +10325,7 @@ const MAX_MAP_ZOOM = 4.2;
         aiContentCache: Object.assign(fresh.aiContentCache, loaded.aiContentCache || {}),
         aiContentPayloads: Object.assign(fresh.aiContentPayloads, loaded.aiContentPayloads || {}),
         aiContentPending: Object.assign(fresh.aiContentPending, loaded.aiContentPending || {}),
-        aiUsage: Object.assign(fresh.aiUsage, loaded.aiUsage || {})
+        aiUsage: Object.assign(fresh.aiUsage, loaded.aiUsage || {}),
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
       normalized.mapState = normalizeMapState(normalized.mapState);
@@ -8431,7 +10443,8 @@ const MAX_MAP_ZOOM = 4.2;
         diplomacy: { name: '外交', desc: '外交用于结盟、借道、示好和求援。', condition: '你需要声望 ≥ 10（当前 ' + prestige + '/10）且刘表庇护 ≥ 60（当前 ' + protection + '/60）。' },
         inner: { name: '亲信', desc: '亲信用于整肃亲兵、安插府衙亲信、掌握粮道、联络郡兵、扩展情报网络。', condition: '你需要先查看刘表密令（打开刘表 tab）。' },
         liubiao: { name: '刘表', desc: '刘表是你的名义主君与保护伞。', condition: '你需要先完成一次城政和一次军事调整。' },
-        characters: { name: '人物', desc: '查看荆州及周边重要人物关系。', condition: '跟随亲信 tab 一起解锁。需要先查看刘表密令。' }
+        characters: { name: '人物', desc: '查看荆州及周边重要人物关系。', condition: '跟随亲信 tab 一起解锁。需要先查看刘表密令。' },
+        appointments: { name: '任命', desc: '集中管理城市官员、自动治理、军事整备和战役主将。', condition: '跟随人物 tab 一起解锁。需要先查看刘表密令。' }
       };
       return hints[tabId] || { name: tabId, desc: '暂未开放的功能。', condition: '请继续推进主线任务。' };
     }
@@ -8443,7 +10456,8 @@ const MAX_MAP_ZOOM = 4.2;
         transfer: 'unlockTransfer',
         scheme: 'unlockScheme',
         diplomacy: 'unlockDiplomacy',
-        characters: 'visitLiuBiao'
+        characters: 'visitLiuBiao',
+        appointments: 'visitLiuBiao'
       };
       return map[tabId] || null;
     }
@@ -8451,8 +10465,8 @@ const MAX_MAP_ZOOM = 4.2;
     function tryOpenTab(tabId) {
       if (isTabUnlocked(tabId)) {
         gameState.activePanel = tabId;
-        // 城政/军事首次打开时触发 cityMilitary 教学
-        if ((tabId === 'city' || tabId === 'military') && !gameState.tutorial.guideSeen.cityMilitary && !gameState.tutorial.skipped) {
+        // 城政/军事首次打开时触发 cityMilitary 教学（但强制引导期间跳过）
+        if ((tabId === 'city' || tabId === 'military') && !gameState.tutorial.guideSeen.cityMilitary && !gameState.tutorial.skipped && !isGuideActive()) {
           gameState.activeModal = { type: 'tutorialGuide', guideId: 'cityMilitary' };
         }
         // 刘表 tab 首次打开完成 visitLiuBiao 任务
@@ -8532,6 +10546,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (t('visitLiuBiao')) {
         unlockTabByTutorial('inner');
         unlockTabByTutorial('characters');
+        unlockTabByTutorial('appointments');
       }
       // 调兵解锁：整肃亲信
       if (t('organizeRetinue')) {
@@ -8647,6 +10662,7 @@ const MAX_MAP_ZOOM = 4.2;
     function maybeShowGuide(guideId) {
       if (!gameState.tutorial || gameState.tutorial.skipped) return;
       if (gameState.tutorial.guideSeen?.[guideId]) return;
+      if (isGuideActive()) return; // Don't show old guides during force guide
       gameState.activeModal = { type: 'tutorialGuide', guideId };
       render();
     }
@@ -8681,7 +10697,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.tutorial.guideQueue = [];
       gameState.activeModal = null;
       // 解锁所有 tab
-      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters'].forEach(tabId => {
+      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
         if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
           gameState.tutorial.unlockedTabs.push(tabId);
         }
@@ -8693,6 +10709,430 @@ const MAX_MAP_ZOOM = 4.2;
       render();
     }
 
+    // ===== 强制新手引导系统 =====
+    function isGuideActive() {
+      return gameState.tutorial && gameState.tutorial.guidePhase > 0 && !gameState.tutorial.guideCompleted;
+    }
+
+    function isForceAction(type, target) {
+      const fa = gameState.tutorial.forceAction;
+      if (!fa || fa.type !== type) return false;
+      if (target !== undefined && fa.target !== target) return false;
+      return true;
+    }
+
+    function checkForceAction(type, actualTarget) {
+      if (!isGuideActive()) return false; // not blocking
+      const fa = gameState.tutorial.forceAction;
+      if (!fa) return false;
+      if (fa.type === type && (fa.target === undefined || fa.target === actualTarget || fa.target === '*')) {
+        return false; // allowed
+      }
+      toast('请按照引导操作');
+      return true; // blocked
+    }
+
+    function clearGuideHighlights() {
+      document.querySelectorAll('.tutorial-highlight').forEach(el => {
+        el.classList.remove('tutorial-highlight', 'tutorial-overlay-cutout');
+      });
+      document.querySelectorAll('.tutorial-tooltip').forEach(el => el.remove());
+      document.querySelectorAll('.tutorial-overlay').forEach(el => el.remove());
+      document.querySelectorAll('.tutorial-svg-proxy').forEach(el => el.remove());
+      gameState.tutorial.highlightedElements = [];
+    }
+
+    function showGuideOverlay() {
+      if (!document.querySelector('.tutorial-overlay')) {
+        const overlay = document.createElement('div');
+        overlay.className = 'tutorial-overlay';
+        overlay.id = 'tutorialOverlay';
+        overlay.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); });
+        document.body.appendChild(overlay);
+      }
+    }
+
+    function removeGuideOverlay() {
+      const overlay = document.getElementById('tutorialOverlay');
+      if (overlay) overlay.remove();
+    }
+
+    function highlightGuideElement(selector, tooltipText, tooltipPosition) {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
+      gameState.tutorial.highlightedElements.push(selector);
+
+      if (tooltipText) {
+        const rect = el.getBoundingClientRect();
+        const tooltip = document.createElement('div');
+        tooltip.className = 'tutorial-tooltip';
+        tooltip.id = 'tutorialTooltip';
+        tooltip.textContent = tooltipText;
+        if (tooltipPosition === 'left') {
+          tooltip.style.left = Math.max(10, rect.left - 340) + 'px';
+        } else if (tooltipPosition === 'top') {
+          tooltip.style.left = Math.max(10, rect.left) + 'px';
+          tooltip.style.top = Math.max(10, rect.top - 100) + 'px';
+        } else {
+          tooltip.style.left = Math.min(window.innerWidth - 340, rect.right + 10) + 'px';
+        }
+        if (!tooltipPosition || tooltipPosition !== 'top') {
+          tooltip.style.top = Math.max(10, rect.top + rect.height / 2 - 40) + 'px';
+        }
+        document.body.appendChild(tooltip);
+      }
+
+      showGuideOverlay();
+    }
+
+    function highlightGuideSvgElement(selector, tooltipText, tooltipPosition) {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
+      gameState.tutorial.highlightedElements.push(selector);
+
+      // SVG elements can't break through the HTML overlay via z-index,
+      // so create a floating clickable proxy div positioned over the SVG element.
+      const rect = el.getBoundingClientRect();
+      const proxy = document.createElement('div');
+      proxy.className = 'tutorial-svg-proxy';
+      proxy.id = 'tutorialSvgProxy';
+      proxy.style.cssText = `position:fixed;z-index:9001;cursor:pointer;
+        left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;`;
+      // Extract cityId from the SVG element's data-select-city attribute
+      const cityId = el.getAttribute('data-select-city');
+      // Forward clicks on the proxy to the actual game logic
+      proxy.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (cityId && isGuideActive()) {
+          if (checkForceAction('clickCity', cityId)) return;
+          selectCity(cityId, 'city');
+          if (isForceAction('clickCity', cityId)) {
+            gameState.activePanel = 'city';
+            advanceGuideStep();
+          }
+        }
+      });
+      document.body.appendChild(proxy);
+
+      if (tooltipText) {
+        const tooltip = document.createElement('div');
+        tooltip.className = 'tutorial-tooltip';
+        tooltip.id = 'tutorialTooltip';
+        tooltip.textContent = tooltipText;
+        if (tooltipPosition === 'left') {
+          tooltip.style.left = Math.max(10, rect.left - 340) + 'px';
+        } else if (tooltipPosition === 'top') {
+          tooltip.style.left = Math.max(10, rect.left) + 'px';
+          tooltip.style.top = Math.max(10, rect.top - 100) + 'px';
+        } else {
+          tooltip.style.left = Math.min(window.innerWidth - 340, rect.right + 10) + 'px';
+        }
+        if (!tooltipPosition || tooltipPosition !== 'top') {
+          tooltip.style.top = Math.max(10, rect.top + rect.height / 2 - 40) + 'px';
+        }
+        document.body.appendChild(tooltip);
+      }
+
+      showGuideOverlay();
+    }
+
+    function setForceAction(type, target) {
+      gameState.tutorial.forceAction = { type, target };
+    }
+
+    function advanceGuideStep() {
+      clearGuideHighlights();
+      // Phase-specific step advancement
+      const phase = gameState.tutorial.guidePhase;
+      const stepKey = 'guideStep_' + phase;
+      if (!gameState.tutorial._stepIndex) gameState.tutorial._stepIndex = {};
+      const currentStep = gameState.tutorial._stepIndex[phase] || 0;
+      gameState.tutorial._stepIndex[phase] = currentStep + 1;
+      processGuidePhase();
+    }
+
+    function initTutorialGuide() {
+      gameState.activeModal = { type: 'tutorialStartChoice' };
+      render();
+    }
+
+    function startForceGuide() {
+      gameState.tutorial.skipped = false;
+      gameState.tutorial.guidePhase = 1;
+      gameState.tutorial.forceAction = null;
+      gameState.tutorial.highlightedElements = [];
+      gameState.tutorial.guideCompleted = false;
+      gameState.tutorial._stepIndex = {};
+      // 临时解锁后续需要的tab
+      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
+        if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
+          gameState.tutorial.unlockedTabs.push(tabId);
+        }
+      });
+      updateTabLockStates();
+      processGuidePhase();
+    }
+
+    function skipForceGuide() {
+      clearGuideHighlights();
+      removeGuideOverlay();
+      gameState.tutorial.guidePhase = 0;
+      gameState.tutorial.guideCompleted = true;
+      gameState.tutorial.forceAction = null;
+      gameState.tutorial.skipped = true;
+      gameState.tutorial.guideQueue = [];
+      gameState.activeModal = null;
+      // 解锁所有 tab
+      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
+        if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
+          gameState.tutorial.unlockedTabs.push(tabId);
+        }
+      });
+      // 标记所有任务完成
+      gameState.tutorial.tasks.forEach(task => { task.completed = true; });
+      gameState.tutorial.trackedTaskId = null;
+      updateTabLockStates();
+      saveToStorage(false);
+      render();
+    }
+
+    function processGuidePhase() {
+      clearGuideHighlights();
+      const phase = gameState.tutorial.guidePhase;
+      if (phase === 0 || gameState.tutorial.guideCompleted) return;
+      render();
+      // Delay to let DOM settle after render
+      setTimeout(() => {
+        switch (phase) {
+          case 1: setupPhase1(); break;
+          case 2: setupPhase2(); break;
+          case 3: setupPhase3(); break;
+          case 4: setupPhase4(); break;
+          case 5: setupPhase5(); break;
+          default: completeGuide(); break;
+        }
+      }, 150);
+    }
+
+    function endGuideTurn() {
+      // Simplified turn settlement for guide mode: process orders but don't advance turn/date
+      const reports = [];
+      processOrders(reports);
+      unlockTabsByTutorialProgress();
+      reports.forEach(item => { addNews(item.tone, item.text); });
+      gameState.orders = [];
+      resetActionPoints();
+      saveToStorage(false);
+      // Advance to next phase
+      gameState.tutorial.guidePhase += 1;
+      gameState.tutorial._stepIndex = {};
+      gameState.tutorial.forceAction = null;
+      processGuidePhase();
+    }
+
+    function completeGuide() {
+      clearGuideHighlights();
+      removeGuideOverlay();
+      gameState.tutorial.guideCompleted = true;
+      gameState.tutorial.guidePhase = 0;
+      gameState.tutorial.forceAction = null;
+      gameState.tutorial._stepIndex = {};
+      // 标记所有任务完成
+      gameState.tutorial.tasks.forEach(task => { task.completed = true; });
+      gameState.tutorial.trackedTaskId = null;
+      // 确保所有tab解锁
+      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
+        if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
+          gameState.tutorial.unlockedTabs.push(tabId);
+        }
+      });
+      updateTabLockStates();
+      saveToStorage(false);
+      gameState.activeModal = {
+        type: 'eventDetail',
+        title: '新手引导完成',
+        text: '新手引导已经完成，现在开始你的乱世执棋吧。'
+      };
+      render();
+    }
+
+    function getGuideStepIndex(phase) {
+      if (!gameState.tutorial._stepIndex) gameState.tutorial._stepIndex = {};
+      return gameState.tutorial._stepIndex[phase] || 0;
+    }
+
+    // ===== 各阶段设置函数 =====
+
+    function setupPhase1() {
+      const step = getGuideStepIndex(1);
+      switch (step) {
+        case 0: // 高亮桂阳城
+          setForceAction('clickCity', 'guiyang');
+          highlightGuideSvgElement('[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
+          break;
+        case 1: // 高亮征兵按钮
+          gameState.activePanel = 'city';
+          setForceAction('cityOrder', 'recruit');
+          highlightGuideElement('[data-city-order="recruit"]', '点击征兵扩充兵力。税率/征粮可通过滑块调整', 'left');
+          break;
+        case 2: // 切到军事面板
+          gameState.activePanel = 'military';
+          render();
+          setTimeout(() => {
+            setForceAction('clickTab', 'military');
+            highlightGuideElement('[data-tab="military"]', '切换到军事面板，训练郡兵');
+          }, 100);
+          return; // skip default flow
+        case 3: // 高亮整军按钮
+          setForceAction('militaryOrder', 'drill');
+          highlightGuideElement('[data-military-order="drill"]', '整军提升士气，悬停可查看代价和收益', 'left');
+          break;
+        case 4: // 高亮结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '点击结束回合，结算本回合命令', 'left');
+          break;
+        default:
+          endGuideTurn();
+          return;
+      }
+      saveToStorage(false);
+    }
+
+    function setupPhase2() {
+      const step = getGuideStepIndex(2);
+      switch (step) {
+        case 0: // 军事面板 + 详细部署提示
+          gameState.activePanel = 'military';
+          render();
+          setTimeout(() => {
+            setForceAction('clickTab', 'military');
+            highlightGuideElement('[data-tab="military"]', '保持军事面板，悬停可查看出兵路线、战术方案和作战目标的代价和收益');
+          }, 100);
+          return;
+        case 1: // 刘表tab
+          setForceAction('clickTab', 'liubiao');
+          highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令', 'top');
+          break;
+        case 2: // 刘表庇护HUD
+          setForceAction('clickHudItem', 'protectionHelp');
+          highlightGuideElement('[data-help-key="protectionHelp"]', '点击查看刘表庇护的具体效果', 'left');
+          break;
+        case 3: // 结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '点击结束回合以推进时间', 'left');
+          break;
+        default:
+          endGuideTurn();
+          return;
+      }
+      saveToStorage(false);
+    }
+
+    function setupPhase3() {
+      const step = getGuideStepIndex(3);
+      switch (step) {
+        case 0: // 亲信tab
+          setForceAction('clickTab', 'inner');
+          highlightGuideElement('[data-tab="inner"]', '亲信决定你能否掌控府衙、粮道与情报', 'top');
+          break;
+        case 1: // 整肃亲兵
+          setForceAction('clickInner', 'organize');
+          highlightGuideElement('[data-inner-action="organize"]', '整肃亲兵提升内部忠诚，悬停查看利弊', 'left');
+          break;
+        case 2: // 人物tab
+          setForceAction('clickTab', 'characters');
+          highlightGuideElement('[data-tab="characters"]', '点击查看人物列表', 'top');
+          break;
+        case 3: // 刘表人物卡片
+          setForceAction('clickCharacter', 'liubiao');
+          highlightGuideElement('[data-open-character-profile="liubiao"]', '查看刘表的详细属性与关系', 'left');
+          break;
+        case 4: // 会谈按钮
+          setForceAction('clickConversation', 'talk');
+          highlightGuideElement('[data-conversation="talk"]', '会谈可提升信任和关系', 'left');
+          break;
+        default:
+          endGuideTurn();
+          return;
+      }
+      saveToStorage(false);
+    }
+
+    function setupPhase4() {
+      // 前提：确保玩家控制至少2座城
+      const playerCities = Object.values(gameState.cities).filter(c => c.controller === 'player');
+      if (playerCities.length < 2) {
+        captureRegion('changsha', 'player', null, { render: false, select: false, skipProtectionDecay: true });
+        addNews('good', '长沙已归入你的控制。');
+      }
+      const step = getGuideStepIndex(4);
+      switch (step) {
+        case 0: // 调兵tab
+          setForceAction('clickTab', 'transfer');
+          highlightGuideElement('[data-tab="transfer"]', '拥有两座城后可调配兵力', 'top');
+          break;
+        case 1: // 调兵说明弹窗
+          gameState.activePanel = 'transfer';
+          saveToStorage(false);
+          render();
+          setTimeout(() => {
+            gameState.activeModal = {
+              type: 'eventDetail',
+              title: '调兵说明',
+              text: '当你同时拥有两座以上的城池后，可以将其中一个城的兵力调到另一座城。'
+            };
+            render();
+          }, 200);
+          return; // after closing modal, advance to step 2
+        case 2: // 外交tab
+          setForceAction('clickTab', 'diplomacy');
+          highlightGuideElement('[data-tab="diplomacy"]', '外交用于结盟、借道、示好', 'top');
+          break;
+        case 3: // 纳粮
+          setForceAction('clickDiplomacy', 'demandFood');
+          highlightGuideElement('[data-diplomacy-action="demandFood"]', '纳粮可向周边势力征收粮草', 'left');
+          break;
+        case 4: // 结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '结束回合结算', 'left');
+          break;
+        default:
+          endGuideTurn();
+          return;
+      }
+      saveToStorage(false);
+    }
+
+    function setupPhase5() {
+      const step = getGuideStepIndex(5);
+      switch (step) {
+        case 0: // 高亮豫章城
+          setForceAction('clickCity', 'yuzhang');
+          highlightGuideSvgElement('[data-select-city="yuzhang"]', '豫章是孙氏在荆南的门户', 'top');
+          break;
+        case 1: // 谋略tab
+          setForceAction('clickTab', 'scheme');
+          highlightGuideElement('[data-tab="scheme"]', '谋略可在战前改变局势', 'top');
+          break;
+        case 2: // 刺探豫章
+          setForceAction('clickScheme', 'scout');
+          highlightGuideElement('[data-scheme-action="scout"][data-target="yuzhang"]', '刺探可获取目标城兵力、城防和粮草信息', 'left');
+          break;
+        case 3: // 结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '结束回合结算刺探结果', 'left');
+          break;
+        default:
+          endGuideTurn();
+          return;
+      }
+      saveToStorage(false);
+    }
+
+    // ===== 强制新手引导系统结束 =====
     function updateTabLockStates() {
       document.querySelectorAll('[data-tab]').forEach(btn => {
         const tabId = btn.getAttribute('data-tab');
@@ -8715,6 +11155,8 @@ const MAX_MAP_ZOOM = 4.2;
       results.push({ tab: 'scheme', shouldUnlock: t('organizeRetinue') && network >= 30, isUnlocked: isTabUnlocked('scheme'), network, taskCompleted: t('unlockScheme'), trackedTask: gameState.tutorial.trackedTaskId });
       // diplomacy
       results.push({ tab: 'diplomacy', shouldUnlock: t('organizeRetinue') && prestige >= 10 && protection >= 60, isUnlocked: isTabUnlocked('diplomacy'), prestige, protection, taskCompleted: t('unlockDiplomacy'), trackedTask: gameState.tutorial.trackedTaskId });
+      // appointments
+      results.push({ tab: 'appointments', shouldUnlock: t('visitLiuBiao'), isUnlocked: isTabUnlocked('appointments'), trackedTask: gameState.tutorial.trackedTaskId });
       console.table(results);
       return results;
     }
@@ -8947,6 +11389,7 @@ const MAX_MAP_ZOOM = 4.2;
       const t = (id) => getTutorialTask(id)?.completed || false;
       if (!isTabUnlocked('liubiao')) unlockConds.push({ label: '刘表', condition: '完成一次城政 + 一次军事调整', met: t('firstCityOrder') && t('firstMilitaryOrder') });
       if (!isTabUnlocked('inner')) unlockConds.push({ label: '亲信', condition: '查看刘表密令', met: t('visitLiuBiao') });
+      if (!isTabUnlocked('appointments')) unlockConds.push({ label: '任命', condition: '人物系统解锁后开放', met: t('visitLiuBiao') });
       if (!isTabUnlocked('transfer')) unlockConds.push({ label: '调兵', condition: '整肃亲信班底', met: t('organizeRetinue') });
       if (!isTabUnlocked('scheme')) unlockConds.push({ label: '谋略', condition: '亲信情报网络 ≥ 30（当前：' + gameState.characters.retinue.network + '）', met: gameState.characters.retinue.network >= 30 });
       if (!isTabUnlocked('diplomacy')) unlockConds.push({ label: '外交', condition: '声望 ≥ 10（当前：' + gameState.player.prestige + '）且刘表庇护 ≥ 60（当前：' + Math.round(gameState.player.protection) + '）', met: gameState.player.prestige >= 10 && gameState.player.protection >= 60 });
@@ -9286,6 +11729,17 @@ const MAX_MAP_ZOOM = 4.2;
           }
           return;
         }
+        if (event.target.closest('[data-start-force-guide]')) {
+          gameState.activeModal = null;
+          startForceGuide();
+          return;
+        }
+        if (event.target.closest('[data-skip-force-guide]')) {
+          if (confirm('确定跳过新手引导？所有功能将直接解锁。')) {
+            skipForceGuide();
+          }
+          return;
+        }
         const openTaskDrawer = event.target.closest('[data-open-task-drawer]');
         if (openTaskDrawer) {
           gameState.activeModal = { type: 'taskDrawer' };
@@ -9338,7 +11792,26 @@ const MAX_MAP_ZOOM = 4.2;
         const characterFilter = event.target.closest('[data-character-filter]');
         if (characterFilter) {
           gameState.characterFilter = characterFilter.getAttribute('data-character-filter');
+          gameState.characterProfileId = null;
           renderRightPanel();
+          return;
+        }
+        const closeCharacterProfile = event.target.closest('[data-close-character-profile]');
+        if (closeCharacterProfile) {
+          gameState.characterProfileId = null;
+          renderRightPanel();
+          return;
+        }
+        const openCharacterProfile = event.target.closest('[data-open-character-profile]');
+        if (openCharacterProfile) {
+          const characterId = openCharacterProfile.getAttribute('data-open-character-profile');
+          if (checkForceAction('clickCharacter', characterId)) return;
+          gameState.selectedCharacterId = characterId;
+          gameState.characterProfileId = characterId;
+          renderRightPanel();
+          if (isGuideActive() && isForceAction('clickCharacter', characterId)) {
+            advanceGuideStep();
+          }
           return;
         }
         const characterTarget = event.target.closest('[data-select-character]');
@@ -9349,7 +11822,12 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const conversation = event.target.closest('[data-conversation]');
         if (conversation) {
-          startNpcConversation(conversation.getAttribute('data-character'), conversation.getAttribute('data-conversation'));
+          const convType = conversation.getAttribute('data-conversation');
+          if (checkForceAction('clickConversation', convType)) return;
+          startNpcConversation(conversation.getAttribute('data-character'), convType);
+          if (isGuideActive() && isForceAction('clickConversation', convType)) {
+            advanceGuideStep();
+          }
           return;
         }
         const relief = event.target.closest('[data-request-relief]');
@@ -9366,10 +11844,32 @@ const MAX_MAP_ZOOM = 4.2;
           handleCalibrationMapClick(event);
           return;
         }
+        // HUD item click for guide (clickHudItem forceAction)
+        const hudHelpItem = event.target.closest('[data-help-key]');
+        if (hudHelpItem && isGuideActive()) {
+          const helpKey = hudHelpItem.getAttribute('data-help-key');
+          if (checkForceAction('clickHudItem', helpKey)) return;
+          if (isForceAction('clickHudItem', helpKey)) {
+            // Show the help tooltip immediately
+            const val = HELP_TEXT[helpKey];
+            const text = typeof val === 'function' ? val() : (val || '');
+            if (text) {
+              const rect = hudHelpItem.getBoundingClientRect();
+              showTooltip(text, rect.left, rect.bottom + 6);
+            }
+            advanceGuideStep();
+            return;
+          }
+        }
         const cityTarget = event.target.closest('[data-select-city]');
         if (cityTarget) {
           const id = cityTarget.getAttribute('data-select-city');
+          if (checkForceAction('clickCity', id)) return;
           selectCity(id, 'city');
+          if (isGuideActive() && isForceAction('clickCity', id)) {
+            gameState.activePanel = 'city';
+            advanceGuideStep();
+          }
           return;
         }
         const top = event.target.closest('[data-top]');
@@ -9391,7 +11891,8 @@ const MAX_MAP_ZOOM = 4.2;
             }
           }
           if (action === 'load') {
-            await resumeSavedGame(true);
+            const loaded = await resumeSavedGame(true);
+            if (loaded && isGuideActive()) processGuidePhase();
           }
           if (action === 'reset') resetGame();
           return;
@@ -9404,12 +11905,21 @@ const MAX_MAP_ZOOM = 4.2;
         const tab = event.target.closest('[data-tab]');
         if (tab) {
           const tabId = tab.getAttribute('data-tab');
+          if (checkForceAction('clickTab', tabId)) return;
           tryOpenTab(tabId);
+          if (isGuideActive() && isForceAction('clickTab', tabId)) {
+            advanceGuideStep();
+          }
           return;
         }
         const cityOrder = event.target.closest('[data-city-order]');
         if (cityOrder) {
-          queueCityOrder(cityOrder.getAttribute('data-city'), cityOrder.getAttribute('data-city-order'));
+          const orderType = cityOrder.getAttribute('data-city-order');
+          if (checkForceAction('cityOrder', orderType)) return;
+          queueCityOrder(cityOrder.getAttribute('data-city'), orderType);
+          if (isGuideActive() && isForceAction('cityOrder', orderType)) {
+            advanceGuideStep();
+          }
           return;
         }
         const policy = event.target.closest('[data-policy]');
@@ -9432,7 +11942,12 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const militaryOrder = event.target.closest('[data-military-order]');
         if (militaryOrder) {
-          queueMilitaryOrder(militaryOrder.getAttribute('data-military-city'), militaryOrder.getAttribute('data-military-order'));
+          const orderType = militaryOrder.getAttribute('data-military-order');
+          if (checkForceAction('militaryOrder', orderType)) return;
+          queueMilitaryOrder(militaryOrder.getAttribute('data-military-city'), orderType);
+          if (isGuideActive() && isForceAction('militaryOrder', orderType)) {
+            advanceGuideStep();
+          }
           return;
         }
         const setSourceCity = event.target.closest('[data-set-source-city]');
@@ -9460,17 +11975,69 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const scheme = event.target.closest('[data-scheme-action]');
         if (scheme) {
-          queueScheme(scheme.getAttribute('data-scheme-action'), scheme.getAttribute('data-target'));
+          const actionType = scheme.getAttribute('data-scheme-action');
+          if (checkForceAction('clickScheme', actionType)) return;
+          queueScheme(actionType, scheme.getAttribute('data-target'));
+          if (isGuideActive() && isForceAction('clickScheme', actionType)) {
+            advanceGuideStep();
+          }
           return;
         }
         const dip = event.target.closest('[data-diplomacy-action]');
         if (dip) {
-          queueDiplomacy(dip.getAttribute('data-diplomacy-action'), dip.getAttribute('data-target'));
+          const actionType = dip.getAttribute('data-diplomacy-action');
+          if (checkForceAction('clickDiplomacy', actionType)) return;
+          queueDiplomacy(actionType, dip.getAttribute('data-target'));
+          if (isGuideActive() && isForceAction('clickDiplomacy', actionType)) {
+            advanceGuideStep();
+          }
           return;
         }
         const inner = event.target.closest('[data-inner-action]');
         if (inner) {
-          queueInner(inner.getAttribute('data-inner-action'));
+          const actionType = inner.getAttribute('data-inner-action');
+          if (checkForceAction('clickInner', actionType)) return;
+          queueInner(actionType);
+          if (isGuideActive() && isForceAction('clickInner', actionType)) {
+            advanceGuideStep();
+          }
+          return;
+        }
+        const openPickerBtn = event.target.closest('[data-open-appointment-picker]');
+        if (openPickerBtn) {
+          openAppointmentPicker({
+            cityId: openPickerBtn.getAttribute('data-appointment-city'),
+            role: openPickerBtn.getAttribute('data-open-appointment-picker')
+          });
+          return;
+        }
+        const openCommanderPickerBtn = event.target.closest('[data-open-campaign-commander-manager]');
+        if (openCommanderPickerBtn) {
+          openAppointmentPicker({
+            campaignId: openCommanderPickerBtn.getAttribute('data-open-campaign-commander-manager'),
+            role: 'campaignCommander'
+          });
+          return;
+        }
+        const pickerCityBtn = event.target.closest('[data-appoint-city-from-picker]');
+        if (pickerCityBtn) {
+          const cityId = pickerCityBtn.getAttribute('data-appoint-city-from-picker');
+          const role = pickerCityBtn.getAttribute('data-appointment-role');
+          const characterId = pickerCityBtn.getAttribute('data-character-id');
+          appointCityOfficial(cityId, role, characterId);
+          gameState.activeModal = null;
+          render();
+          toast('任命完成');
+          return;
+        }
+        const pickerCommanderBtn = event.target.closest('[data-appoint-campaign-commander-from-picker]');
+        if (pickerCommanderBtn) {
+          const campaignId = pickerCommanderBtn.getAttribute('data-appoint-campaign-commander-from-picker');
+          const characterId = pickerCommanderBtn.getAttribute('data-character-id');
+          appointCampaignCommander(campaignId, characterId);
+          gameState.activeModal = null;
+          render();
+          toast('主将任命完成');
           return;
         }
         const yuan = event.target.closest('[data-yuan-action]');
@@ -9489,7 +12056,11 @@ const MAX_MAP_ZOOM = 4.2;
           return;
         }
         if (event.target.closest('[data-end-turn]')) {
+          if (checkForceAction('endTurn', 'endTurn')) return;
           endTurn();
+          if (isGuideActive() && isForceAction('endTurn', 'endTurn')) {
+            // endGuideTurn is called inside endTurn, which advances phase
+          }
           return;
         }
         if (event.target.closest('[data-undo-order]')) {
@@ -9512,6 +12083,21 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const mapClick = event.target.closest('#mapStage');
         if (mapClick) {
+          // During force guide, only allow clicking the targeted city
+          if (isGuideActive() && gameState.tutorial.forceAction?.type === 'clickCity') {
+            const point = svgPointToWorld(clientToSvgPoint(event.clientX, event.clientY));
+            const region = regionAtPoint(point);
+            const cityId = region?.id;
+            if (cityId) {
+              if (checkForceAction('clickCity', cityId)) return;
+              selectCity(cityId, 'city');
+              if (isForceAction('clickCity', cityId)) {
+                gameState.activePanel = 'city';
+                advanceGuideStep();
+              }
+            }
+            return;
+          }
           selectNearestCityFromMapEvent(event);
         }
       });
@@ -9720,6 +12306,17 @@ const MAX_MAP_ZOOM = 4.2;
     else resetActionPoints();
     render();
     validateCityData();
+    // Restore guide highlights if guide was active
+    if (isGuideActive()) {
+      processGuidePhase();
+    }
+    if (gameState.turn > 1) {
+      toast('已自动读取存档，欢迎回来。当前第' + gameState.turn + '回合');
+    }
+    if (gameState.storyFlags.introSeen) {
+      startAutosaveTimer();
+      updateAutosaveDisplay();
+    }
     }
 
     initGame();

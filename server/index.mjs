@@ -563,6 +563,7 @@ async function generateContentWithDeepSeek(userId, context) {
   const ctx = context || {};
   const type = safeString(ctx.type, 40) || 'battleReportDetail';
   const prompt = buildContentPrompt(type, ctx);
+
   const payload = {
     model: config.deepseekModel,
     messages: [
@@ -580,6 +581,7 @@ async function generateContentWithDeepSeek(userId, context) {
     max_tokens: 600,
     stream: false
   };
+
   const result = await callDeepSeek(userId, 'content', payload);
   const text = result.choices?.[0]?.message?.content || '';
   return text.trim();
@@ -624,6 +626,7 @@ function buildContentPrompt(type, ctx) {
     ].join('\n');
   }
 
+  // battleReportDetail (default)
   return [
     '请为一条三国策略游戏的战报事件生成详细叙述。',
     '当前日期：' + date,
