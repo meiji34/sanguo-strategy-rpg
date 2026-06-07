@@ -154,6 +154,24 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return character && !isInternalPlayerCharacterId(character.id);
     }
 
+    function isFactionLordCharacter(character) {
+      if (!character) return false;
+      const lordIds = new Set([
+        'caoCao',
+        'sunQuan',
+        'liuBei',
+        'yuanShao',
+        'liuZhang',
+        'zhangLu',
+        'maTeng',
+        'hanSui',
+        'gongsunZan',
+        'yuanShu'
+      ]);
+      const roleText = String(character.role || character.title || '');
+      return lordIds.has(character.id) || /诸侯|之主|军阀/.test(roleText);
+    }
+
     function normalizeAppointments(state) {
       state.appointments ||= {};
       state.appointments.cityOfficials ||= {};
@@ -537,6 +555,50 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
 
       return null;
+    }
+
+    function getUnassignedRecruitedCharacters(filter = {}) {
+      normalizeAppointments(gameState);
+
+      return Object.values(gameState.characterRoster || {})
+        .filter(c =>
+          c &&
+          c.status === 'recruited' &&
+          isExternalCharacter(c) &&
+          !(typeof isFactionLordCharacter === 'function' && isFactionLordCharacter(c)) &&
+          !findCharacterAppointment(c.id)
+        )
+        .filter(c => {
+          if (filter.role === 'administratorId') return canManageCity(c);
+          if (filter.role === 'policyOfficerId') return canManageCity(c);
+          if (filter.role === 'militaryOfficerId') return canLeadArmy(c);
+          if (filter.role === 'campaignCommander') return canLeadArmy(c);
+          return true;
+        });
+    }
+
+    function appointmentRoleLabel(role) {
+      if (role === 'administratorId') return '主政官';
+      if (role === 'militaryOfficerId') return '军事官';
+      if (role === 'policyOfficerId') return '政策官';
+      if (role === 'campaignCommander') return '战役主将';
+      return '官员';
+    }
+
+    function openAppointmentPicker({ cityId, role, campaignId }) {
+      const candidates = getUnassignedRecruitedCharacters({
+        role: role || (campaignId ? 'campaignCommander' : '')
+      });
+
+      gameState.activeModal = {
+        type: 'appointmentPicker',
+        cityId,
+        role,
+        campaignId,
+        candidates: candidates.map(c => c.id)
+      };
+
+      renderModal();
     }
 
     function appointmentCityControllerFromState(state, cityId) {
@@ -6065,6 +6127,76 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         root.innerHTML = renderTaskDrawer();
         return;
       }
+      if (modal.type === 'appointmentPicker') {
+        root.innerHTML = renderAppointmentPickerModal(modal);
+        return;
+      }
+    }
+
+    function renderAppointmentPickerModal(modal) {
+      const role = modal.role;
+      const city = gameState.cities?.[modal.cityId];
+      const campaign = gameState.campaigns?.find(c => c.id === modal.campaignId);
+
+      const title = campaign
+        ? '任命战役主将'
+        : '任命' + appointmentRoleLabel(role);
+
+      const candidates = (modal.candidates || [])
+        .map(id => gameState.characterRoster?.[id])
+        .filter(Boolean);
+
+      return `
+        <div class="game-modal">
+          <div class="modal-head">
+            <h2>${escapeHtml(title)}</h2>
+            <button class="ghost-btn" data-close-modal="1">关闭</button>
+          </div>
+
+          <div class="card">
+            <p class="muted">
+              ${campaign
+                ? '请选择一名已招募且未任命的武将或谋士作为战役主将。'
+                : '请选择一名已招募且未任命的人物担任 ' + escapeHtml(city?.name || '') + ' 的 ' + escapeHtml(appointmentRoleLabel(role)) + '。'}
+            </p>
+
+            ${
+              candidates.length
+                ? candidates.map(c => renderAppointmentCandidate(c, modal)).join('')
+                : '<p class="muted">暂无符合条件且未任命的人物。</p>'
+            }
+          </div>
+
+          <div class="modal-actions">
+            <button data-close-modal="1">取消</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAppointmentCandidate(character, modal) {
+      const stats = character.stats || {};
+      const mainStats = [
+        '统率 ' + Math.round(stats.command || 0),
+        '谋略 ' + Math.round(stats.strategy || 0),
+        '政务 ' + Math.round(stats.politics || 0),
+        '魅力 ' + Math.round(stats.charm || 0)
+      ].join('｜');
+
+      const actionAttrs = modal.campaignId
+        ? `data-appoint-campaign-commander-from-picker="${modal.campaignId}" data-character-id="${character.id}"`
+        : `data-appoint-city-from-picker="${modal.cityId}" data-appointment-role="${modal.role}" data-character-id="${character.id}"`;
+
+      return `
+        <div class="appointment-candidate">
+          <div>
+            <strong>${escapeHtml(character.name)}</strong>
+            <span class="muted">${escapeHtml(character.type || '')}｜${escapeHtml(character.role || '')}</span>
+            <p class="muted">${escapeHtml(mainStats)}</p>
+          </div>
+          <button ${actionAttrs}>任命</button>
+        </div>
+      `;
     }
 
     function renderAiContentModal(modal) {
@@ -7072,6 +7204,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         panel.innerHTML = renderCharacterPanel();
         return;
       }
+      if (gameState.activePanel === 'appointments') {
+        rightTitle.textContent = '任命府';
+        rightTag.textContent = controlledCities().length + ' 城｜' + getUnassignedRecruitedCharacters().length + ' 人可任';
+        panel.innerHTML = renderAppointmentPanel();
+        return;
+      }
       if (gameState.activePanel === 'military') {
         rightTitle.textContent = '军府';
         rightTag.textContent = activeCampaignSlotCount() + ' / ' + getCampaignSlotLimit() + ' 战役槽';
@@ -7557,7 +7695,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             ${cityNeighborIds(city.id).map(id => `<button class="ghost-btn" data-select-city="${id}">${regionName(id)}</button>`).join('')}
           </div>
         </div>
-        ${own ? renderCityAppointmentCard(city) : ''}
+        ${own ? renderCityAppointmentSummary(city) : ''}
         ${own ? renderOwnCityActions(city) : renderOtherCityActions(city, canAttack)}
       `;
     }
@@ -7609,41 +7747,137 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       renderStrategyDock();
     }
 
-    function renderCityAppointmentCard(city) {
+    function renderAppointmentPanel() {
+      normalizeAppointments(gameState);
+      return [
+        renderAppointmentOverviewCard(),
+        renderCityAppointmentManagerList(),
+        renderCampaignCommanderAppointmentPanel(),
+        renderUnassignedCharactersCard()
+      ].join('');
+    }
+
+    function renderAppointmentOverviewCard() {
+      const cities = controlledCities();
+      const recruited = Object.values(gameState.characterRoster || {}).filter(c => c && c.status === 'recruited' && isExternalCharacter(c));
+      const administrators = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'administratorId').length, 0);
+      const military = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'militaryOfficerId').length, 0);
+      const policies = cities.reduce((sum, city) => sum + getCityOfficials(city.id, 'policyOfficerId').length, 0);
+      const commanders = (gameState.campaigns || []).filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c) && getCampaignCommander(c)).length;
+
+      return `<div class="card">
+        <h2>任命总览</h2>
+        <div class="kv-grid">
+          <div class="kv"><span>控制城池</span><strong>${cities.length}</strong></div>
+          <div class="kv"><span>已招募人物</span><strong>${recruited.length}</strong></div>
+          <div class="kv"><span>未任命人物</span><strong>${getUnassignedRecruitedCharacters().length}</strong></div>
+          <div class="kv"><span>已任主政官</span><strong>${administrators}</strong></div>
+          <div class="kv"><span>已任军事官</span><strong>${military}</strong></div>
+          <div class="kv"><span>已任政策官</span><strong>${policies}</strong></div>
+          <div class="kv"><span>已任战役主将</span><strong>${commanders}</strong></div>
+        </div>
+      </div>`;
+    }
+
+    function renderCityAppointmentSummary(city) {
+      if (!isControlledBy(city.id, 'player')) return '';
+
+      const admins = getCityOfficials(city.id, 'administratorId');
+      const military = getCityOfficials(city.id, 'militaryOfficerId');
+      const policies = getCityOfficials(city.id, 'policyOfficerId');
+
+      return `
+        <div class="card">
+          <h3>城政任命</h3>
+
+          <div class="kv appointment-row">
+            <span>主政官</span>
+            <strong>${admins.map(c => escapeHtml(c.name)).join('、') || '未任命'} (${admins.length}/${getCityAdministratorLimit(city)})</strong>
+            <button class="mini-btn" data-open-appointment-picker="administratorId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="kv appointment-row">
+            <span>军事官</span>
+            <strong>${military.map(c => escapeHtml(c.name)).join('、') || '未任命'} (${military.length}/${getCityMilitaryOfficerLimit(city)})</strong>
+            <button class="mini-btn" data-open-appointment-picker="militaryOfficerId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="kv appointment-row">
+            <span>政策官</span>
+            <strong>${policies[0] ? escapeHtml(policies[0].name) : '未任命'}</strong>
+            <button class="mini-btn" data-open-appointment-picker="policyOfficerId" data-appointment-city="${city.id}">任命</button>
+          </div>
+
+          <div class="button-grid">
+            <button data-tab="appointments">前往任命府</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCityAppointmentManagerList() {
+      const cities = controlledCities();
+
+      return `
+        <div class="card">
+          <h3>城市任命</h3>
+          ${cities.length ? cities.map(city => renderCityAppointmentManager(city)).join('') : '<p class="muted">当前没有玩家控制城池。</p>'}
+        </div>
+      `;
+    }
+
+    function renderCityAppointmentManager(city) {
       if (cityController(city.id) !== 'player') return '';
       normalizeAppointments(gameState);
       const officials = gameState.appointments.cityOfficials[city.id] || {};
       const adminIds = Array.isArray(officials.administratorIds) ? officials.administratorIds : (officials.administratorId ? [officials.administratorId] : []);
       const militaryIds = Array.isArray(officials.militaryOfficerIds) ? officials.militaryOfficerIds : (officials.militaryOfficerId ? [officials.militaryOfficerId] : []);
       const policyId = officials.policyOfficerId || null;
+      const officialName = id => getAppointedCharacter(id) ? escapeHtml(getAppointedCharacter(id).name) : '<span class="muted">未任命</span>';
+      const renderOfficialSlots = (title, ids, limit, role) => {
+        const rows = [];
+        for (let i = 0; i < limit; i++) {
+          const id = ids[i] || null;
+          const removeBtn = id ? ` <button class="ghost-btn mini-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="${role}" data-remove-city-official-character="${id}">撤任</button>` : '';
+          rows.push(`<div class="appointment-row"><span>${title}${i + 1}/${limit}</span><strong>${id ? officialName(id) : '<span class="muted">未任命</span>'}</strong>${removeBtn}</div>`);
+        }
+        return rows.join('');
+      };
+      const policyRemoveBtn = policyId ? ` <button class="ghost-btn mini-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="policyOfficerId" data-remove-city-official-character="${policyId}">撤任</button>` : '';
+
+      return `
+        <div class="appointment-city-block">
+          <h4>${escapeHtml(city.name)}</h4>
+          <div class="kv"><span>主政官</span><strong>${adminIds.length}/${getCityAdministratorLimit(city)}</strong></div>
+          <div class="kv"><span>军事官</span><strong>${militaryIds.length}/${getCityMilitaryOfficerLimit(city)}</strong></div>
+          <div class="kv"><span>政策官</span><strong>${policyId ? officialName(policyId) : '未任命'}</strong></div>
+          ${renderOfficialSlots('主政官', adminIds, getCityAdministratorLimit(city), 'administratorId')}
+          ${renderOfficialSlots('军事官', militaryIds, getCityMilitaryOfficerLimit(city), 'militaryOfficerId')}
+          <div class="appointment-row"><span>政策官</span><strong>${policyId ? officialName(policyId) : '<span class="muted">未任命</span>'}</strong>${policyRemoveBtn}</div>
+          <div class="button-grid">
+            <button data-open-appointment-picker="administratorId" data-appointment-city="${city.id}">任命主政官</button>
+            <button data-open-appointment-picker="militaryOfficerId" data-appointment-city="${city.id}">任命军事官</button>
+            <button data-open-appointment-picker="policyOfficerId" data-appointment-city="${city.id}">任命政策官</button>
+          </div>
+          ${renderCityAutoTaskControls(city)}
+        </div>
+      `;
+    }
+
+    function renderCityAutoTaskControls(city) {
+      normalizeAppointments(gameState);
       const autoTask = gameState.appointments.autoTasks?.[city.id] || { enabled: false, militaryMode: 'none', civilMode: 'none', civilModes: [], policyMode: 'none', militaryPrepMode: 'none', militaryPrepModes: [] };
       const autoEnabled = autoTask.enabled === true;
       const selectOpts = (current, options) => options.map(o => `<option value="${o[0]}" ${current === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
       const checked = (list, mode) => Array.isArray(list) && list.includes(mode) ? 'checked' : '';
       const disabled = !autoEnabled ? 'disabled' : '';
-      const officialName = id => getAppointedCharacter(id) ? getAppointedCharacter(id).name : '<span class="muted">未任命</span>';
-      const renderOfficialSlots = (title, ids, limit, role) => {
-        const rows = [];
-        for (let i = 0; i < limit; i++) {
-          const id = ids[i] || null;
-          const removeBtn = id ? ` <button class="ghost-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="${role}" data-remove-city-official-character="${id}">撤任</button>` : '';
-          rows.push(`<div><strong>${title}${i + 1} / ${limit}：</strong>${id ? officialName(id) : '<span class="muted">未任命</span>'}${removeBtn}</div>`);
-        }
-        return rows.join('');
-      };
-      const policyRemoveBtn = policyId ? ` <button class="ghost-btn" data-remove-city-official="1" data-remove-city-official-city="${city.id}" data-remove-city-official-slot="policyOfficerId" data-remove-city-official-character="${policyId}">撤任</button>` : '';
-
       const militaryOpts = [['none','不执行'],['recruit','自动征兵'],['train','自动练兵']];
       const civilOpts = [['relief','自动赈济'],['farming','自动屯田'],['defense','自动修城防'],['order','自动维护治安']];
       const policyOpts = [['none','不执行'],['taxLight','税率偏低'],['balanced','税粮平衡'],['grainHeavy','征粮偏高'],['publicFirst','民心优先']];
       const prepOpts = [['drill','自动整军'],['defense','自动加固防线'],['reserve','自动部署预备队']];
 
-      return `<div class="card">
-        <h3>城政任命</h3>
-        ${renderOfficialSlots('主政官', adminIds, getCityAdministratorLimit(city), 'administratorId')}
-        ${renderOfficialSlots('军事官', militaryIds, getCityMilitaryOfficerLimit(city), 'militaryOfficerId')}
-        <div><strong>政策官：</strong>${policyId ? officialName(policyId) : '<span class="muted">未任命</span>'}${policyRemoveBtn}</div>
-        <hr style="margin:8px 0" />
+      return `<div class="appointment-auto-controls">
+        <h4>自动治理</h4>
         <div style="margin-bottom:6px">
           <label style="cursor:pointer">
             <input type="checkbox" data-auto-task-field="enabled" data-auto-task-city="${city.id}" ${autoEnabled ? 'checked' : ''} />
@@ -7671,6 +7905,76 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           ${prepOpts.map(o => `<label style="display:inline-block;margin-right:8px;cursor:pointer"><input type="checkbox" data-auto-task-city="${city.id}" data-toggle-auto-mode="militaryPrepModes" data-auto-mode="${o[0]}" ${checked(autoTask.militaryPrepModes, o[0])} ${disabled} /> ${o[1]}</label>`).join('')}
         </div>
       </div>`;
+    }
+
+    function renderCampaignCommanderAppointmentPanel() {
+      const campaigns = (gameState.campaigns || [])
+        .filter(c =>
+          c &&
+          c.faction === 'player' &&
+          c.type === 'attack' &&
+          isActiveCampaign(c)
+        );
+
+      if (!campaigns.length) {
+        return `
+          <div class="card">
+            <h3>战役主将</h3>
+            <p class="muted">当前没有进行中的进攻战役。</p>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="card">
+          <h3>战役主将</h3>
+          ${campaigns.map(c => {
+            const commander = getCampaignCommander(c);
+            return `
+              <div class="appointment-row">
+                <div>
+                  <strong>${escapeHtml(regionName(c.source))} → ${escapeHtml(regionName(c.target))}</strong>
+                  <p class="muted">${escapeHtml(c.phase || c.status)}｜${commander ? '主将：' + escapeHtml(commander.name) : '未任命主将'}</p>
+                </div>
+                <div class="button-grid">
+                  <button data-open-campaign-commander-manager="${c.id}">${commander ? '更换主将' : '任命主将'}</button>
+                  ${commander ? `<button data-remove-campaign-commander="${c.id}">撤任</button>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderUnassignedCharactersCard() {
+      const candidates = getUnassignedRecruitedCharacters();
+      const roleTags = c => [
+        canManageCity(c) ? '<span class="tag">主政</span>' : '',
+        canLeadArmy(c) ? '<span class="tag">军事</span>' : '',
+        canManageCity(c) ? '<span class="tag">政策</span>' : '',
+        canLeadArmy(c) ? '<span class="tag">主将</span>' : ''
+      ].filter(Boolean).join('');
+
+      return `<div class="card">
+        <h3>未任命人物</h3>
+        ${candidates.length ? candidates.map(c => {
+          const stats = c.stats || {};
+          const mainStats = `统率 ${Math.round(stats.command || 0)}｜谋略 ${Math.round(stats.strategy || 0)}｜政务 ${Math.round(stats.politics || 0)}｜魅力 ${Math.round(stats.charm || 0)}`;
+          return `<div class="appointment-candidate">
+            <div>
+              <strong>${escapeHtml(c.name)}</strong>
+              <span class="muted">${escapeHtml(c.type || '')}｜${escapeHtml(c.role || '')}</span>
+              <p class="muted">${escapeHtml(mainStats)}</p>
+            </div>
+            <div class="tag-row">${roleTags(c)}</div>
+          </div>`;
+        }).join('') : '<p class="muted">暂无未任命人物。</p>'}
+      </div>`;
+    }
+
+    function renderCityAppointmentCard(city) {
+      return renderCityAppointmentManager(city);
     }
 
     function renderOwnCityActions(city) {
@@ -10929,6 +11233,35 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
     window.validateAppointmentSystem = validateAppointmentSystem;
 
+    function validateAppointmentTabSystem() {
+      return {
+        activePanel: gameState.activePanel,
+        hasAppointmentsTab: !!document.querySelector('[data-tab="appointments"]'),
+        controlledCities: controlledCities().map(c => c.id),
+        unassignedCharacters: getUnassignedRecruitedCharacters().map(c => ({
+          id: c.id,
+          name: c.name,
+          type: c.type
+        })),
+        cityAppointments: controlledCities().map(city => ({
+          cityId: city.id,
+          cityName: city.name,
+          administrators: getCityOfficials(city.id, 'administratorId').map(c => c.name),
+          militaryOfficers: getCityOfficials(city.id, 'militaryOfficerId').map(c => c.name),
+          policyOfficer: getCityOfficials(city.id, 'policyOfficerId')[0]?.name || null
+        })),
+        campaignCommanders: (gameState.campaigns || [])
+          .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
+          .map(c => ({
+            campaignId: c.id,
+            source: c.source,
+            target: c.target,
+            commander: getCampaignCommander(c)?.name || null
+          }))
+      };
+    }
+    window.validateAppointmentTabSystem = validateAppointmentTabSystem;
+
     function validateCommanderBattleModifiers() {
       return (gameState.campaigns || [])
         .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
@@ -11258,6 +11591,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         if (!Array.isArray(loaded.tutorial.guideQueue)) loaded.tutorial.guideQueue = [];
         if (loaded.tutorial.skipped === undefined) loaded.tutorial.skipped = false;
       }
+      if (loaded.tutorial.unlockedTabs.includes('characters') && !loaded.tutorial.unlockedTabs.includes('appointments')) {
+        loaded.tutorial.unlockedTabs.push('appointments');
+      }
       let normalized = Object.assign(fresh, loaded, {
         factions: FACTIONS,
         cities: Object.assign(structuredClone(CITY_BLUEPRINTS), loaded.cities || {}),
@@ -11472,7 +11808,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         diplomacy: { name: '外交', desc: '外交用于结盟、借道、示好和求援。', condition: '你需要声望 ≥ 10（当前 ' + prestige + '/10）且刘表庇护 ≥ 60（当前 ' + protection + '/60）。' },
         inner: { name: '亲信', desc: '亲信用于整肃亲兵、安插府衙亲信、掌握粮道、联络郡兵、扩展情报网络。', condition: '你需要先查看刘表密令（打开刘表 tab）。' },
         liubiao: { name: '刘表', desc: '刘表是你的名义主君与保护伞。', condition: '你需要先完成一次城政和一次军事调整。' },
-        characters: { name: '人物', desc: '查看荆州及周边重要人物关系。', condition: '跟随亲信 tab 一起解锁。需要先查看刘表密令。' }
+        characters: { name: '人物', desc: '查看荆州及周边重要人物关系。', condition: '跟随亲信 tab 一起解锁。需要先查看刘表密令。' },
+        appointments: { name: '任命', desc: '集中管理城市官员、自动治理、军事整备和战役主将。', condition: '跟随人物 tab 一起解锁。需要先查看刘表密令。' }
       };
       return hints[tabId] || { name: tabId, desc: '暂未开放的功能。', condition: '请继续推进主线任务。' };
     }
@@ -11484,7 +11821,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         transfer: 'unlockTransfer',
         scheme: 'unlockScheme',
         diplomacy: 'unlockDiplomacy',
-        characters: 'visitLiuBiao'
+        characters: 'visitLiuBiao',
+        appointments: 'visitLiuBiao'
       };
       return map[tabId] || null;
     }
@@ -11573,6 +11911,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (t('visitLiuBiao')) {
         unlockTabByTutorial('inner');
         unlockTabByTutorial('characters');
+        unlockTabByTutorial('appointments');
       }
       // 调兵解锁：整肃亲信
       if (t('organizeRetinue')) {
@@ -11722,7 +12061,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       gameState.tutorial.guideQueue = [];
       gameState.activeModal = null;
       // 解锁所有 tab
-      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters'].forEach(tabId => {
+      ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
         if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
           gameState.tutorial.unlockedTabs.push(tabId);
         }
@@ -11756,6 +12095,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       results.push({ tab: 'scheme', shouldUnlock: t('organizeRetinue') && network >= 30, isUnlocked: isTabUnlocked('scheme'), network, taskCompleted: t('unlockScheme'), trackedTask: gameState.tutorial.trackedTaskId });
       // diplomacy
       results.push({ tab: 'diplomacy', shouldUnlock: t('organizeRetinue') && prestige >= 10 && protection >= 60, isUnlocked: isTabUnlocked('diplomacy'), prestige, protection, taskCompleted: t('unlockDiplomacy'), trackedTask: gameState.tutorial.trackedTaskId });
+      // appointments
+      results.push({ tab: 'appointments', shouldUnlock: t('visitLiuBiao'), isUnlocked: isTabUnlocked('appointments'), trackedTask: gameState.tutorial.trackedTaskId });
       console.table(results);
       return results;
     }
@@ -11988,6 +12329,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const t = (id) => getTutorialTask(id)?.completed || false;
       if (!isTabUnlocked('liubiao')) unlockConds.push({ label: '刘表', condition: '完成一次城政 + 一次军事调整', met: t('firstCityOrder') && t('firstMilitaryOrder') });
       if (!isTabUnlocked('inner')) unlockConds.push({ label: '亲信', condition: '查看刘表密令', met: t('visitLiuBiao') });
+      if (!isTabUnlocked('appointments')) unlockConds.push({ label: '任命', condition: '人物系统解锁后开放', met: t('visitLiuBiao') });
       if (!isTabUnlocked('transfer')) unlockConds.push({ label: '调兵', condition: '整肃亲信班底', met: t('organizeRetinue') });
       if (!isTabUnlocked('scheme')) unlockConds.push({ label: '谋略', condition: '亲信情报网络 ≥ 30（当前：' + gameState.characters.retinue.network + '）', met: gameState.characters.retinue.network >= 30 });
       if (!isTabUnlocked('diplomacy')) unlockConds.push({ label: '外交', condition: '声望 ≥ 10（当前：' + gameState.player.prestige + '）且刘表庇护 ≥ 60（当前：' + Math.round(gameState.player.protection) + '）', met: gameState.player.prestige >= 10 && gameState.player.protection >= 60 });
@@ -12546,6 +12888,43 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const inner = event.target.closest('[data-inner-action]');
         if (inner) {
           queueInner(inner.getAttribute('data-inner-action'));
+          return;
+        }
+        const openPickerBtn = event.target.closest('[data-open-appointment-picker]');
+        if (openPickerBtn) {
+          openAppointmentPicker({
+            cityId: openPickerBtn.getAttribute('data-appointment-city'),
+            role: openPickerBtn.getAttribute('data-open-appointment-picker')
+          });
+          return;
+        }
+        const openCommanderPickerBtn = event.target.closest('[data-open-campaign-commander-manager]');
+        if (openCommanderPickerBtn) {
+          openAppointmentPicker({
+            campaignId: openCommanderPickerBtn.getAttribute('data-open-campaign-commander-manager'),
+            role: 'campaignCommander'
+          });
+          return;
+        }
+        const pickerCityBtn = event.target.closest('[data-appoint-city-from-picker]');
+        if (pickerCityBtn) {
+          const cityId = pickerCityBtn.getAttribute('data-appoint-city-from-picker');
+          const role = pickerCityBtn.getAttribute('data-appointment-role');
+          const characterId = pickerCityBtn.getAttribute('data-character-id');
+          appointCityOfficial(cityId, role, characterId);
+          gameState.activeModal = null;
+          render();
+          toast('任命完成');
+          return;
+        }
+        const pickerCommanderBtn = event.target.closest('[data-appoint-campaign-commander-from-picker]');
+        if (pickerCommanderBtn) {
+          const campaignId = pickerCommanderBtn.getAttribute('data-appoint-campaign-commander-from-picker');
+          const characterId = pickerCommanderBtn.getAttribute('data-character-id');
+          appointCampaignCommander(campaignId, characterId);
+          gameState.activeModal = null;
+          render();
+          toast('主将任命完成');
           return;
         }
         const appointCityBtn = event.target.closest('[data-appoint-city-official]');
