@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="frame-ancestors 'none';">
+  <title>乱世执棋 - 三国战略 RPG 原型</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <img id="mapPreload" alt="三国战略地图">
+
+  <section class="character-create" id="characterCreate">
+    <div class="creation-panel">
+      <div class="intro-kicker">公元190年｜荆南初任</div>
+      <h1>赴桂阳</h1>
+      <p>董卓乱政，群雄并起。刘表镇守荆州，密召一名亲信前往桂阳。先定下你的姓名与初任身份。</p>
+      <div class="creation-field">
+        <strong>请输入姓名</strong>
+        <div class="creation-name-row">
+          <input id="playerNameInput" autocomplete="off" placeholder="留空将自动生成中文名">
+          <button data-random-name="1">随机姓名</button>
+        </div>
+        <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可自动生成。</div>
+      </div>
+      <div class="creation-field">
+        <strong>出生地</strong>
+        <div class="tag-row"><span class="tag">桂阳｜固定</span></div>
+      </div>
+      <div class="creation-field">
+        <strong>初始身份</strong>
+        <div class="identity-grid">
+          <button class="identity-option selected" data-identity="commandant"><strong>桂阳都尉</strong><span>偏军事。郡兵与军令较强，地方士族起初更谨慎。</span></button>
+          <button class="identity-option" data-identity="granary"><strong>桂阳督粮官</strong><span>偏经济后勤。粮草与屯田起步更稳，正面军力略弱。</span></button>
+          <button class="identity-option" data-identity="magistrate"><strong>桂阳县令</strong><span>偏治理。民心、治安与政务能力更强，军事起步较弱。</span></button>
+        </div>
+      </div>
+      <div class="creation-actions">
+        <button data-random-identity="1">随机身份</button>
+        <button class="creation-start" data-start-game="1">开始乱世</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="intro" id="intro">
+    <div class="intro-map" id="introMap"></div>
+    <div class="intro-flare"></div>
+    <button class="skip-intro" data-skip-intro="1">跳过开场</button>
+    <div class="intro-content">
+      <div class="intro-kicker">乱世执棋</div>
+      <div class="intro-line" id="introLine">公元190年，董卓乱政，天下崩裂。</div>
+      <div class="intro-letter" id="introLetter">
+        <strong>刘表密令</strong>
+        <p>“桂阳偏远，却是荆南门户。”</p>
+        <p>“此地若稳，荆州可安。此地若乱，荆州必失。”</p>
+        <p>“吾欲托付于卿。”</p>
+      </div>
+      <div class="intro-choice" id="introChoice">
+        <button data-intro-choice="accept">领命，赴任桂阳</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <h1>乱世执棋</h1>
+        <small>地图驱动式权谋战略 RPG 原型</small>
+      </div>
+      <div class="hud-strip" id="hud"></div>
+      <div class="top-actions">
+        <span class="autosave-indicator" id="autosaveTime">自动存档：暂无</span>
+        <button data-top="save">保存</button>
+        <button data-top="load">读取</button>
+        <button data-top="reset" class="danger">重开</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <aside class="left-panel">
+        <div class="panel-title">
+          <span>指挥府</span>
+          <small id="playerRank">校尉</small>
+        </div>
+        <div class="panel-body" id="leftPanel"></div>
+      </aside>
+
+      <section class="map-shell">
+        <div class="map-toolbar">
+          <button data-map="fit">全图</button>
+          <button data-map="jingzhou">荆州</button>
+          <button data-map="guiyang">桂阳</button>
+          <button data-map="zoomIn">+</button>
+          <button data-map="zoomOut">-</button>
+          <span class="zoom-badge" id="zoomBadge">1.0x｜州郡</span>
+        </div>
+        <svg id="mapStage" class="map-stage" viewBox="0 0 1448 1086" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <marker id="arrowHead" markerWidth="18" markerHeight="18" refX="14" refY="9" orient="auto">
+              <path d="M0,0 L18,9 L0,18 Z" fill="#d64538"></path>
+            </marker>
+            <marker id="moveHead" markerWidth="18" markerHeight="18" refX="14" refY="9" orient="auto">
+              <path d="M0,0 L18,9 L0,18 Z" fill="#f1d05f"></path>
+            </marker>
+            <pattern id="playerHatch" width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+              <rect width="18" height="18" fill="transparent"></rect>
+              <path d="M0 0 L0 18" stroke="#9062c8" stroke-width="3" stroke-opacity="0.24"></path>
+            </pattern>
+          </defs>
+          <g id="mapWorld">
+            <image id="mapImageLayer" x="0" y="0" width="1448" height="1086"></image>
+            <g id="mapPatchLayer"></g>
+            <g id="storyMapLayer"></g>
+            <g id="routeLayer"></g>
+            <g id="domainLayer"></g>
+            <g id="detailLayer"></g>
+            <g id="orderLayer"></g>
+            <g id="fxLayer"></g>
+            <g id="cityLayer"></g>
+            <g id="calibrationLayer"></g>
+            <g id="armyLayer"></g>
+          </g>
+        </svg>
+        <div class="map-vignette"></div>
+      </section>
+
+      <aside class="side-panel">
+        <div class="panel-title">
+          <span id="rightTitle">城池详情</span>
+          <small id="rightTag">桂阳</small>
+        </div>
+        <div class="panel-body" id="rightPanel"></div>
+      </aside>
+    </main>
+
+    <footer class="bottom-bar">
+      <div class="action-tabs">
+        <button data-tab="city" data-locked="0" data-help="城政：治理城池。用于稳定民心、治安、粮食和府库。前期最核心的功能。（消耗 1 政务点）">城政</button>
+        <button data-tab="military" data-locked="0" data-help-key="militaryTabHelp">军事</button>
+        <button data-tab="transfer" data-locked="1" data-help="调兵：在你控制的城池之间移动兵力。需要先整肃亲信班底后解锁。（消耗 1 军令点）">调兵</button>
+        <button data-tab="scheme" data-locked="1" data-help="谋略：刺探、断粮、内应和扰乱敌军。需要亲信情报网络 ≥ 30 后解锁。（消耗 1 谋略点）">谋略</button>
+        <button data-tab="diplomacy" data-locked="1" data-help="外交：结盟、借道、示好、求援。需要声望 ≥ 10 且刘表庇护 ≥ 60 后解锁。（消耗 1 外交点）">外交</button>
+        <button data-tab="inner" data-locked="1" data-help="亲信：整肃亲兵、安插府衙亲信、掌握粮道、联络郡兵、扩展情报网络。需要先查看刘表密令后解锁。（消耗 1 亲信点）">亲信</button>
+        <button data-tab="characters" data-locked="1" data-help="人物：查看荆州及周边重要人物关系。跟随亲信 tab 一起解锁。（消耗 1 外交点）">人物</button>
+        <button data-tab="appointments" data-locked="1" data-help="任命：集中管理城市官员、自动治理、军事整备和战役主将。需要人物系统解锁后开放。">任命</button>
+        <button data-tab="liubiao" data-locked="1" data-help="刘表：你的名义主君与保护伞。完成一次城政和一次军事调整后解锁。（消耗 1 外交点）">刘表</button>
+      </div>
+      <div class="end-turn-box">
+        <button class="end-turn" data-end-turn="1">结束回合</button>
+        <button class="ghost-btn" data-undo-order="1">撤销上一指令</button>
+      </div>
+      <div class="strategy-dock" id="strategyDock"></div>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="game-modal-root" id="gameModalRoot" aria-live="polite"></div>
+
+  <script src="js/data/mapData.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
