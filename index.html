@@ -54,7 +54,7 @@
           <span>密钥</span>
           <input id="authPassword" type="password" autocomplete="current-password" placeholder="输入密码">
         </label>
-        <div class="auth-status" id="authStatus">当前为前端演示入口，后端接口已预留。</div>
+        <div class="auth-status" id="authStatus">输入账号和密钥登录，或注册新账号。</div>
         <div class="auth-actions">
           <button type="button" class="auth-guest" data-auth-guest="1">游客入局</button>
           <button type="submit" class="auth-submit" data-auth-submit="1" id="authSubmit">登录</button>
@@ -144,7 +144,7 @@
             </div>
             <label class="name-slip" for="playerNameInput">
               <span class="name-slip-kicker">姓名</span>
-              <input id="playerNameInput" autocomplete="off" placeholder="请书名姓">
+              <input id="playerNameInput" autocomplete="off" inputmode="text" maxlength="12" spellcheck="false" placeholder="请书名姓">
               <span class="name-slip-rule" aria-hidden="true"></span>
             </label>
             <button class="name-generate-seal" data-random-name="1">主簿代拟</button>

@@ -5603,7 +5603,21 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function sanitizeChineseName(value) {
-      return (String(value || '').match(/[\u4e00-\u9fff]/g) || []).join('').slice(0, 6);
+      return Array.from(String(value || '').normalize('NFKC'))
+        .filter(char => /[\u3400-\u9fffA-Za-z0-9·._-]/.test(char))
+        .join('')
+        .slice(0, 12);
+    }
+
+    function playerNameLength(value) {
+      return Array.from(String(value || '')).reduce((total, char) => {
+        return total + (/[\u3400-\u9fff]/.test(char) ? 1 : 0.5);
+      }, 0);
+    }
+
+    function isValidPlayerName(value) {
+      const length = playerNameLength(value);
+      return length === 0 || (length >= 2 && length <= 6);
     }
 
     function randomChineseName() {
@@ -5639,12 +5653,11 @@ const MAX_MAP_ZOOM = 4.2;
       document.querySelectorAll('[data-identity]').forEach(button => {
         button.classList.toggle('selected', button.getAttribute('data-identity') === characterDraft.identity);
       });
-      const length = characterDraft.name.length;
-      const valid = length === 0 || (length >= 2 && length <= 6);
+      const valid = isValidPlayerName(characterDraft.name);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? '姓名须二至六字；若不具名，主簿将代拟入册。'
-        : '姓名须二至六字。';
+        ? '姓名须二至六字；英文与数字按半字计算；若不具名，主簿将代拟入册。'
+        : '姓名须二至六字，英文与数字按半字计算。';
       start.disabled = !valid;
 
       const steps = ['arrival', 'name', 'identity', 'confirm'];
@@ -5724,12 +5737,65 @@ const MAX_MAP_ZOOM = 4.2;
       return null;
     }
 
+    function authUserFromBackend(user) {
+      const username = user?.username || 'guest';
+      return {
+        id: user?.id || null,
+        username,
+        account: username,
+        displayName: user?.displayName || username,
+        isGuest: Boolean(user?.isGuest)
+      };
+    }
+
+    function persistBackendAuthSession(payload) {
+      if (!payload?.token || !payload?.user) throw new Error('AUTH_PAYLOAD_INVALID');
+      writeBackendSession(payload);
+      return authUserFromBackend(payload.user);
+    }
+
+    function authErrorMessage(error) {
+      const code = error?.payload?.error || error?.message;
+      if (code === 'USERNAME_TAKEN') return '这个账号已经被注册了。';
+      if (code === 'INVALID_CREDENTIALS') return '账号或密钥不正确。';
+      if (code === 'USERNAME_AND_PASSWORD_REQUIRED') return '账号需 3-40 位，只能使用字母、数字、下划线、点、@ 或短横线；密钥至少 6 位。';
+      if (code === 'AUTH_PAYLOAD_INVALID') return '后端返回的登录凭证不完整。';
+      return error?.message || '未知错误';
+    }
+
     const authApi = {
       async login(payload) {
-        return { ok: true, user: { account: payload.account, displayName: payload.account || '来客' } };
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
       },
       async register(payload) {
-        return { ok: true, user: { account: payload.account, displayName: payload.account || '新客' } };
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password,
+            displayName: account
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
+      },
+      async guest() {
+        const result = await backendFetch('/api/auth/guest', {
+          method: 'POST',
+          body: JSON.stringify({
+            deviceId: getBackendDeviceId(),
+            displayName: '游客'
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
       }
     };
     window.sanguoAuthApi = authApi;
@@ -5778,19 +5844,25 @@ const MAX_MAP_ZOOM = 4.2;
     async function submitAuthForm() {
       const payload = readAuthPayload();
       if (!payload.account) return setAuthStatus('请先写下账号。', true);
-      if (payload.password.length < 4) return setAuthStatus('密钥至少需要 4 个字符。', true);
+      if (payload.password.length < 6) return setAuthStatus('密钥至少需要 6 个字符。', true);
       setAuthStatus(authMode === 'register' ? '正在登记新牒...' : '正在校验府牒...');
       try {
         const result = await authApi[authMode](payload);
         if (!result?.ok) return setAuthStatus(result?.message || '校验未通过。', true);
         enterMainMenuAfterAuth(result.user);
       } catch (error) {
-        setAuthStatus('前端已预留后端接口，但当前请求失败：' + (error?.message || '未知错误'), true);
+        setAuthStatus('请求后端失败：' + authErrorMessage(error), true);
       }
     }
 
-    function enterAsGuest() {
-      enterMainMenuAfterAuth({ account: 'guest', displayName: '游客' });
+    async function enterAsGuest() {
+      setAuthStatus('正在创建游客身份...');
+      try {
+        const result = await authApi.guest();
+        enterMainMenuAfterAuth(result.user);
+      } catch (error) {
+        setAuthStatus('游客入口请求后端失败：' + authErrorMessage(error), true);
+      }
     }
 
     function updateMainMenu() {
@@ -5839,9 +5911,8 @@ const MAX_MAP_ZOOM = 4.2;
       stopOpeningTransition();
       stopOfficeHandoffTransition();
       resetRuntimeForNewGame();
-      launchScreen = 'intro';
+      launchScreen = 'character';
       render();
-      beginIntro();
     }
 
     async function resumeSavedGame(show = true) {
@@ -5878,7 +5949,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (gameState.storyFlags.characterCreated) return;
       const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
       const name = characterDraft.name || randomChineseName();
-      if (name.length < 2 || name.length > 6) {
+      if (!isValidPlayerName(name)) {
         updateCharacterCreation();
         return toast('姓名须二至六字');
       }
@@ -10739,6 +10810,7 @@ const MAX_MAP_ZOOM = 4.2;
       document.querySelectorAll('.tutorial-tooltip').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-overlay').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-svg-proxy').forEach(el => el.remove());
+      document.querySelectorAll('.tutorial-html-proxy').forEach(el => el.remove());
       gameState.tutorial.highlightedElements = [];
     }
 
@@ -10760,8 +10832,12 @@ const MAX_MAP_ZOOM = 4.2;
     function highlightGuideElement(selector, tooltipText, tooltipPosition) {
       const el = document.querySelector(selector);
       if (!el) return;
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      }
       el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
       gameState.tutorial.highlightedElements.push(selector);
+      createGuideHtmlProxy(el, selector);
 
       if (tooltipText) {
         const rect = el.getBoundingClientRect();
@@ -10784,6 +10860,31 @@ const MAX_MAP_ZOOM = 4.2;
       }
 
       showGuideOverlay();
+    }
+
+    function createGuideHtmlProxy(target, selector) {
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const proxy = document.createElement('button');
+      proxy.type = 'button';
+      proxy.className = 'tutorial-html-proxy';
+      proxy.setAttribute('aria-label', '执行引导目标操作');
+      proxy.dataset.guideProxySelector = selector;
+      proxy.style.left = Math.max(0, rect.left - 4) + 'px';
+      proxy.style.top = Math.max(0, rect.top - 4) + 'px';
+      proxy.style.width = Math.min(window.innerWidth - Math.max(0, rect.left - 4), rect.width + 8) + 'px';
+      proxy.style.height = Math.min(window.innerHeight - Math.max(0, rect.top - 4), rect.height + 8) + 'px';
+      proxy.addEventListener('click', event => {
+        event.stopPropagation();
+        event.preventDefault();
+        const liveTarget = document.querySelector(selector);
+        if (!liveTarget || liveTarget.disabled || liveTarget.getAttribute('aria-disabled') === 'true') {
+          toast('当前引导目标暂不可用');
+          return;
+        }
+        liveTarget.click();
+      });
+      document.body.appendChild(proxy);
     }
 
     function highlightGuideSvgElement(selector, tooltipText, tooltipPosition) {
@@ -11605,7 +11706,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function beginCommissioningTransition() {
       const name = characterDraft.name || randomChineseName();
-      if (name.length < 2 || name.length > 6) {
+      if (!isValidPlayerName(name)) {
         updateCharacterCreation();
         return toast('姓名须二至六字');
       }
@@ -11636,12 +11737,12 @@ const MAX_MAP_ZOOM = 4.2;
         const authModeButton = event.target.closest('[data-auth-mode]');
         if (authModeButton) {
           authMode = authModeButton.getAttribute('data-auth-mode') === 'register' ? 'register' : 'login';
-          setAuthStatus('当前为前端演示入口，后端接口已预留。');
+          setAuthStatus(authMode === 'register' ? '填写账号和密钥后即可注册。' : '输入账号和密钥登录。');
           updateAuthScreen();
           return;
         }
         if (event.target.closest('[data-auth-guest]')) {
-          enterAsGuest();
+          await enterAsGuest();
           return;
         }
         const menuAction = event.target.closest('[data-menu-action]');
@@ -11846,7 +11947,7 @@ const MAX_MAP_ZOOM = 4.2;
         }
         // HUD item click for guide (clickHudItem forceAction)
         const hudHelpItem = event.target.closest('[data-help-key]');
-        if (hudHelpItem && isGuideActive()) {
+        if (hudHelpItem && isGuideActive() && gameState.tutorial.forceAction?.type === 'clickHudItem') {
           const helpKey = hudHelpItem.getAttribute('data-help-key');
           if (checkForceAction('clickHudItem', helpKey)) return;
           if (isForceAction('clickHudItem', helpKey)) {

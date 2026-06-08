@@ -4744,6 +4744,18 @@
       z-index: 9001 !important;
     }
 
+    .tutorial-html-proxy {
+      position: fixed;
+      z-index: 9002;
+      padding: 0;
+      border: 2px solid rgba(255, 215, 0, 0.76);
+      border-radius: 8px;
+      background: rgba(255, 215, 0, 0.04);
+      box-shadow: 0 0 18px rgba(255, 215, 0, 0.58), 0 0 36px rgba(255, 215, 0, 0.22);
+      cursor: pointer;
+      animation: tutorialPulse 1.2s ease-in-out infinite;
+    }
+
     /* 强制结束回合按钮高亮 */
     .end-turn.tutorial-highlight {
       animation: tutorialPulse 0.8s ease-in-out infinite;
