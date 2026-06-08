@@ -89,6 +89,18 @@
       gap: 10px;
       align-items: stretch;
       min-height: 76px;
+      position: relative;
+      z-index: 9500;
+    }
+    /* 创建角色时：顶栏降暗，与其它面板一致 */
+    .topbar.topbar-dim {
+      opacity: 0.18;
+      z-index: 50;
+      pointer-events: none;
+    }
+    /* 过场动画时：顶栏完全隐藏 */
+    .topbar.topbar-hide {
+      display: none;
     }
 
     .brand,
@@ -102,7 +114,6 @@
       background:
         linear-gradient(180deg, rgba(40, 24, 14, 0.86), rgba(15, 10, 7, 0.78));
       box-shadow: 0 16px 38px var(--shadow), inset 0 0 28px rgba(255, 224, 150, 0.04);
-      backdrop-filter: blur(6px);
     }
 
     .brand {
@@ -182,7 +193,7 @@
     .side-panel {
       min-height: 0;
       border-radius: 12px;
-      overflow: hidden;
+      overflow-y: auto;
       display: grid;
       grid-template-rows: auto 1fr;
     }
@@ -1131,6 +1142,7 @@
       color: #f7e6bf;
       display: none;
       overflow: hidden;
+      pointer-events: auto;
     }
 
     .intro.show {
@@ -1828,13 +1840,13 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* 引导遮罩（非目标区域半透明） */
+    /* 引导遮罩（非目标区域半透明，纯视觉效果） */
     .tutorial-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.55);
+      background: rgba(0, 0, 0, 0.35);
       z-index: 8999;
-      pointer-events: all;
+      pointer-events: none;
     }
     .tutorial-overlay-cutout {
       position: relative;

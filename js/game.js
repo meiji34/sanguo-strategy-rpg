@@ -3841,10 +3841,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           title: '桂阳安抚之事',
           body: '桂阳初定，士族未附，豪强观望。卿当宽猛并济，勿急于征伐。若能稳住荆南，吾必另有重托。',
           choices: [
-            { id: 'obey', label: '谨遵刘牧之命' },
-            { id: 'support', label: '请求增援' },
-            { id: 'conceal', label: '隐瞒桂阳实情' },
-            { id: 'authority', label: '索要更大权限' }
+            { id: 'obey', label: '谨遵刘牧之命', guideHint: { pros: '提升刘表信任与庇护', cons: '短期内自主权受限' } },
+            { id: 'support', label: '请求增援', guideHint: { pros: '获得兵力或粮草支援', cons: '可能降低刘表对你独立能力的评价' } },
+            { id: 'conceal', label: '隐瞒桂阳实情', guideHint: { pros: '保留行动自由', cons: '一旦暴露将严重损害信任' } },
+            { id: 'authority', label: '索要更大权限', guideHint: { pros: '获得更多决策空间', cons: '可能引起刘表猜忌' } }
           ],
           critical: true
         });
@@ -6679,9 +6679,25 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       updateTabLockStates();
       renderModal();
       document.getElementById('playerRank').textContent = gameState.player.title;
-      document.getElementById('characterCreate').classList.toggle('show', !gameState.storyFlags.characterCreated);
-      document.getElementById('intro').classList.toggle('show', gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen);
+      const charCreateVisible = !gameState.storyFlags.characterCreated;
+      const introVisible = gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen;
+      document.getElementById('characterCreate').classList.toggle('show', charCreateVisible);
+      document.getElementById('intro').classList.toggle('show', introVisible);
+      const topbar = document.querySelector('.topbar');
+      if (topbar) {
+        topbar.classList.toggle('topbar-dim', charCreateVisible);
+        topbar.classList.toggle('topbar-hide', introVisible);
+      }
       updateCharacterCreation();
+      // Restore guide highlights after DOM rebuild
+      if (isGuideActive() && gameState.tutorial.highlightedElements?.length > 0) {
+        requestAnimationFrame(() => {
+          gameState.tutorial.highlightedElements.forEach(selector => {
+            const el = document.querySelector(selector);
+            if (el) el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
+          });
+        });
+      }
     }
 
     function renderHud() {
@@ -10835,14 +10851,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     if (!window.remoteLLMAdapter?.generateAiContent) {
       window.__initLLMAdapter?.(Object.assign(window.remoteLLMAdapter || {}, {
         generateAiContent: async function(context) {
-          var res = await backendFetch('/api/ai/content', {
+          var payload = await backendFetch('/api/ai/content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ context: context })
           });
-          if (!res.ok) throw new Error('AI content request failed');
-          var data = await res.json();
-          return data.text || data.content || '';
+          return payload.text || payload.content || '';
         }
       }));
     }
@@ -11802,6 +11816,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function resetGame() {
       if (!confirm('确定重开？当前未保存进度会丢失。')) return;
+      clearGuideHighlights();
+      removeGuideOverlay();
       gameState = createInitialState();
       characterDraft = { name: '', identity: 'commandant' };
       FACTIONS.player.name = '玩家';
@@ -12154,7 +12170,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const overlay = document.createElement('div');
         overlay.className = 'tutorial-overlay';
         overlay.id = 'tutorialOverlay';
-        overlay.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); });
         document.body.appendChild(overlay);
       }
     }
@@ -12167,6 +12182,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function highlightGuideElement(selector, tooltipText, tooltipPosition) {
       const el = document.querySelector(selector);
       if (!el) return;
+      el.scrollIntoView({ block: 'center' });
       el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
       gameState.tutorial.highlightedElements.push(selector);
 
@@ -12347,6 +12363,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       gameState.tutorial.guidePhase = 0;
       gameState.tutorial.forceAction = null;
       gameState.tutorial._stepIndex = {};
+      gameState.turn = 1; // 引导完成后重置回合数
       // 标记所有任务完成
       gameState.tutorial.tasks.forEach(task => { task.completed = true; });
       gameState.tutorial.trackedTaskId = null;
@@ -12376,28 +12393,51 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function setupPhase1() {
       const step = getGuideStepIndex(1);
       switch (step) {
-        case 0: // 高亮桂阳城
+        case 0: // 高亮桂阳城节点（圆圈+城名）
           setForceAction('clickCity', 'guiyang');
-          highlightGuideSvgElement('[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
+          const gyCenter = getRegion('guiyang')?.center || gameState.cities.guiyang;
+          if (gyCenter) {
+            setMapFocusOn(gyCenter.x, gyCenter.y, 2.55);
+            renderMap();
+          }
+          highlightGuideSvgElement('.city-node[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
           break;
-        case 1: // 高亮征兵按钮
-          gameState.activePanel = 'city';
+        case 1: // 高亮城政tab，强制点击
+          setForceAction('clickTab', 'city');
+          highlightGuideElement('[data-tab="city"]', '点击进入城政面板', 'top');
+          break;
+        case 2: // 悬浮窗提示下拉部署城政命令
+          highlightGuideElement('#rightPanel', '下拉部署城政命令', 'left');
+          setTimeout(() => advanceGuideStep(), 1800);
+          return;
+        case 3: // 高亮征兵按钮，强制点击
           setForceAction('cityOrder', 'recruit');
-          highlightGuideElement('[data-city-order="recruit"]', '点击征兵扩充兵力。税率/征粮可通过滑块调整', 'left');
+          highlightGuideElement('[data-city-order="recruit"]', '下拉找到征兵，点击扩充兵力', 'left');
           break;
-        case 2: // 切到军事面板
-          gameState.activePanel = 'military';
-          render();
-          setTimeout(() => {
-            setForceAction('clickTab', 'military');
-            highlightGuideElement('[data-tab="military"]', '切换到军事面板，训练郡兵');
-          }, 100);
-          return; // skip default flow
-        case 3: // 高亮整军按钮
+        case 4: // 高亮税粮拨杆区域，提示可拖动
+          highlightGuideElement('.policy-control-card', '税率和征粮强度可以拖动调整，试试看', 'left');
+          setTimeout(() => advanceGuideStep(), 1800);
+          return;
+        case 5: // 高亮军事tab，强制点击
+          setForceAction('clickTab', 'military');
+          highlightGuideElement('[data-tab="military"]', '点亮下方军事选项', 'top');
+          break;
+        case 6: // 高亮整军按钮，强制点击 + 悬停tooltip示例
           setForceAction('militaryOrder', 'drill');
           highlightGuideElement('[data-military-order="drill"]', '整军提升士气，悬停可查看代价和收益', 'left');
+          setTimeout(() => {
+            const drillBtn = document.querySelector('[data-military-order="drill"]');
+            if (drillBtn) {
+              const helpText = HELP_TEXT['militaryDrill'];
+              const text = typeof helpText === 'function' ? helpText() : (helpText || '');
+              if (text) {
+                const rect = drillBtn.getBoundingClientRect();
+                showTooltip(text, rect.right + 12, rect.top);
+              }
+            }
+          }, 300);
           break;
-        case 4: // 高亮结束回合
+        case 7: // 高亮结束回合，强制点击
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合，结算本回合命令', 'left');
           break;
@@ -12417,17 +12457,31 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setTimeout(() => {
             setForceAction('clickTab', 'military');
             highlightGuideElement('[data-tab="military"]', '保持军事面板，悬停可查看出兵路线、战术方案和作战目标的代价和收益');
+            // 额外高亮帮助链接（非强制交互，仅视觉引导）
+            ['routeHelp', 'tacticHelp', 'objectiveHelp'].forEach(key => {
+              const el = document.querySelector('[data-help-key="' + key + '"]');
+              if (el) el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
+            });
           }, 100);
           return;
-        case 1: // 刘表tab
-          setForceAction('clickTab', 'liubiao');
-          highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令', 'top');
-          break;
-        case 2: // 刘表庇护HUD
-          setForceAction('clickHudItem', 'protectionHelp');
-          highlightGuideElement('[data-help-key="protectionHelp"]', '点击查看刘表庇护的具体效果', 'left');
-          break;
-        case 3: // 结束回合
+        case 1: // 自动切换到刘表tab
+          gameState.activePanel = 'liubiao';
+          saveToStorage(false);
+          render();
+          // 显示提示后延迟推进
+          setTimeout(() => {
+            highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令');
+            setTimeout(() => advanceGuideStep(), 1500);
+          }, 200);
+          return;
+        case 2: // 刘表庇护HUD - 自动显示tooltip后推进（悬停查看，非强制点击）
+          saveToStorage(false);
+          setTimeout(() => {
+            highlightGuideElement('[data-help-key="protectionHelp"]', '刘表庇护值决定外部势力对你的态度，悬停可查看详情');
+            setTimeout(() => advanceGuideStep(), 1800);
+          }, 200);
+          return;
+        case 3: // 高亮结束回合按钮并强制点击
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合以推进时间', 'left');
           break;
@@ -12445,9 +12499,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setForceAction('clickTab', 'inner');
           highlightGuideElement('[data-tab="inner"]', '亲信决定你能否掌控府衙、粮道与情报', 'top');
           break;
-        case 1: // 整肃亲兵
+        case 1: // 整肃亲兵 + 安插府衙亲信
           setForceAction('clickInner', 'organize');
           highlightGuideElement('[data-inner-action="organize"]', '整肃亲兵提升内部忠诚，悬停查看利弊', 'left');
+          // 额外高亮安插府衙亲信按钮（非强制交互，仅视觉引导）
+          const campGateEl = document.querySelector('[data-inner-action="campGate"]');
+          if (campGateEl) campGateEl.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
           break;
         case 2: // 人物tab
           setForceAction('clickTab', 'characters');
@@ -12498,13 +12555,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setForceAction('clickTab', 'diplomacy');
           highlightGuideElement('[data-tab="diplomacy"]', '外交用于结盟、借道、示好', 'top');
           break;
-        case 3: // 纳粮
-          setForceAction('clickDiplomacy', 'demandFood');
-          highlightGuideElement('[data-diplomacy-action="demandFood"]', '纳粮可向周边势力征收粮草', 'left');
-          break;
-        case 4: // 结束回合
-          setForceAction('endTurn', 'endTurn');
-          highlightGuideElement('[data-end-turn="1"]', '结束回合结算', 'left');
+        case 3: // 纳粮（承认自治换取归附，示好动作）
+          setForceAction('clickDiplomacy', 'autonomy');
+          highlightGuideElement('[data-diplomacy-action="autonomy"]', '通过纳粮（承认自治）可以向其他势力示好', 'left');
           break;
         default:
           endGuideTurn();
@@ -12518,6 +12571,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       switch (step) {
         case 0: // 高亮豫章城
           setForceAction('clickCity', 'yuzhang');
+          // 聚焦地图到豫章
+          const yzCenter = getRegion('yuzhang')?.center || gameState.cities.yuzhang;
+          if (yzCenter) setMapFocusOn(yzCenter.x, yzCenter.y, 2.2);
           highlightGuideSvgElement('[data-select-city="yuzhang"]', '豫章是孙氏在荆南的门户', 'top');
           break;
         case 1: // 谋略tab
@@ -12525,12 +12581,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           highlightGuideElement('[data-tab="scheme"]', '谋略可在战前改变局势', 'top');
           break;
         case 2: // 刺探豫章
-          setForceAction('clickScheme', 'scout');
+          setForceAction('clickScheme', 'scout:yuzhang');
           highlightGuideElement('[data-scheme-action="scout"][data-target="yuzhang"]', '刺探可获取目标城兵力、城防和粮草信息', 'left');
-          break;
-        case 3: // 结束回合
-          setForceAction('endTurn', 'endTurn');
-          highlightGuideElement('[data-end-turn="1"]', '结束回合结算刺探结果', 'left');
           break;
         default:
           endGuideTurn();
@@ -12540,6 +12592,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     // ===== 强制新手引导系统结束 =====
+    function updateTabLockStates() {
       document.querySelectorAll('[data-tab]').forEach(btn => {
         const tabId = btn.getAttribute('data-tab');
         const locked = !isTabUnlocked(tabId);
@@ -13260,20 +13313,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         }
         // HUD item click for guide (clickHudItem forceAction)
         const hudHelpItem = event.target.closest('[data-help-key]');
-        if (hudHelpItem && isGuideActive()) {
+        if (hudHelpItem && isGuideActive() && isForceAction('clickHudItem')) {
           const helpKey = hudHelpItem.getAttribute('data-help-key');
           if (checkForceAction('clickHudItem', helpKey)) return;
-          if (isForceAction('clickHudItem', helpKey)) {
-            // Show the help tooltip immediately
-            const val = HELP_TEXT[helpKey];
-            const text = typeof val === 'function' ? val() : (val || '');
-            if (text) {
-              const rect = hudHelpItem.getBoundingClientRect();
-              showTooltip(text, rect.left, rect.bottom + 6);
-            }
-            advanceGuideStep();
-            return;
+          const val = HELP_TEXT[helpKey];
+          const text = typeof val === 'function' ? val() : (val || '');
+          if (text) {
+            const rect = hudHelpItem.getBoundingClientRect();
+            showTooltip(text, rect.left, rect.bottom + 6);
           }
+          advanceGuideStep();
+          return;
         }
         const cityTarget = event.target.closest('[data-select-city]');
         if (cityTarget) {
@@ -13305,6 +13355,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             }
           }
           if (action === 'load') {
+            clearGuideHighlights();
+            removeGuideOverlay();
             const loaded = await loadGameProgress(true);
             if (loaded) {
               gameState = loaded;
@@ -13400,9 +13452,27 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const scheme = event.target.closest('[data-scheme-action]');
         if (scheme) {
           const actionType = scheme.getAttribute('data-scheme-action');
-          if (checkForceAction('clickScheme', actionType)) return;
-          queueScheme(actionType, scheme.getAttribute('data-target'));
-          if (isGuideActive() && isForceAction('clickScheme', actionType)) {
+          const schemeTarget = scheme.getAttribute('data-target');
+          // checkForceAction with combined key "actionType:cityId" for scheme guide validation
+          const schemeKey = schemeTarget ? actionType + ':' + schemeTarget : actionType;
+          if (checkForceAction('clickScheme', schemeKey)) return;
+          // Also check base actionType (backward compatible)
+          if (isGuideActive() && gameState.tutorial.forceAction?.type === 'clickScheme') {
+            const faTarget = gameState.tutorial.forceAction.target;
+            // If forceAction target is "scout:yuzhang", check both actionType and city
+            if (faTarget.includes(':')) {
+              const [faAction, faCity] = faTarget.split(':');
+              if (faAction !== actionType || faCity !== schemeTarget) {
+                toast('请按照引导操作');
+                return;
+              }
+            } else if (faTarget !== actionType) {
+              toast('请按照引导操作');
+              return;
+            }
+          }
+          queueScheme(actionType, schemeTarget);
+          if (isGuideActive() && isForceAction('clickScheme', schemeKey)) {
             advanceGuideStep();
           }
           return;
@@ -13540,6 +13610,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         }
         if (event.target.closest('[data-skip-intro]')) {
           finishIntro('accept');
+          return;
+        }
+        // Guide mode catch-all: block clicks that aren't handled by specific handlers above
+        if (isGuideActive()) {
+          toast('请按照引导操作');
           return;
         }
         const mapClick = event.target.closest('#mapStage');
