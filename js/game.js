@@ -5603,7 +5603,21 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function sanitizeChineseName(value) {
-      return (String(value || '').match(/[\u4e00-\u9fff]/g) || []).join('').slice(0, 6);
+      return Array.from(String(value || '').normalize('NFKC'))
+        .filter(char => /[\u3400-\u9fffA-Za-z0-9·._-]/.test(char))
+        .join('')
+        .slice(0, 12);
+    }
+
+    function playerNameLength(value) {
+      return Array.from(String(value || '')).reduce((total, char) => {
+        return total + (/[\u3400-\u9fff]/.test(char) ? 1 : 0.5);
+      }, 0);
+    }
+
+    function isValidPlayerName(value) {
+      const length = playerNameLength(value);
+      return length === 0 || (length >= 2 && length <= 6);
     }
 
     function randomChineseName() {
@@ -5639,12 +5653,11 @@ const MAX_MAP_ZOOM = 4.2;
       document.querySelectorAll('[data-identity]').forEach(button => {
         button.classList.toggle('selected', button.getAttribute('data-identity') === characterDraft.identity);
       });
-      const length = characterDraft.name.length;
-      const valid = length === 0 || (length >= 2 && length <= 6);
+      const valid = isValidPlayerName(characterDraft.name);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? '姓名须二至六字；若不具名，主簿将代拟入册。'
-        : '姓名须二至六字。';
+        ? '姓名须二至六字；英文与数字按半字计算；若不具名，主簿将代拟入册。'
+        : '姓名须二至六字，英文与数字按半字计算。';
       start.disabled = !valid;
 
       const steps = ['arrival', 'name', 'identity', 'confirm'];
@@ -5936,7 +5949,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (gameState.storyFlags.characterCreated) return;
       const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
       const name = characterDraft.name || randomChineseName();
-      if (name.length < 2 || name.length > 6) {
+      if (!isValidPlayerName(name)) {
         updateCharacterCreation();
         return toast('姓名须二至六字');
       }
@@ -11663,7 +11676,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function beginCommissioningTransition() {
       const name = characterDraft.name || randomChineseName();
-      if (name.length < 2 || name.length > 6) {
+      if (!isValidPlayerName(name)) {
         updateCharacterCreation();
         return toast('姓名须二至六字');
       }
