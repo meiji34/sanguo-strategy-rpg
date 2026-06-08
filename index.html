@@ -1,70 +1,239 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="frame-ancestors 'none';">
   <title>乱世执棋 - 三国战略 RPG 原型</title>
-  <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="./css/main.css?v=ui-polish-v4">
+    <style>
+      .character-create.stage-arrival {
+        --creation-bg-image: url("./assets/opening/opening_arrival_landscape.png");
+      }
+
+      .character-create.stage-name {
+        --creation-bg-image: url("./assets/opening/opening_name_study.png");
+      }
+
+      .character-create.stage-identity,
+      .character-create.stage-confirm {
+        --creation-bg-image: url("./assets/opening/opening_identity_war_camp.png");
+      }
+    </style>
 </head>
 <body>
   <img id="mapPreload" alt="三国战略地图">
 
+  <section class="auth-screen" id="authScreen">
+    <div class="auth-backdrop" aria-hidden="true">
+      <div class="auth-scene auth-scene-one"></div>
+      <div class="auth-scene auth-scene-two"></div>
+      <div class="auth-paper"></div>
+    </div>
+    <div class="auth-content">
+      <div class="auth-hero">
+        <div class="auth-era">荆州密档｜云山入局</div>
+        <h1>乱世执棋</h1>
+        <p>山河未定，先验来者。</p>
+        <div class="auth-seal" aria-hidden="true">入<br>局</div>
+      </div>
+      <form class="auth-panel" id="authForm">
+        <div class="auth-tabs" role="tablist" aria-label="账号入口">
+          <button type="button" class="active" data-auth-mode="login">登录</button>
+          <button type="button" data-auth-mode="register">注册</button>
+        </div>
+        <div class="auth-panel-title">
+          <span id="authPanelKicker">府牒验身</span>
+          <strong id="authPanelTitle">登录账号</strong>
+        </div>
+        <label class="auth-field">
+          <span>账号</span>
+          <input id="authAccount" autocomplete="username" placeholder="输入账号或邮箱">
+        </label>
+        <label class="auth-field">
+          <span>密钥</span>
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="输入密码">
+        </label>
+        <div class="auth-status" id="authStatus">输入账号和密钥登录，或注册新账号。</div>
+        <div class="auth-actions">
+          <button type="button" class="auth-guest" data-auth-guest="1">游客入局</button>
+          <button type="submit" class="auth-submit" data-auth-submit="1" id="authSubmit">登录</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="main-menu" id="mainMenu">
+    <div class="main-menu-backdrop" aria-hidden="true">
+      <div class="menu-scene menu-scene-one"></div>
+      <div class="menu-scene menu-scene-two"></div>
+      <div class="menu-scene menu-scene-three"></div>
+      <div class="menu-scene menu-scene-four"></div>
+      <div class="menu-paper"></div>
+    </div>
+    <div class="main-menu-smoke smoke-one"></div>
+    <div class="main-menu-smoke smoke-two"></div>
+    <div class="main-menu-content">
+      <div class="menu-era">公元一九〇年｜汉祚将倾</div>
+      <h1>乱世执棋</h1>
+      <p class="menu-subtitle">稳则州安，乱则州失</p>
+      <div class="menu-rule"></div>
+      <div class="menu-actions">
+        <button class="menu-action menu-action-primary" id="continueGame" data-menu-action="continue">继续游戏</button>
+        <button class="menu-action" data-menu-action="new">开始新游戏</button>
+        <button class="menu-action" id="loadGame" data-menu-action="load">读取存档</button>
+      </div>
+      <div class="menu-save-status" id="menuSaveStatus"></div>
+    </div>
+    <div class="menu-footer">第一章｜荆南立足</div>
+  </section>
+
+  <section class="opening-transition" id="openingTransition" aria-live="polite">
+    <div class="transition-backdrop" aria-hidden="true"></div>
+    <div class="transition-ink transition-ink-one" aria-hidden="true"></div>
+    <div class="transition-ink transition-ink-two" aria-hidden="true"></div>
+    <div class="transition-content">
+      <div class="transition-kicker" id="transitionKicker">襄阳夜召</div>
+      <div class="transition-rule"></div>
+      <h2 id="transitionTitle">一纸密令</h2>
+      <p id="transitionCopy">墨色未散，州府的灯火已在夜雨中亮起。</p>
+      <div class="transition-seal" aria-hidden="true">荆<br>州</div>
+    </div>
+    <button class="transition-continue" data-complete-transition="1">继续</button>
+  </section>
+
   <section class="character-create" id="characterCreate">
+    <div class="audience-backdrop" aria-hidden="true">
+      <div class="audience-painting"></div>
+      <div class="audience-paper"></div>
+      <div class="audience-lantern lantern-one"></div>
+      <div class="audience-lantern lantern-two"></div>
+    </div>
     <div class="creation-panel">
-      <div class="intro-kicker">公元190年｜荆南初任</div>
-      <h1>赴桂阳</h1>
-      <p>董卓乱政，群雄并起。刘表镇守荆州，密召一名亲信前往桂阳。先定下你的姓名与初任身份。</p>
-      <div class="creation-field">
-        <strong>请输入姓名</strong>
-        <div class="creation-name-row">
-          <input id="playerNameInput" autocomplete="off" placeholder="留空将自动生成中文名">
-          <button data-random-name="1">随机姓名</button>
+      <div class="dialogue-voice-mark" id="dialogueVoiceMark" aria-hidden="true">刘</div>
+      <div class="audience-heading">
+        <div class="intro-kicker">襄阳州府｜夜雨将歇</div>
+        <div class="audience-location">荆州牧府 · 内堂</div>
+      </div>
+      <div class="dialogue-progress" aria-label="夜召进度">
+        <span data-dialogue-progress="arrival">入堂</span>
+        <span data-dialogue-progress="name">具名</span>
+        <span data-dialogue-progress="identity">择任</span>
+        <span data-dialogue-progress="confirm">接令</span>
+      </div>
+      <div class="dialogue-frame">
+        <div class="dialogue-speaker" id="creationSpeaker">荆州牧 · 刘表</div>
+        <p class="dialogue-line" id="creationLine">“荆南门户，久不得安。今夜召你来，是要托付一件不能写在公文上的差事。”</p>
+      </div>
+
+      <div class="creation-step active" data-creation-step="arrival">
+        <p class="audience-narration">堂外檐雨渐稀。案上一封密令尚未落印，刘表抬眼望向你。</p>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-primary" data-creation-advance="name">入堂听令</button>
         </div>
-        <div class="creation-note" id="nameValidation">姓名需为 2 到 6 个中文字符；留空可自动生成。</div>
       </div>
-      <div class="creation-field">
-        <strong>出生地</strong>
-        <div class="tag-row"><span class="tag">桂阳｜固定</span></div>
+
+      <div class="creation-step" data-creation-step="name">
+        <p class="audience-narration">主簿将赴任文牒推到灯下。案边烛火一低，堂中只余纸页轻响，等你亲口落名。</p>
+        <div class="creation-field">
+          <div class="name-audience-card">
+            <div class="name-scribe">
+              <span>朱批密牒</span>
+              <strong>赴任文牒</strong>
+              <small>刘荆州内堂录</small>
+            </div>
+            <label class="name-slip" for="playerNameInput">
+              <span class="name-slip-kicker">姓名</span>
+              <input id="playerNameInput" autocomplete="off" inputmode="text" maxlength="12" spellcheck="false" placeholder="请书名姓">
+              <span class="name-slip-rule" aria-hidden="true"></span>
+            </label>
+            <button class="name-generate-seal" data-random-name="1">主簿代拟</button>
+          </div>
+          <div class="name-preview" id="namePreview" aria-live="polite">名册待录</div>
+          <div class="creation-note" id="nameValidation">姓名须二至六字；若不具名，主簿将代拟入册。</div>
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="arrival">缄默不语</button>
+          <button class="dialogue-response response-primary" data-creation-advance="identity">落名接令</button>
+        </div>
       </div>
-      <div class="creation-field">
-        <strong>初始身份</strong>
+
+      <div class="creation-step" data-creation-step="identity">
+        <p class="audience-narration">刘表没有立即落印，只将三枚调任木牍推到案前。桂阳的根基未稳，你只能先执一柄。</p>
+        <p class="identity-brief" id="identityBrief">朱笔旁批：领桂阳都尉，先稳郡兵与军令。地方士族会更谨慎。</p>
         <div class="identity-grid">
-          <button class="identity-option selected" data-identity="commandant"><strong>桂阳都尉</strong><span>偏军事。郡兵与军令较强，地方士族起初更谨慎。</span></button>
-          <button class="identity-option" data-identity="granary"><strong>桂阳督粮官</strong><span>偏经济后勤。粮草与屯田起步更稳，正面军力略弱。</span></button>
-          <button class="identity-option" data-identity="magistrate"><strong>桂阳县令</strong><span>偏治理。民心、治安与政务能力更强，军事起步较弱。</span></button>
+          <button class="identity-option identity-card selected" data-identity="commandant">
+            <span class="identity-office">桂阳都尉</span>
+            <strong>持节整军</strong>
+            <span class="identity-position">定位｜军事控局</span>
+            <span class="identity-pro">优势：郡兵、军令起步更强</span>
+            <span class="identity-risk">风险：士族起初更谨慎</span>
+          </button>
+          <button class="identity-option identity-card" data-identity="granary">
+            <span class="identity-office">桂阳督粮官</span>
+            <strong>督运粮秣</strong>
+            <span class="identity-position">定位｜屯田后勤</span>
+            <span class="identity-pro">优势：粮草、府库更稳</span>
+            <span class="identity-risk">风险：正面军力略弱</span>
+          </button>
+          <button class="identity-option identity-card" data-identity="magistrate">
+            <span class="identity-office">桂阳县令</span>
+            <strong>抚民理政</strong>
+            <span class="identity-position">定位｜民政治安</span>
+            <span class="identity-pro">优势：民心、治安更强</span>
+            <span class="identity-risk">风险：军事起步较弱</span>
+          </button>
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="name">容臣再想</button>
+          <button class="dialogue-response response-primary" data-creation-advance="confirm">回禀主公</button>
         </div>
       </div>
-      <div class="creation-actions">
-        <button data-random-identity="1">随机身份</button>
-        <button class="creation-start" data-start-game="1">开始乱世</button>
+
+      <div class="creation-step" data-creation-step="confirm">
+        <p class="audience-narration">刘表已落印，桂阳自此归你节制。</p>
+        <div class="commission-summary">
+          <span class="commission-seal" aria-hidden="true">令</span>
+          奉命者 <strong id="commissionName">待定</strong> ，初任 <strong id="commissionIdentity">桂阳都尉</strong> ，即日赴桂阳。
+        </div>
+        <div class="dialogue-responses">
+          <button class="dialogue-response response-quiet" data-creation-retreat="identity">容臣改口</button>
+          <button class="dialogue-response response-primary creation-start" data-start-game="1">领命赴桂阳</button>
+        </div>
       </div>
+
+      <button class="audience-exit" data-menu-action="back">退回堂外</button>
+    </div>
+  </section>
+
+  <section class="office-handoff" id="officeHandoff" aria-live="polite">
+    <div class="office-handoff-backdrop" aria-hidden="true"></div>
+    <div class="office-handoff-mist mist-a" aria-hidden="true"></div>
+    <div class="office-handoff-mist mist-b" aria-hidden="true"></div>
+    <div class="office-handoff-paper">
+      <div class="office-kicker">桂阳府门｜政令将发</div>
+      <h2>府门将启</h2>
+      <p>密令入匣，车马已至郡府。新任主官暂立阶前，第一道政令即将落下。</p>
+      <div class="office-stage-mark">第一章｜荆南立足</div>
     </div>
   </section>
 
   <section class="intro" id="intro">
-    <div class="intro-map" id="introMap"></div>
-    <div class="intro-flare"></div>
+    <video class="intro-video" id="introVideo" preload="auto" playsinline>
+      <source src="./assets/opening/sanguo_opening_oppressive_game_v10.mp4" type="video/mp4">
+      <source src="./影像素材/sanguo_opening_video_package_v10/sanguo_opening_oppressive_game_v10.mp4" type="video/mp4">
+    </video>
     <button class="skip-intro" data-skip-intro="1">跳过开场</button>
-    <div class="intro-content">
-      <div class="intro-kicker">乱世执棋</div>
-      <div class="intro-line" id="introLine">公元190年，董卓乱政，天下崩裂。</div>
-      <div class="intro-letter" id="introLetter">
-        <strong>刘表密令</strong>
-        <p>“桂阳偏远，却是荆南门户。”</p>
-        <p>“此地若稳，荆州可安。此地若乱，荆州必失。”</p>
-        <p>“吾欲托付于卿。”</p>
-      </div>
-      <div class="intro-choice" id="introChoice">
-        <button data-intro-choice="accept">领命，赴任桂阳</button>
-      </div>
-    </div>
+    <button class="intro-play" id="introPlay" data-play-intro="1">播放开场</button>
   </section>
 
   <div class="app">
     <header class="topbar">
       <div class="brand">
-        <h1>乱世执棋</h1>
+        <div class="brand-title">
+          <h1>乱世执棋</h1>
+          <span class="brand-version">v1.0.0</span>
+        </div>
         <small>地图驱动式权谋战略 RPG 原型</small>
       </div>
       <div class="hud-strip" id="hud"></div>
@@ -136,7 +305,7 @@
     <footer class="bottom-bar">
       <div class="action-tabs">
         <button data-tab="city" data-locked="0" data-help="城政：治理城池。用于稳定民心、治安、粮食和府库。前期最核心的功能。（消耗 1 政务点）">城政</button>
-        <button data-tab="military" data-locked="0" data-help-key="militaryTabHelp">军事</button>
+        <button data-tab="military" data-locked="0" data-help="军事：训练郡兵、整备防务、维持士气。前期核心是自保而非进攻。出阵消耗 2 军令点，整军/加固防线/预备队消耗 1 军令点。">军事</button>
         <button data-tab="transfer" data-locked="1" data-help="调兵：在你控制的城池之间移动兵力。需要先整肃亲信班底后解锁。（消耗 1 军令点）">调兵</button>
         <button data-tab="scheme" data-locked="1" data-help="谋略：刺探、断粮、内应和扰乱敌军。需要亲信情报网络 ≥ 30 后解锁。（消耗 1 谋略点）">谋略</button>
         <button data-tab="diplomacy" data-locked="1" data-help="外交：结盟、借道、示好、求援。需要声望 ≥ 10 且刘表庇护 ≥ 60 后解锁。（消耗 1 外交点）">外交</button>
@@ -156,7 +325,8 @@
   <div class="toast" id="toast"></div>
   <div class="game-modal-root" id="gameModalRoot" aria-live="polite"></div>
 
-  <script src="js/data/mapData.js"></script>
-  <script src="js/game.js"></script>
+  <script src="./js/data/mapData.js?v=ui-polish-v4"></script>
+  <script src="./js/game.js?v=ui-polish-v4"></script>
+
 </body>
 </html>

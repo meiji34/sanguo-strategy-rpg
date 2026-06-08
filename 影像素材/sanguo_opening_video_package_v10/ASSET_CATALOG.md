@@ -20,6 +20,18 @@
 
 完整来源：`assets/paintings/met-open-access-manifest.json`
 
+## 扩展山水背景
+
+路径：`assets/paintings/expanded/`
+
+| 文件 | 作品 | 建议用途 |
+| --- | --- | --- |
+| `met-51667.jpg` | Mountain Landscape | 游戏主界面水墨底纹、密信页氛围参考 |
+| `met-48966.jpg` | Streams and Mountains without End | 开始菜单第三幕 |
+| `met-39915.jpg` | Summer Mountains | 开始菜单第四幕、视频后墨色转场 |
+
+完整来源：`assets/paintings/expanded/met-expanded-open-access-manifest.json`
+
 ## 汉代实物与纹样
 
 路径：`assets/artifacts/`

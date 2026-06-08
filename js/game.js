@@ -1,7 +1,10 @@
 const MAP_SIZE = { width: 1448, height: 1086 };
+const MIN_MAP_ZOOM = 1;
+const MAX_MAP_ZOOM = 4.2;
     const TURN_DAYS = 5;
     const SAVE_KEY = 'luanshi_zhiqi_v4';
     const SAVE_KEY_BACKUP = 'luanshi_zhiqi_v4_backup';
+    const AUTH_SESSION_KEY = 'luanshi_zhiqi_auth_session_v1';
     const BACKEND_SESSION_KEY = 'sanguo_backend_session_v1';
     const BACKEND_DEVICE_KEY = 'sanguo_backend_device_id_v1';
     const BACKEND_SAVE_SLOT = 'default';
@@ -1265,6 +1268,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       ...buildHistoricalCharacterBlueprints()
     };
 
+
     const RANDOM_TALENT_NAMES = ['杜景', '韩绍', '程钧', '陆旻', '沈玠', '顾韬', '许岱', '钟仪', '谢衡', '苏靖', '林越', '赵宁'];
     const RANDOM_TALENT_TYPES = ['武将', '谋士', '政务', '豪强', '医者', '商人', '游侠'];
     const RANDOM_TALENT_LOCATIONS = ['guiyang', 'changsha', 'jiangling', 'jiangxia', 'xiangyang'];
@@ -2315,7 +2319,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           highlightedElements: []
         }
       };
-      normalizeAppointments(state);
       return applyInitialPublicSupportProfiles(state);
     }
 
@@ -2394,10 +2397,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function createCharacterRoster(seed) {
       const roster = {};
       Object.entries(CHARACTER_BLUEPRINTS).forEach(([id, record]) => {
-        roster[id] = normalizeCharacterLocation(normalizeCharacterRecord(structuredClone(record)));
+        roster[id] = normalizeCharacterRecord(structuredClone(record));
       });
       generateRandomTalents(seed).forEach(record => {
-        roster[record.id] = normalizeCharacterLocation(normalizeCharacterRecord(record));
+        roster[record.id] = normalizeCharacterRecord(record);
       });
       return roster;
     }
@@ -2405,26 +2408,20 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function ensureCharacterSystemState(state) {
       state.randomTalentSeed ||= Math.floor(Date.now() % 2147483647) || 190;
       const initialRoster = createCharacterRoster(state.randomTalentSeed);
-      const existingRoster = state.characterRoster || {};
-      state.characterRoster = {};
-
-      Object.entries(initialRoster).forEach(([id, baseRecord]) => {
-        const existing = existingRoster[id] || {};
-        state.characterRoster[id] = normalizeCharacterRecord(Object.assign(
-          {},
-          baseRecord,
-          existing,
-          { id }
-        ));
+      state.characterRoster = Object.assign(initialRoster, state.characterRoster || {});
+      Object.entries(state.characterRoster).forEach(([id, record]) => {
+        state.characterRoster[id] = normalizeCharacterRecord(Object.assign({}, record, { id }));
       });
-
-      Object.entries(existingRoster).forEach(([id, record]) => {
-        if (!state.characterRoster[id]) {
-          state.characterRoster[id] = normalizeCharacterRecord(Object.assign({}, record, { id }));
-        }
-      });
-
-      purgeInternalPlayerCharactersFromState(state);
+      if (state.player?.name) {
+        state.characterRoster.player ||= normalizeCharacterRecord({
+          id: 'player',
+          name: state.player.name,
+          status: 'active',
+          portraitPlaceholder: state.player.name.slice(-2)
+        });
+        state.characterRoster.player.name = state.player.name;
+        state.characterRoster.player.portraitPlaceholder = state.player.name.slice(-2);
+      }
       state.characterDiscovery ||= {};
       state.conversations ||= [];
       state.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
@@ -2442,10 +2439,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       state.turnSummaries ||= [];
       state.visualEffects ||= [];
       state.selectedCharacterId ||= 'liuBiao';
+      state.characterProfileId ||= null;
       state.characterFilter ||= 'all';
-      state.knownBorderFactions ||= [];
-      state.characterUnlockFlags ||= {};
-      state.player.commandSlots = Math.max(Number(state.player.commandSlots || 0), 5);
+      state.player.commandSlots = Number(state.player.commandSlots || 5);
+      normalizeAppointments(state);
       state.schemaVersion = GAME_SCHEMA_VERSION;
       return state;
     }
@@ -2744,6 +2741,13 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     const loadedGameState = loadFromStorage(false);
     let gameState = ensureCharacterSystemState(loadedGameState || createInitialState());
     let characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
+    let launchScreen = 'auth';
+    let authMode = 'login';
+    let authUser = null;
+    let characterCreationStep = 'arrival';
+    let openingTransitionMode = 'audience';
+    let openingTransitionTimer = null;
+    let officeHandoffTimer = null;
     let isComposingPlayerName = false;
     FACTIONS.player.name = gameState.player.name || '玩家';
     let mapData = createMapData();
@@ -2777,7 +2781,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function applyEmbeddedMapImage() {
       const image = document.getElementById('mapImageLayer');
       const preload = document.getElementById('mapPreload');
-      const mapUrl = window.SANGUO_MAP_IMAGE_URL || 'assets/map.png';
+      const mapUrl = window.SANGUO_MAP_IMAGE_URL || './assets/map.png';
       if (preload) preload.src = mapUrl;
       if (image) {
         image.setAttribute('href', mapUrl);
@@ -2825,15 +2829,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function isControlledBy(cityId, factionId) {
       return cityController(cityId) === factionId;
-    }
-
-    function isPlayerPublicCity(city) {
-      return city && cityController(city.id) === 'player';
-    }
-
-    function isNpcPublicCity(city) {
-      const owner = cityController(city.id);
-      return city && owner && owner !== 'player' && owner !== 'local';
     }
 
     function cityNeighborIds(cityId) {
@@ -2935,121 +2930,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       else addNews(item.tone, item.text);
     }
 
-    // ========== 刘表庇护降低后 NPC 攻击玩家系统 ==========
-
-    function getPlayerExposureLevel() {
-      const protection = clamp(gameState.player?.protection || 0, 0, 100);
-
-      if (gameState.player?.independent) {
-        return {
-          level: 'independent',
-          protection,
-          canBeTargeted: true,
-          targetChanceMultiplier: 1.2,
-          hostilityBonus: 45,
-          minRouteMode: 'official'
-        };
-      }
-
-      if (protection >= 70) {
-        return {
-          level: 'protected',
-          protection,
-          canBeTargeted: false,
-          targetChanceMultiplier: 0,
-          hostilityBonus: 0,
-          minRouteMode: 'none'
-        };
-      }
-
-      if (protection >= 40) {
-        return {
-          level: 'wavering',
-          protection,
-          canBeTargeted: true,
-          targetChanceMultiplier: 0.25,
-          hostilityBonus: 12,
-          minRouteMode: 'raid'
-        };
-      }
-
-      if (protection >= 20) {
-        return {
-          level: 'weak',
-          protection,
-          canBeTargeted: true,
-          targetChanceMultiplier: 0.55,
-          hostilityBonus: 25,
-          minRouteMode: 'raid'
-        };
-      }
-
-      return {
-        level: 'collapsed',
-        protection,
-        canBeTargeted: true,
-        targetChanceMultiplier: 1.0,
-        hostilityBonus: 40,
-        minRouteMode: 'official'
-      };
-    }
-
-    function activeNpcCampaignsAgainstPlayer() {
-      return (gameState.campaigns || []).filter(c =>
-        c &&
-        isActiveCampaign(c) &&
-        c.faction !== 'player' &&
-        cityController(c.target) === 'player'
-      );
-    }
-
-    function canNpcTargetPlayerCity(faction, targetId, sourceId, options = {}) {
-      const city = gameState.cities?.[targetId];
-      if (!city || cityController(targetId) !== 'player') return false;
-
-      const exposure = getPlayerExposureLevel();
-      if (!exposure.canBeTargeted) return false;
-
-      // 桂阳开局前几回合不要立刻被围殴（force 时可绕过）
-      if (!options.force && (gameState.turn || 0) < 5 && !gameState.player?.independent) return false;
-
-      // 检查所有路线类型
-      const route =
-        findCampaignRoute(sourceId, targetId, 'official') ||
-        findCampaignRoute(sourceId, targetId, 'raid') ||
-        findCampaignRoute(sourceId, targetId, 'stealth');
-      if (!route) return false;
-
-      // 同一目标不能被无限围攻
-      if (!canCreateAnotherCampaignAgainstTarget(faction, targetId, options)) return false;
-
-      // 同一时间 NPC 攻击玩家的 active campaign 不超过上限
-      const limit = gameState.player?.independent ? 3 : 2;
-      if (activeNpcCampaignsAgainstPlayer().length >= limit) return false;
-
-      return true;
-    }
-
-    function playerTargetScoreForNpc(faction, cityId) {
-      if (cityController(cityId) !== 'player') return 0;
-
-      const exposure = getPlayerExposureLevel();
-      if (!exposure.canBeTargeted) return -999;
-
-      const city = gameState.cities?.[cityId];
-      let score = exposure.hostilityBonus;
-
-      // 玩家民心低、城防低、兵少时更容易被盯上
-      if (Number(city?.publicSupport || 0) < 35) score += 8;
-      if (Number(city?.defense || 0) < 35) score += 8;
-      if (realTroops(city?.garrison) < 1200) score += 10;
-
-      // 激进势力更容易攻击玩家
-      if (['cao', 'yuan', 'sun', 'yuanshu'].includes(faction)) score += 8;
-
-      return score;
-    }
-
     const CONVERSATION_ACTIONS = {
       talk: { label: '会谈', trust: 3, respect: 2, fear: 0, suspicion: -1 },
       probe: { label: '试探', trust: -1, respect: 1, fear: 0, suspicion: 3 },
@@ -3106,7 +2986,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         citySupport: clamp(guiyang.publicSupport ?? 55, 0, 100),
         cityOrder: clamp(guiyang.order ?? 55, 0, 100),
         foodPressure: Number(guiyang.food || 0) < Math.max(900, Number(guiyang.population || 0) / 35),
-        activeCampaigns: state?.campaigns?.filter(campaign => !isCampaignFinished(campaign)).length || 0,
+        activeCampaigns: state?.campaigns?.filter(campaign => !['complete', 'cancelled'].includes(campaign.status)).length || 0,
         playerName: state?.player?.name || '主公'
       };
     }
@@ -3339,11 +3219,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         promiseOffice: '考验你的承诺是否有兑现能力',
         strategy: '把自己的长远打算嵌入你的战略'
       };
-
-      const allParts = [opening, actionLine, memoryLine].filter(Boolean);
-
+      const dialogueParts = [opening, actionLine, memoryLine].filter(Boolean);
       return {
-        npcText: allParts.join(' '),
+        npcText: dialogueParts.join(' '),
         npcIntent: intentMap[context.conversationType] || action.label,
         emotionalShift: attitude,
         memorySummary: npc.name + '把这次"' + action.label + '"记为：' + (intentMap[context.conversationType] || '继续判断你的分寸') + '。',
@@ -3841,10 +3719,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           title: '桂阳安抚之事',
           body: '桂阳初定，士族未附，豪强观望。卿当宽猛并济，勿急于征伐。若能稳住荆南，吾必另有重托。',
           choices: [
-            { id: 'obey', label: '谨遵刘牧之命', guideHint: { pros: '提升刘表信任与庇护', cons: '短期内自主权受限' } },
-            { id: 'support', label: '请求增援', guideHint: { pros: '获得兵力或粮草支援', cons: '可能降低刘表对你独立能力的评价' } },
-            { id: 'conceal', label: '隐瞒桂阳实情', guideHint: { pros: '保留行动自由', cons: '一旦暴露将严重损害信任' } },
-            { id: 'authority', label: '索要更大权限', guideHint: { pros: '获得更多决策空间', cons: '可能引起刘表猜忌' } }
+            { id: 'obey', label: '谨遵刘牧之命' },
+            { id: 'support', label: '请求增援' },
+            { id: 'conceal', label: '隐瞒桂阳实情' },
+            { id: 'authority', label: '索要更大权限' }
           ],
           critical: true
         });
@@ -3909,8 +3787,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function evaluateNpcInitiatives() {
       if (gameState.turn < 2) return;
-      const candidates = Object.values(gameState.characterRoster || {})
-        .filter(isMajorNpcForInitiative)
+      const candidates = Object.values(gameState.characterRoster)
+        .filter(isExternalCharacter)
         .map(npc => ({ npc, score: getNpcInitiativeScore(npc) }))
         .filter(item => item.score >= 18)
         .sort((a, b) => b.score - a.score);
@@ -4064,198 +3942,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return Math.max(1, Math.ceil(route.distance * terrainModifier * armySizeModifier * supplyModifier * modeModifier));
     }
 
-    const FINISHED_CAMPAIGN_STATUSES = ['complete', 'cancelled', 'retreated', 'destroyed', 'failed', 'abandoned'];
-
-    function isCampaignFinished(campaign) {
-      if (!campaign) return true;
-      if (FINISHED_CAMPAIGN_STATUSES.includes(campaign.status)) return true;
-      if (campaign.army && realTroops(campaign.army) <= 0) return true;
-      return false;
-    }
-
-    function isActiveCampaign(campaign) {
-      return campaign && !isCampaignFinished(campaign) && campaign.slotOccupied;
-    }
-
-    function isCityUnderActiveSiege(cityId) {
-      return (gameState.campaigns || []).some(c =>
-        c.target === cityId &&
-        c.status === 'siege' &&
-        isActiveCampaign(c)
-      );
-    }
-
-    function finishCampaign(campaign, status = 'complete', phase = '已结束', reports, text, tone = 'warn') {
-      if (!campaign) return;
-
-      campaign.status = status;
-      campaign.phase = phase;
-      campaign.slotOccupied = false;
-      campaign.travelRemaining = 0;
-      campaign.siegeRemaining = 0;
-      campaign.supply = 0;
-
-      if (reports && text) {
-        reports.push({ tone, text });
-      }
-    }
-
     function activeCampaignSlotCount() {
-      return gameState.campaigns.filter(campaign => campaign.faction === 'player' && isActiveCampaign(campaign)).length;
+      return gameState.campaigns.filter(campaign => campaign.faction === 'player' && campaign.slotOccupied && !['complete', 'cancelled'].includes(campaign.status)).length;
     }
-
-    function getCampaignSlotLimit() {
-      const cities = typeof controlledCities === 'function' ? controlledCities() : [];
-      const controlledCount = cities.length;
-      const base = 5;
-
-      // 每多控制 2 座城，额外 +1 战役槽
-      const cityBonus = Math.floor(Math.max(0, controlledCount - 1) / 2);
-
-      // 高等级城市提供少量额外组织能力
-      const majorCityCount = cities.filter(city => Number(city.level || 0) >= 4).length;
-      const majorBonus = Math.floor(majorCityCount / 3);
-
-      return clamp(base + cityBonus + majorBonus, 5, 12);
-    }
-
-    function validateCampaignSlotLimit() {
-      const cities = typeof controlledCities === 'function' ? controlledCities() : [];
-      return {
-        controlledCityCount: cities.length,
-        oldCommandSlots: gameState.player?.commandSlots,
-        dynamicCampaignSlotLimit: getCampaignSlotLimit(),
-        activeCampaignSlotCount: activeCampaignSlotCount(),
-        pendingLongCampaignCount: pendingLongCampaignCount(),
-        availableCampaignSlots: getCampaignSlotLimit() - activeCampaignSlotCount() - pendingLongCampaignCount(),
-        controlledCities: cities.map(city => ({
-          id: city.id,
-          name: city.name,
-          level: city.level
-        }))
-      };
-    }
-
-    window.validateCampaignSlotLimit = validateCampaignSlotLimit;
-
-    function validateCampaignCleanup() {
-      const campaigns = gameState.campaigns || [];
-      return {
-        activeCampaignSlotCount: activeCampaignSlotCount(),
-        invalidSlotCampaigns: campaigns
-          .filter(c => c.faction === 'player' && c.slotOccupied && isCampaignFinished(c))
-          .map(c => ({
-            id: c.id,
-            status: c.status,
-            phase: c.phase,
-            troops: realTroops(c.army),
-            slotOccupied: c.slotOccupied
-          })),
-        visibleZeroTroopCampaigns: campaigns
-          .filter(c => isCampaignVisibleOnMap(c) && c.army && realTroops(c.army) <= 0)
-          .map(c => ({
-            id: c.id,
-            status: c.status,
-            phase: c.phase,
-            troops: realTroops(c.army)
-          })),
-        activeCampaigns: campaigns
-          .filter(c => !isCampaignFinished(c))
-          .map(c => ({
-            id: c.id,
-            faction: c.faction,
-            source: c.source,
-            target: c.target,
-            type: c.type,
-            status: c.status,
-            phase: c.phase,
-            troops: realTroops(c.army),
-            slotOccupied: c.slotOccupied
-          }))
-      };
-    }
-
-    window.validateCampaignCleanup = validateCampaignCleanup;
-
-    function validateCampaignReinforcement() {
-      const campaigns = gameState.campaigns || [];
-      return {
-        activeCampaignSlotCount: activeCampaignSlotCount(),
-        slotLimit: getCampaignSlotLimit(),
-        activePlayerAttacks: campaigns
-          .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
-          .map(c => ({
-            id: c.id,
-            target: c.target,
-            status: c.status,
-            troops: realTroops(c.army),
-            supply: c.supply,
-            slotOccupied: c.slotOccupied
-          })),
-        reinforcementOrders: (gameState.orders || [])
-          .filter(o => o.payload?.objective === 'reinforceCampaign')
-          .map(o => ({
-            id: o.id,
-            source: o.payload.source,
-            target: o.payload.target,
-            reinforceCampaignId: o.payload.reinforceCampaignId,
-            troops: o.payload.troops
-          })),
-        reinforcementCampaigns: campaigns
-          .filter(c => c.objective === 'reinforceCampaign')
-          .map(c => ({
-            id: c.id,
-            source: c.source,
-            target: c.target,
-            reinforceCampaignId: c.reinforceCampaignId,
-            status: c.status,
-            troops: realTroops(c.army),
-            slotOccupied: c.slotOccupied
-          }))
-      };
-    }
-
-    window.validateCampaignReinforcement = validateCampaignReinforcement;
-
-    function validateCampaignRetreatReturn() {
-      const campaigns = gameState.campaigns || [];
-
-      return {
-        retreatedWithArmyStillInside: campaigns
-          .filter(c => ['retreated', 'abandoned', 'cancelled', 'complete'].includes(c.status) && c.army && realTroops(c.army) > 0)
-          .map(c => ({
-            id: c.id,
-            faction: c.faction,
-            source: c.source,
-            target: c.target,
-            status: c.status,
-            troops: realTroops(c.army)
-          })),
-
-        playerAutoRetreats: campaigns
-          .filter(c => c.faction === 'player' && c.status === 'retreated')
-          .map(c => ({
-            id: c.id,
-            source: c.source,
-            target: c.target,
-            phase: c.phase,
-            troops: realTroops(c.army)
-          })),
-
-        activePlayerAttacks: campaigns
-          .filter(c => c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c))
-          .map(c => ({
-            id: c.id,
-            target: c.target,
-            owner: cityController(c.target),
-            status: c.status,
-            phase: c.phase,
-            troops: realTroops(c.army)
-          }))
-      };
-    }
-
-    window.validateCampaignRetreatReturn = validateCampaignRetreatReturn;
 
     function pendingLongCampaignCount() {
       return gameState.orders.filter(order => order.type === 'battle').length;
@@ -4300,11 +3989,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const route = findCampaignRoute(source.id, target.id, order.payload.route || 'official');
       if (!route) return null;
       const isBattle = order.type === 'battle';
-      if (isBattle && activeCampaignSlotCount() >= getCampaignSlotLimit()) {
-        reports.push({
-          tone: 'bad',
-          text: '战役槽已满，当前可同时维持 ' + getCampaignSlotLimit() + ' 路战役。'
-        });
+      if (isBattle && activeCampaignSlotCount() >= gameState.player.commandSlots) {
+        reports.push({ tone: 'bad', text: '战役槽已满，' + source.name + '无法向' + target.name + '出征。' });
         return null;
       }
       const amount = Math.min(order.payload.troops, Math.max(0, realTroops(source.garrison) - 300));
@@ -4317,7 +4003,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         faction: 'player',
         type: isBattle ? 'attack' : 'transfer',
         objective: order.payload.objective || (isBattle ? 'capture' : 'reinforce'),
-        reinforceCampaignId: order.payload.reinforceCampaignId || null,
         source: source.id,
         target: target.id,
         route,
@@ -4325,7 +4010,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         tactic: order.payload.tactic || 'balanced',
         army: armyTroops,
         commander: order.payload.commander || gameState.player.name,
-        commanderActionCooldown: 0,
         status: 'marching',
         phase: '行军',
         eta: travelTurns,
@@ -4344,77 +4028,32 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return campaign;
     }
 
-    function createNpcCampaign({ faction, source, target, troops: amount, routeMode = 'official' }, reports = []) {
-      const route = findCampaignRoute(source, target, routeMode);
+    function createNpcCampaign({ faction, source, target, troops: amount }, reports = []) {
+      const route = findCampaignRoute(source, target, 'official');
       if (!route) return null;
-      const isHiddenMode = routeMode === 'raid' || routeMode === 'night' || routeMode === 'stealth';
-      const visibility = isHiddenMode ? 'hidden' : 'public';
       const campaign = {
-        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode, visibility,
+        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode: 'official',
         tactic: 'balanced', army: troops(Math.round(amount * 0.66), Math.round(amount * 0.12), Math.round(amount * 0.22), 0),
         commander: factionName(faction) + '军将', status: 'marching', phase: '行军', eta: calculateTravelTurns(route, { troops: amount, supply: 6 }),
         travelRemaining: calculateTravelTurns(route, { troops: amount, supply: 6 }), siegeRemaining: 2, supply: 7, risk: 1, slotOccupied: true, createdTurn: gameState.turn
       };
       gameState.campaigns.push(campaign);
-      // 注意：不要无条件暴露 hidden 攻击玩家
-      if (cityController(target) === 'player') {
-        if (visibility === 'hidden') {
-          addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '边境暗流', text: '刘表庇护衰弱，边境似有不明兵马活动。' });
-          reports.push({ tone: 'warn', text: '刘表庇护衰弱，边境暗流涌动，似有外部势力正在试探我方。' });
-        } else {
-          addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '敌军逼近 ' + regionName(target), text: factionName(faction) + '军正向' + regionName(target) + '进军。' });
-          reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
-        }
-      } else {
-        reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
-      }
+      if (isControlledBy(target, 'player')) addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '敌军逼近 ' + regionName(target), text: factionName(faction) + '军正向' + regionName(target) + '进军。' });
+      reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
       return campaign;
     }
 
     function consumeCampaignSupply(campaign) {
-      if (
-        campaign.faction === 'player' &&
-        campaign.type === 'attack' &&
-        shouldCommanderSaveSupply(campaign)
-      ) {
-        return;
-      }
-
       campaign.supply = Math.max(0, campaign.supply - 1);
-
       if (campaign.supply === 0) {
-        let lossRate = 0.08;
-
-        if (campaign.faction === 'player' && campaign.type === 'attack') {
-          const mod = getCommanderBattleModifier(campaign);
-          const moraleMod = clamp(Number(mod.morale || 0), -3, 5);
-          lossRate = clamp(0.08 - moraleMod * 0.004, 0.04, 0.12);
-        }
-
-        removeTroops(campaign.army, Math.max(20, Math.round(realTroops(campaign.army) * lossRate)));
+        removeTroops(campaign.army, Math.max(20, Math.round(realTroops(campaign.army) * 0.08)));
       }
     }
 
     function advanceCampaigns(reports) {
       gameState.campaigns.forEach(campaign => {
-        if (isCampaignFinished(campaign)) return;
-        // 0 兵力自动覆灭
-        if (realTroops(campaign.army) <= 0) {
-          finishCampaign(campaign, 'destroyed', '全军覆没', reports, regionName(campaign.source) + '出发的战役兵粮耗尽，全军覆没。');
-          return;
-        }
+        if (['complete', 'cancelled'].includes(campaign.status)) return;
         consumeCampaignSupply(campaign);
-        if (campaign.army && realTroops(campaign.army) <= 0) {
-          finishCampaign(
-            campaign,
-            'destroyed',
-            '全军覆没',
-            reports,
-            factionName(campaign.faction) + '军粮尽兵散，战役结束。',
-            campaign.faction === 'player' ? 'bad' : 'good'
-          );
-          return;
-        }
         if (campaign.status === 'marching') {
           campaign.travelRemaining = Math.max(0, campaign.travelRemaining - 1);
           campaign.phase = '行军';
@@ -4422,173 +4061,41 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           return;
         }
         if (campaign.status === 'siege') {
-          campaign.commanderActionCooldown = Math.max(0, Number(campaign.commanderActionCooldown || 0) - 1);
-
-          const commanderActionResult = processCommanderCampaignActions(campaign, reports);
-          campaign.lastCommanderActionResult = commanderActionResult?.triggered ? commanderActionResult : null;
-
-          if (campaign.army && realTroops(campaign.army) <= 0) {
-            finishCampaign(
-              campaign,
-              'destroyed',
-              '全军覆没',
-              reports,
-              factionName(campaign.faction) + '军强攻受挫，兵力耗尽，战役结束。',
-              campaign.faction === 'player' ? 'bad' : 'good'
-            );
-            return;
-          }
-
           campaign.siegeRemaining = Math.max(0, campaign.siegeRemaining - 1);
-
           const target = gameState.cities[campaign.target];
-          if (!target) {
-            finishCampaign(campaign, 'failed', '目标失效', reports, '战役目标不存在，战役终止。', 'warn');
-            return;
-          }
-
           target.food = Math.max(0, target.food - Math.max(80, Math.round(realTroops(campaign.army) * 0.08)));
-          let moraleDamage = 3;
-
-          if (campaign.faction === 'player' && campaign.type === 'attack') {
-            const commander = getCampaignCommander(campaign);
-            if (commander) {
-              const strategy = Number(commander.stats?.strategy || 50);
-              const siegeBonus = Math.max(0, Math.round((strategy - 50) / 25));
-              moraleDamage = Math.min(6, 3 + siegeBonus);
-            }
-          }
-
-          target.morale = clamp(target.morale - moraleDamage, 0, 100);
+          target.morale = clamp(target.morale - 3, 0, 100);
           playBattleEffect(campaign.target);
           if (campaign.siegeRemaining <= 0 || target.morale <= 18 || target.defense <= 12) resolveSiege(campaign, reports);
         }
       });
     }
 
-    function cleanupInvalidCampaigns(reports) {
-      gameState.campaigns.forEach(campaign => {
-        // 已结束状态：强制释放槽位并归零
-        if (isCampaignFinished(campaign)) {
-          campaign.slotOccupied = false;
-          campaign.travelRemaining = 0;
-          campaign.siegeRemaining = 0;
-          campaign.supply = 0;
-        }
-        // 未标记 finished 但 army 归零：标记为 destroyed
-        if (!isCampaignFinished(campaign) && campaign.army && realTroops(campaign.army) <= 0) {
-          finishCampaign(campaign, 'destroyed', '全军覆没', reports, regionName(campaign.source) + '出发的战役因兵粮耗尽而覆灭。');
-        }
-      });
-    }
-
     function resolveTravel(campaign, reports) {
-      if (campaign.type === 'transfer' && campaign.objective === 'reinforceCampaign') {
-        const parent = gameState.campaigns.find(item => item.id === campaign.reinforceCampaignId);
-
-        if (parent && parent.faction === 'player' && isActiveCampaign(parent)) {
-          addTroops(parent.army, campaign.army);
-          parent.supply = Math.max(parent.supply || 0, 2) + Math.max(1, Math.ceil(realTroops(campaign.army) / 600));
-
-          campaign.army = troops(0, 0, 0, 0);
-          finishCampaign(
-            campaign,
-            'complete',
-            '已并入主力',
-            reports,
-            regionName(campaign.source) + '援军已抵达' + regionName(parent.target) + '前线，并入主攻部队。',
-            'good'
-          );
-          return;
-        }
-
-        let returnCity = gameState.cities[campaign.source];
-        if (!returnCity || !isControlledBy(returnCity.id, 'player')) {
-          returnCity = controlledCities()[0];
-        }
-
-        if (returnCity) {
-          addTroops(returnCity.garrison, campaign.army);
-          campaign.army = troops(0, 0, 0, 0);
-          finishCampaign(
-            campaign,
-            'retreated',
-            '主战役已结束',
-            reports,
-            '援军抵达前主战役已经结束，部队返回' + returnCity.name + '。',
-            'warn'
-          );
-          return;
-        }
-
-        campaign.army = troops(0, 0, 0, 0);
-        finishCampaign(
-          campaign,
-          'cancelled',
-          '增援失效',
-          reports,
-          '援军抵达前主战役已经结束，且无法返回原城。',
-          'warn'
-        );
-        return;
-      }
       if (campaign.type === 'transfer') {
         addTroops(gameState.cities[campaign.target].garrison, campaign.army);
         campaign.status = 'complete';
         campaign.phase = '已抵达';
-        campaign.slotOccupied = false;
         reports.push({ tone: 'good', text: regionName(campaign.target) + '收到增援 ' + fmt(realTroops(campaign.army)) + '。' });
         return;
       }
-      // 目标城有效性检查
-      const targetCity = gameState.cities[campaign.target];
-      if (!targetCity) {
-        finishCampaign(campaign, 'failed', '目标失效', reports, '战役目标不存在，战役终止。', 'warn');
-        return;
-      }
-      const currentOwner = cityController(campaign.target) || 'local';
-      // 玩家 attack 优先：不受 hostility 影响，只要目标不是自己就继续围城
-      if (campaign.faction === 'player' && campaign.type === 'attack') {
-        if (currentOwner === 'player') {
-          addTroops(targetCity.garrison, campaign.army);
-          campaign.army = troops(0, 0, 0, 0);
-          finishCampaign(
-            campaign,
-            'complete',
-            '转入驻防',
-            reports,
-            '我军抵达' + regionName(campaign.target) + '，该城已归我方，部队转入驻防。',
-            'good'
-          );
-          return;
-        }
-        campaign.status = 'siege';
-        campaign.phase = '围城';
-        campaign.siegeRemaining = Math.max(2, campaign.siegeRemaining || 2);
-        playBattleEffect(campaign.target);
-        reports.push({
-          tone: 'good',
-          text: regionName(campaign.target) + '现由' + factionName(currentOwner) + '控制，我军遵照原令继续攻城，至少还需 ' + campaign.siegeRemaining + ' 回合。'
-        });
-        return;
-      }
-      // 以下为 NPC / 非玩家多方争城逻辑
+      // 检查目标城池归属是否已变更（多方争城场景）
+      const currentOwner = cityController(campaign.target);
       if (currentOwner === campaign.faction) {
-        addTroops(targetCity.garrison, campaign.army);
-        campaign.army = troops(0, 0, 0, 0);
-        finishCampaign(
-          campaign,
-          'complete',
-          '转入驻防',
-          reports,
-          factionName(campaign.faction) + '军抵达' + regionName(campaign.target) + '，该城已归己方，部队转入驻防。',
-          'good'
-        );
+        // 自己势力已拿下该城，转入驻防
+        const targetCity = gameState.cities[campaign.target];
+        if (targetCity) {
+          addTroops(targetCity.garrison, campaign.army);
+        }
+        campaign.status = 'complete';
+        campaign.phase = '驻防完成';
+        reports.push({ tone: 'good', text: factionName(campaign.faction) + '军抵达' + regionName(campaign.target) + '，该城已归本势力，转为驻防。' });
         return;
       }
       if (currentOwner !== 'local' && currentOwner !== campaign.faction) {
         const hostility = getFactionHostility(campaign.faction, currentOwner);
         if (hostility < -10) {
+          // 敌对，继续围城（转攻新占据者）
           campaign.status = 'siege';
           campaign.phase = '围城';
           campaign.siegeRemaining = Math.max(2, campaign.siegeRemaining || 2);
@@ -4597,17 +4104,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           if (isControlledBy(campaign.target, 'player')) addUrgentMatter({ type: 'siege', campaignId: campaign.id, title: regionName(campaign.target) + '被围', text: factionName(campaign.faction) + '军已抵达城下，转攻我方。' });
           return;
         } else {
-          returnCampaignArmyToFriendlyCity(
-            campaign,
-            reports,
-            factionName(campaign.faction) + '军抵达' + regionName(campaign.target) + '，但城池已易主且非敌对，决定撤军'
-          );
-          finishCampaign(
-            campaign,
-            'retreated',
-            '撤军',
-            reports
-          );
+          // 不敌对，撤军
+          campaign.status = 'retreated';
+          campaign.phase = '撤军';
+          reports.push({ tone: 'warn', text: factionName(campaign.faction) + '军抵达' + regionName(campaign.target) + '，但城池已易主且非敌对，决定撤军。' });
           return;
         }
       }
@@ -4618,43 +4118,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       playBattleEffect(campaign.target);
       reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: regionName(campaign.target) + '进入围城阶段，至少还需 ' + campaign.siegeRemaining + ' 回合。' });
       if (isControlledBy(campaign.target, 'player')) addUrgentMatter({ type: 'siege', campaignId: campaign.id, title: regionName(campaign.target) + '被围', text: factionName(campaign.faction) + '军已抵达城下。' });
-    }
-
-    function returnCampaignArmyToFriendlyCity(campaign, reports, reasonText) {
-      if (!campaign || !campaign.army || realTroops(campaign.army) <= 0) return false;
-
-      let returnCity = gameState.cities[campaign.source];
-
-      if (!returnCity || cityController(returnCity.id) !== campaign.faction) {
-        returnCity = Object.values(gameState.cities || {}).find(city =>
-          cityController(city.id) === campaign.faction
-        );
-      }
-
-      if (returnCity) {
-        addTroops(returnCity.garrison, campaign.army);
-        campaign.army = troops(0, 0, 0, 0);
-
-        if (reports) {
-          reports.push({
-            tone: campaign.faction === 'player' ? 'warn' : 'neutral',
-            text: (reasonText || '部队撤回') + '，余部返回' + returnCity.name + '。'
-          });
-        }
-
-        return true;
-      }
-
-      campaign.army = troops(0, 0, 0, 0);
-
-      if (reports) {
-        reports.push({
-          tone: campaign.faction === 'player' ? 'bad' : 'warn',
-          text: (reasonText || '部队撤回') + '，但无可返回城池，部队解散。'
-        });
-      }
-
-      return false;
     }
 
     function resolveSiege(campaign, reports) {
@@ -4688,17 +4151,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
       const draft = { troops: realTroops(campaign.army), route: campaign.routeMode, tactic: campaign.tactic, objective: campaign.objective };
       const power = estimateBattlePower(draft, Object.assign({}, source, { food: Math.max(1, campaign.supply * 220), morale: source.morale }), target);
-
-      // 主将加成
-      if (campaign.faction === 'player' && campaign.type === 'attack') {
-        const commanderMod = getCommanderBattleModifier(campaign);
-        power.attack *= commanderMod.attack;
-
-        if (commanderMod.text) {
-          reports.push({ tone: 'good', text: commanderMod.text });
-        }
-      }
-
       // 情报泄露给进攻方带来攻城优势
       const leakBonus = getActiveIntelligenceLeakBonus(campaign.faction, target.id).siegeAdvantage;
       const ratio = power.attack * (0.86 + Math.random() * 0.28 + leakBonus) / Math.max(1, power.defense * (0.9 + Math.random() * 0.22));
@@ -4719,92 +4171,16 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
       campaign.status = 'complete';
       campaign.phase = win ? '破城' : '撤退';
-      campaign.slotOccupied = false;
       gameState.battleReports.unshift({ turn: gameState.turn, source: regionName(campaign.source), target: target.name, win, ratio: ratio.toFixed(2) });
     }
 
     function requestRelief(campaignId, cityId) {
       const campaign = gameState.campaigns.find(item => item.id === campaignId);
-      if (
-        !campaign ||
-        campaign.faction === 'player' ||
-        campaign.status !== 'siege' ||
-        campaign.target !== cityId ||
-        !isControlledBy(campaign.target, 'player')
-      ) {
-        return toast('守城求援只适用于我方城市被围攻时');
-      }
       const source = controlledCities().find(city => city.id !== cityId && realTroops(city.garrison) > 450);
-      if (!source) return toast('暂无可调援军');
+      if (!campaign || !source) return toast('暂无可调援军');
       const order = { id: uid(), type: 'transfer', label: source.name + '增援' + regionName(cityId), payload: { source: source.id, target: cityId, troops: Math.min(600, realTroops(source.garrison) - 300), route: 'official' } };
       createMilitaryOrder(order, gameState.turnEvents);
       toast('增援军令已发出');
-      render();
-    }
-
-    function withdrawCampaign(campaignId) {
-      const campaign = gameState.campaigns.find(c => c.id === campaignId);
-
-      if (!campaign || campaign.faction !== 'player' || !isActiveCampaign(campaign)) {
-        return toast('该战役已经结束，无法撤军');
-      }
-
-      const troopsLeft = realTroops(campaign.army);
-      if (troopsLeft <= 0) {
-        finishCampaign(campaign, 'destroyed', '全军覆没', null);
-        saveToStorage(false);
-        render();
-        return toast('该军已无可撤之兵');
-      }
-
-      const lossRate = campaign.status === 'siege' ? 0.12 : 0.06;
-      removeTroops(campaign.army, Math.round(troopsLeft * lossRate));
-
-      let returnCity = gameState.cities[campaign.source];
-      if (!returnCity || !isControlledBy(returnCity.id, 'player')) {
-        returnCity = controlledCities()[0];
-      }
-
-      if (returnCity) {
-        addTroops(returnCity.garrison, campaign.army);
-        returnCity.food = Math.max(0, Number(returnCity.food || 0) + Math.round((campaign.supply || 0) * 120));
-      }
-
-      campaign.army = troops(0, 0, 0, 0);
-      finishCampaign(campaign, 'retreated', '已撤军', null);
-
-      toast('军队已撤回，战役槽已释放');
-      saveToStorage(false);
-      render();
-    }
-
-    function abandonCampaign(campaignId) {
-      const campaign = gameState.campaigns.find(c => c.id === campaignId);
-
-      if (!campaign || campaign.faction !== 'player' || !isActiveCampaign(campaign)) {
-        return toast('该战役已经结束');
-      }
-
-      const troopsLeft = realTroops(campaign.army);
-
-      if (troopsLeft > 0) {
-        removeTroops(campaign.army, Math.round(troopsLeft * 0.18));
-
-        let returnCity = gameState.cities[campaign.source];
-        if (!returnCity || !isControlledBy(returnCity.id, 'player')) {
-          returnCity = controlledCities()[0];
-        }
-
-        if (returnCity) {
-          addTroops(returnCity.garrison, campaign.army);
-        }
-      }
-
-      campaign.army = troops(0, 0, 0, 0);
-      finishCampaign(campaign, 'abandoned', '已放弃', null);
-
-      toast('战役已结束，战役槽已释放');
-      saveToStorage(false);
       render();
     }
 
@@ -4813,60 +4189,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (!source) return toast('没有可用于围魏救赵的出兵城');
       openBattlePlanner(targetId);
       toast('已打开转攻部署，请选择兵力与路线');
-    }
-
-    function requestCampaignReinforcement(campaignId) {
-      const campaign = gameState.campaigns.find(item => item.id === campaignId);
-
-      if (!campaign || campaign.faction !== 'player' || campaign.type !== 'attack' || !isActiveCampaign(campaign)) {
-        return toast('只能增援正在进行的我方进攻战役');
-      }
-
-      if (campaign.status !== 'siege') {
-        return toast('只有进入围城阶段的战役才能增援');
-      }
-
-      const targetId = campaign.target;
-
-      const candidates = controlledCities()
-        .filter(city => city.id !== targetId)
-        .map(city => {
-          const available = Math.max(0, realTroops(city.garrison) - 300 - pendingTroopsFrom(city.id));
-          const route = findCampaignRoute(city.id, targetId, 'official');
-          return { city, available, route };
-        })
-        .filter(item => item.available >= 100 && item.route);
-
-      if (!candidates.length) {
-        return toast('暂无可派出的战役援军');
-      }
-
-      candidates.sort((a, b) => b.available - a.available);
-
-      const picked = candidates[0];
-      const amount = Math.min(800, picked.available);
-
-      if (!spendPoints('mil', 1)) return;
-
-      gameState.orders.push({
-        id: uid(),
-        type: 'transfer',
-        point: 'mil',
-        pointCost: 1,
-        label: picked.city.name + '增援' + regionName(targetId) + '战役｜兵 ' + fmt(amount),
-        payload: {
-          source: picked.city.id,
-          target: targetId,
-          troops: amount,
-          route: 'official',
-          objective: 'reinforceCampaign',
-          reinforceCampaignId: campaign.id
-        }
-      });
-
-      toast('战役增援军令已加入队列');
-      saveToStorage(false);
-      render();
     }
 
     function addUrgentMatter(data) {
@@ -4947,7 +4269,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     // ===================== NPC势力战争系统 =====================
 
     function isCampaignVisibleOnMap(campaign) {
-      if (!campaign || isCampaignFinished(campaign)) return false;
+      if (!campaign || ['complete', 'cancelled'].includes(campaign.status)) return false;
       if (campaign.faction === 'player') return true;
       // public/official 路线始终可见（正式出兵）
       if (campaign.routeMode === 'official') return true;
@@ -4990,18 +4312,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           const targetId = edge.to;
           const controller = cityController(targetId);
           if (controller === faction) continue;
-          // 刘表庇护系统：根据庇护等级决定 NPC 能否攻击玩家
-          if (controller === 'player') {
-            if (!canNpcTargetPlayerCity(faction, targetId, sourceId, options)) continue;
-
-            const exposure = getPlayerExposureLevel();
-            const rollChance = protectedNpcChance('npcAttack', 0.5 * exposure.targetChanceMultiplier);
-
-            if (!options.force && Math.random() >= rollChance) continue;
-
-            targets.add(targetId);
-            continue;
-          }
+          // 保护玩家：桂阳开局阶段禁止 NPC 打玩家
+          if (controller === 'player') continue;
           if (!gameState.cities[targetId] || isRemovedCityId(targetId)) continue;
           const hostility = getFactionHostility(faction, controller);
           if (hostility <= -5 && edge.roadType !== 'water') {
@@ -5034,21 +4346,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function getFactionHostility(factionA, factionB) {
       if (factionA === factionB) return 100;
-
-      if (factionA === 'player' || factionB === 'player') {
-        const exposure = getPlayerExposureLevel();
-        if (!exposure.canBeTargeted) return 0;
-
-        let base = -exposure.hostilityBonus;
-
-        // 激进势力更愿意趁刘表虚弱动手
-        const npcFaction = factionA === 'player' ? factionB : factionA;
-        if (['cao', 'yuan', 'sun', 'yuanshu'].includes(npcFaction)) base -= 8;
-        if (['gongsun', 'mateng', 'zhanglu'].includes(npcFaction)) base -= 4;
-
-        return base;
-      }
-
+      if (factionA === 'player' || factionB === 'player') return 0;
       const rels = gameState.factionRelations || {};
       const row = rels[factionA] || {};
       return row[factionB] || 0;
@@ -5108,7 +4406,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return Math.random() < chance;
     }
 
-    function getNpcCampaignSource(faction, targetId, routeMode = 'official') {
+    function getNpcCampaignSource(faction, targetId) {
       const ownCities = getNpcControlledCities(faction);
       let bestSource = null;
       let bestTroops = 0;
@@ -5116,7 +4414,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const city = gameState.cities[cityId];
         const garrison = realTroops(city.garrison);
         if (garrison < 500) continue;
-        const route = findCampaignRoute(cityId, targetId, routeMode);
+        const route = findCampaignRoute(cityId, targetId, 'official');
         if (!route || route.distance === 0) continue;
         if (garrison > bestTroops) {
           bestTroops = garrison;
@@ -5126,17 +4424,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return bestSource;
     }
 
-    function shouldNpcLaunchCampaign(faction, reports, options = {}) {
-      // options.force 时跳过概率检查
-      if (options.force) return true;
+    function shouldNpcLaunchCampaign(faction, reports) {
       const warState = gameState.factionWarState;
       const lastAttack = warState.lastAttackTurnByFaction[faction] || 0;
       if (gameState.turn - lastAttack < NPC_WAR_COOLDOWN_TURNS) return false;
       const activeNpcCampaigns = gameState.campaigns.filter(
-        c => !isCampaignFinished(c) && c.faction !== 'player'
+        c => !['complete', 'cancelled'].includes(c.status) && c.faction !== 'player'
       ).length;
       if (activeNpcCampaigns >= MAX_NPC_CAMPAIGNS_PER_TURN) return false;
-      const targets = getNpcAttackTargets(faction, options);
+      const targets = getNpcAttackTargets(faction);
       if (targets.length === 0) return false;
       const hasEnoughTroops = getNpcControlledCities(faction).some(cityId => {
         const city = gameState.cities[cityId];
@@ -5146,17 +4442,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const maxHostility = Math.max(...targets.map(t => Math.abs(getFactionHostility(faction, cityController(t)))));
       const baseChance = clamp(0.08 + maxHostility / 300, 0.05, 0.55);
       const aggressionBonus = ['cao', 'yuan', 'gongsun'].includes(faction) ? 0.12 : 0;
-
-      // 玩家目标带来的额外压力加成
-      const hasPlayerTarget = targets.some(t => cityController(t) === 'player');
-      let playerPressureBonus = 0;
-      if (hasPlayerTarget) {
-        const exposure = getPlayerExposureLevel();
-        playerPressureBonus = exposure.targetChanceMultiplier * 0.18;
-        if (['cao', 'yuan', 'sun', 'yuanshu'].includes(faction)) playerPressureBonus += 0.05;
-      }
-
-      const chance = clamp(baseChance + aggressionBonus + playerPressureBonus, 0.03, 0.65);
+      const chance = baseChance + aggressionBonus;
       return Math.random() < chance;
     }
 
@@ -5173,58 +4459,25 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const hb = Math.abs(getFactionHostility(faction, cityController(b)));
         const leakBonusA = getActiveIntelligenceLeakBonus(faction, a).targetScore;
         const leakBonusB = getActiveIntelligenceLeakBonus(faction, b).targetScore;
-        const playerScoreA = playerTargetScoreForNpc(faction, a);
-        const playerScoreB = playerTargetScoreForNpc(faction, b);
-        return (hb + publicSupportTargetScore(gameState.cities[b]) + leakBonusB + playerScoreB) -
-               (ha + publicSupportTargetScore(gameState.cities[a]) + leakBonusA + playerScoreA);
+        return (hb + publicSupportTargetScore(gameState.cities[b]) + leakBonusB) -
+               (ha + publicSupportTargetScore(gameState.cities[a]) + leakBonusA);
       });
-
-      // 支持 preferredTargetId：将指定目标放到第一位
-      let topTargets;
-      if (options.preferredTargetId && candidates.includes(options.preferredTargetId)) {
-        const pref = options.preferredTargetId;
-        const rest = candidates.filter(id => id !== pref);
-        topTargets = [pref, ...rest].slice(0, Math.min(3, candidates.length));
-      } else {
-        topTargets = candidates.slice(0, Math.min(3, candidates.length));
-      }
-
+      const topTargets = candidates.slice(0, Math.min(3, candidates.length));
       for (const targetId of topTargets) {
-        const isPlayerTarget = cityController(targetId) === 'player';
-        let troopsAmount, routeMode;
-
-        // 先决定 routeMode
-        if (isPlayerTarget) {
-          const exposure = getPlayerExposureLevel();
-          if (exposure.level === 'wavering') {
-            troopsAmount = 700 + Math.floor(Math.random() * 700);
-            routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
-          } else if (exposure.level === 'weak') {
-            troopsAmount = 1200 + Math.floor(Math.random() * 1200);
-            routeMode = Math.random() < 0.55 ? 'raid' : 'official';
-          } else {
-            // collapsed 或 independent
-            troopsAmount = 2000 + Math.floor(Math.random() * 1800);
-            routeMode = 'official';
-          }
-        } else {
-          const hostility = Math.abs(getFactionHostility(faction, cityController(targetId)));
-          if (hostility >= 30) {
-            troopsAmount = 2000 + Math.floor(Math.random() * 1500);
-            routeMode = 'official';
-          } else if (hostility >= 15) {
-            troopsAmount = 1200 + Math.floor(Math.random() * 800);
-            routeMode = Math.random() < 0.6 ? 'official' : 'raid';
-          } else {
-            troopsAmount = 600 + Math.floor(Math.random() * 600);
-            routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
-          }
-        }
-
-        // 再按 routeMode 找 source
-        const sourceId = getNpcCampaignSource(faction, targetId, routeMode);
+        const sourceId = getNpcCampaignSource(faction, targetId);
         if (!sourceId) continue;
-
+        const hostility = Math.abs(getFactionHostility(faction, cityController(targetId)));
+        let troopsAmount, routeMode;
+        if (hostility >= 30) {
+          troopsAmount = 2000 + Math.floor(Math.random() * 1500);
+          routeMode = 'official';
+        } else if (hostility >= 15) {
+          troopsAmount = 1200 + Math.floor(Math.random() * 800);
+          routeMode = Math.random() < 0.6 ? 'official' : 'raid';
+        } else {
+          troopsAmount = 600 + Math.floor(Math.random() * 600);
+          routeMode = Math.random() < 0.7 ? 'raid' : 'stealth';
+        }
         const sourceCity = gameState.cities[sourceId];
         const actualTroops = Math.min(troopsAmount, Math.max(0, realTroops(sourceCity.garrison) - 350));
         if (actualTroops < 400) continue;
@@ -5242,11 +4495,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const shuffled = [...npcFactions].sort(() => Math.random() - 0.5);
       for (const faction of shuffled) {
         if (campaignsCreated >= MAX_NPC_CAMPAIGNS_PER_TURN) break;
-        if (!shouldNpcLaunchCampaign(faction, reports, options)) continue;
+        if (!shouldNpcLaunchCampaign(faction, reports)) continue;
         const plan = createNpcCampaignPlan(faction, options);
         if (!plan) continue;
         const campaign = createNpcCampaign(plan, reports);
         if (campaign) {
+          campaign.routeMode = plan.routeMode;
+          const isHiddenMode = plan.routeMode === 'raid' || plan.routeMode === 'night' || plan.routeMode === 'stealth';
+          campaign.visibility = isHiddenMode ? 'hidden' : 'public';
           gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
           gameState.factionWarState.recentWars.push({
             attacker: faction,
@@ -5268,14 +4524,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             rels[faction][defender] = (rels[faction][defender] || 0) - 15;
             rels[defender][faction] = (rels[defender][faction] || 0) - 15;
           }
-          // hidden 玩家目标：不调用 reportNpcCampaignEvent（会暴露势力和目标），只显示模糊威胁
-          if (cityController(plan.target) === 'player' && campaign.visibility === 'hidden') {
-            reportNpcPlayerThreat(campaign, reports);
-          } else {
-            reportNpcCampaignEvent(campaign, 'march', reports);
-            reportNpcPlayerThreat(campaign, reports);
-          }
-          maybeRevealCharactersFromWar(faction, campaign);
+          // 注意：reportNpcCampaignEvent 现在接收 campaign 对象，它在内部自动检测多方争城
+          reportNpcCampaignEvent(campaign, 'march', reports);
           campaignsCreated++;
         }
       }
@@ -5337,29 +4587,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       reports.push({ tone, text, level: hostility >= 25 ? 'important' : 'minor' });
     }
 
-    function reportNpcPlayerThreat(campaign, reports) {
-      if (!campaign || cityController(campaign.target) !== 'player') return;
-
-      const exposure = getPlayerExposureLevel();
-
-      // hidden 战役只给模糊提示，不暴露具体势力和目标
-      if (campaign.visibility === 'hidden') {
-        reports.push({
-          tone: exposure.protection < 20 ? 'bad' : 'warn',
-          text: '刘表庇护衰弱，边境暗流涌动，似有外部势力正在试探我方。'
-        });
-        return;
-      }
-
-      const attacker = factionName(campaign.faction);
-      const target = gameState.cities?.[campaign.target]?.name || campaign.target;
-
-      reports.push({
-        tone: exposure.protection < 20 ? 'bad' : 'warn',
-        text: '刘表庇护衰弱，' + attacker + '已将目光投向' + target + '，敌军开始向我方领地进发。'
-      });
-    }
-
     function validateNpcCampaignSystem() {
       const results = [];
       results.push({ check: '常量定义', pass: typeof DEFAULT_FACTION_RELATIONS === 'object', detail: 'DEFAULT_FACTION_RELATIONS: ' + Object.keys(DEFAULT_FACTION_RELATIONS).length + ' 势力' });
@@ -5385,7 +4612,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         relCount += Object.keys(rels).length;
       }
       results.push({ check: '势力关系条目数', pass: relCount > 0, detail: relCount + ' 条' });
-      const activeCampaigns = gameState.campaigns.filter(c => !isCampaignFinished(c));
+      const activeCampaigns = gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status));
       const visibleCampaigns = activeCampaigns.filter(c => isCampaignVisibleOnMap(c));
       results.push({ check: '进行中战役', pass: activeCampaigns.length >= 0, detail: activeCampaigns.length + ' 场 (' + visibleCampaigns.length + ' 对玩家可见)' });
       const npcActive = activeCampaigns.filter(c => c.faction !== 'player');
@@ -5442,7 +4669,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         jingnanOpening: !!gameState.storyFlags?.jingnanOpening,
         blockedByTurn: gameState.turn < 3,
         blockedByOpening: gameState.currentAct === 1 && !!gameState.storyFlags?.jingnanOpening,
-        campaigns: gameState.campaigns.filter(c => !isCampaignFinished(c)).map(c => ({
+        campaigns: gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status)).map(c => ({
           id: c.id, faction: c.faction, source: c.source, target: c.target,
           routeMode: c.routeMode, visibility: c.visibility, status: c.status, phase: c.phase,
           visible: isCampaignVisibleOnMap(c)
@@ -5485,7 +4712,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
 
       const reports = [];
-      const finalSourceId = sourceId || getNpcCampaignSource(faction, targetCityId, routeMode);
+      const finalSourceId = sourceId || getNpcCampaignSource(faction, targetCityId);
       if (!finalSourceId) return toast(factionName(faction) + '没有可行的出兵城通往 ' + regionName(targetCityId));
       const sourceCity = gameState.cities[finalSourceId];
       const garrison = realTroops(sourceCity.garrison);
@@ -5494,6 +4721,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const plan = { faction, source: finalSourceId, target: targetCityId, troops, routeMode };
       const campaign = createNpcCampaign(plan, reports);
       if (campaign) {
+        campaign.routeMode = routeMode;
+        const isHiddenMode = routeMode === 'raid' || routeMode === 'night' || routeMode === 'stealth';
+        campaign.visibility = isHiddenMode ? 'hidden' : 'public';
         gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
         gameState.factionWarState.recentWars.push({
           attacker: faction,
@@ -5527,130 +4757,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
     }
 
-    // ========== 刘表庇护 NPC 攻击玩家 验证/测试函数 ==========
-
-    function validatePlayerThreatSystem() {
-      const exposure = getPlayerExposureLevel();
-
-      const npcTargets = Object.keys(FACTIONS)
-        .filter(f => f !== 'player')
-        .map(faction => ({
-          faction,
-          targets: getNpcAttackTargets(faction, { force: true }).map(id => ({
-            id,
-            name: gameState.cities?.[id]?.name,
-            controller: cityController(id),
-            score: playerTargetScoreForNpc(faction, id)
-          }))
-        }));
-
-      // 检测 createNpcCampaign 是否支持 routeMode
-      let createNpcCampaignSupportsRouteMode = false;
-      try {
-        const routeModeStr = createNpcCampaign.toString();
-        createNpcCampaignSupportsRouteMode =
-          routeModeStr.includes('routeMode') &&
-          routeModeStr.includes('findCampaignRoute(source, target, routeMode)');
-      } catch (e) { /* ignore */ }
-
-      // 检测 hidden 玩家目标是否会被 reportNpcCampaignEvent 泄漏
-      const activeNpcCampaigns = activeNpcCampaignsAgainstPlayer();
-      const hiddenPlayerCampaigns = activeNpcCampaigns.filter(c => c.visibility === 'hidden');
-      const hiddenPlayerCampaignLeaks = hiddenPlayerCampaigns.map(c => ({
-        id: c.id,
-        faction: c.faction,
-        source: c.source,
-        target: c.target,
-        routeMode: c.routeMode,
-        visibility: c.visibility,
-        note: 'hidden 战役已处理：reportNpcCampaignEvent 不会暴露具体势力和目标'
-      }));
-
-      // 检测旧 AI 绕过风险
-      const legacyAiBypassRisk = (() => {
-        const fn = runFactionAI.toString();
-        const hasCanNpcCheck = fn.includes('canNpcTargetPlayerCity');
-        const hasDirectCreate = fn.includes("faction: 'yuan'") || fn.includes("faction: 'cao'");
-        return {
-          hasCanNpcTargetPlayerCityCheck: hasCanNpcCheck,
-          hasDirectCreateNpcCampaign: hasDirectCreate,
-          note: hasCanNpcCheck
-            ? '旧 runFactionAI 已加入 canNpcTargetPlayerCity 检查，不会绕过新系统'
-            : '警告：runFactionAI 缺少 canNpcTargetPlayerCity 检查！'
-        };
-      })();
-
-      return {
-        protection: gameState.player?.protection,
-        independent: !!gameState.player?.independent,
-        exposure,
-        activeAgainstPlayer: activeNpcCampaigns.map(c => ({
-          id: c.id,
-          faction: c.faction,
-          source: c.source,
-          target: c.target,
-          targetName: gameState.cities?.[c.target]?.name,
-          status: c.status,
-          routeMode: c.routeMode,
-          visibility: c.visibility
-        })),
-        activeHiddenAgainstPlayer: hiddenPlayerCampaigns.map(c => ({
-          id: c.id,
-          faction: c.faction,
-          source: c.source,
-          target: c.target,
-          routeMode: c.routeMode,
-          visibility: c.visibility
-        })),
-        npcTargets,
-        createNpcCampaignSupportsRouteMode,
-        hiddenPlayerCampaignLeaks,
-        legacyAiBypassRisk
-      };
-    }
-
-    function forceNpcAttackPlayer(faction, targetId) {
-      const reports = [];
-      const targets = getNpcAttackTargets(faction, { force: true });
-      if (targetId && !targets.includes(targetId)) {
-        return { ok: false, reason: 'target-not-available', targets };
-      }
-
-      const plan = createNpcCampaignPlan(faction, { force: true, preferredTargetId: targetId });
-      if (!plan) return { ok: false, reason: 'no-plan', targets };
-
-      const campaign = createNpcCampaign(plan, reports);
-      if (campaign) {
-        gameState.factionWarState.lastAttackTurnByFaction[faction] = gameState.turn;
-        gameState.factionWarState.recentWars.push({
-          attacker: faction,
-          defender: cityController(plan.target),
-          source: plan.source,
-          target: plan.target,
-          turn: gameState.turn,
-          troops: plan.troops,
-          routeMode: plan.routeMode
-        });
-        if (gameState.factionWarState.recentWars.length > 20) {
-          gameState.factionWarState.recentWars.shift();
-        }
-        // hidden 玩家目标：不调用 reportNpcCampaignEvent（会暴露势力和目标），只显示模糊威胁
-        if (cityController(plan.target) === 'player' && campaign.visibility === 'hidden') {
-          reportNpcPlayerThreat(campaign, reports);
-        } else {
-          reportNpcCampaignEvent(campaign, 'march', reports);
-          reportNpcPlayerThreat(campaign, reports);
-        }
-        reports.forEach(r => addNews(r.tone, r.text));
-        render();
-        return { ok: true, campaign, reports };
-      }
-
-      return { ok: false, reason: 'create-failed', plan };
-    }
-
     function renderCampaignRoutes() {
-      const active = gameState.campaigns.filter(c => !isCampaignFinished(c) && isCampaignVisibleOnMap(c));
+      const active = gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status) && isCampaignVisibleOnMap(c));
       // 限制 NPC 可见路线数量，玩家战役不受限制
       const playerRoutes = active.filter(c => c.faction === 'player');
       let npcRoutes = active.filter(c => c.faction !== 'player');
@@ -5702,7 +4810,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const totals = cityTotals();
       const cities = controlledCities();
       const average = key => cities.length ? cities.reduce((sum, city) => sum + Number(city[key] || 0), 0) / cities.length : 0;
-      return { money: totals.money, food: totals.food, population: totals.population, troops: totals.troops, support: average('publicSupport'), order: average('order'), morale: average('morale'), protection: gameState.player.protection, campaigns: gameState.campaigns.filter(c => !isCampaignFinished(c)).length };
+      return { money: totals.money, food: totals.food, population: totals.population, troops: totals.troops, support: average('publicSupport'), order: average('order'), morale: average('morale'), protection: gameState.player.protection, campaigns: gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status)).length };
     }
 
     function buildPlayerDeltas(before, after) {
@@ -5741,10 +4849,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         <div class="modal-columns">
           <section class="modal-column"><h3>我方状态变化</h3>${renderPlayerDeltaPanel(summary)}</section>
           <section class="modal-column"><h3>当日战报 / 天下消息 / 来信</h3>
-            ${events.length ? events.map(function(event) {
-              var aiBtn = '';
+            ${events.length ? events.map(event => {
+              let aiButton = '';
               if (event.level === 'important' && !event.letterId) {
-                var payloadId = 'event_' + gameState.turn + '_' + simpleHash((event.id || '') + (event.text || ''));
+                const payloadId = 'event_' + gameState.turn + '_' + simpleHash((event.id || '') + (event.text || ''));
                 gameState.aiContentPayloads[payloadId] ||= {
                   id: event.id || '',
                   eventId: event.id || '',
@@ -5754,14 +4862,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
                   level: event.level || '',
                   turn: gameState.turn
                 };
-                aiBtn = '<div><button class="ghost-btn" data-ai-content-type="battleReportDetail" data-ai-content-payload-id="' + payloadId + '">AI 详析</button></div>';
+                aiButton = `<div><button class="ghost-btn" data-ai-content-type="battleReportDetail" data-ai-content-payload-id="${payloadId}">AI 详析</button></div>`;
               }
-              return '<div class="turn-event-item ' + event.level + '">'
-                + '<strong>' + escapeHtml(event.text) + '</strong>'
-                + (event.letterId ? '<div><button data-open-letter="' + event.letterId + '">打开来信</button></div>' : '')
-                + (event.level === 'important' && !event.letterId ? '<div><button data-open-turn-event="' + event.id + '">展开详情</button></div>' : '')
-                + aiBtn
-                + '</div>';
+              return `<div class="turn-event-item ${event.level}">
+                <strong>${escapeHtml(event.text)}</strong>
+                ${event.letterId ? `<div><button data-open-letter="${event.letterId}">打开来信</button></div>` : ''}
+                ${event.level === 'important' && !event.letterId ? `<div><button data-open-turn-event="${event.id}">展开详情</button></div>` : ''}
+                ${aiButton}
+              </div>`;
             }).join('') : '<div class="turn-event-item">本回合没有需要特别禀报的大事。</div>'}
           </section>
         </div>
@@ -5805,9 +4913,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
-
-    // ---------- 按需 AI 内容生成系统 ----------
-
     function canUseAiContentApi() {
       gameState.aiUsage ||= {};
       gameState.aiUsage.turn ||= gameState.turn;
@@ -5823,10 +4928,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
 
       const max = Number(gameState.aiUsage.maxContentCallsPerTurn || 6);
-      if (gameState.aiUsage.turnContentCalls >= max) {
-        return false;
-      }
-
+      if (gameState.aiUsage.turnContentCalls >= max) return false;
       gameState.aiUsage.turnContentCalls += 1;
       return true;
     }
@@ -5857,120 +4959,101 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           protection: gameState.player?.protection,
           independent: !!gameState.player?.independent,
           cityCount: controlledCities().length,
-          mainCities: controlledCities().slice(0, 4).map(function(c) {
-            return {
-              id: c.id,
-              name: c.name,
-              publicSupport: c.publicSupport,
-              food: c.food,
-              money: c.money,
-              defense: c.defense,
-              morale: c.morale
-            };
-          })
+          mainCities: controlledCities().slice(0, 4).map(city => ({
+            id: city.id,
+            name: city.name,
+            publicSupport: city.publicSupport,
+            food: city.food,
+            money: city.money,
+            defense: city.defense,
+            morale: city.morale
+          }))
         },
-        payload: payload,
-        recentEvents: (gameState.turnEvents || []).slice(-5).map(function(e) {
-          return { tone: e.tone, level: e.level, text: e.text };
-        }),
-        recentSummaries: (gameState.turnSummaries || []).slice(0, 2).map(function(s) {
-          return {
-            turn: s.turn,
-            date: s.date,
-            events: (s.events || []).slice(0, 4).map(function(e) { return e.text; })
-          };
-        })
+        payload,
+        recentEvents: (gameState.turnEvents || []).slice(-5).map(event => ({
+          tone: event.tone,
+          level: event.level,
+          text: event.text
+        })),
+        recentSummaries: (gameState.turnSummaries || []).slice(0, 2).map(summary => ({
+          turn: summary.turn,
+          date: summary.date,
+          events: (summary.events || []).slice(0, 4).map(event => event.text)
+        }))
       };
     }
 
     function generateAiContentFallback(type, context) {
-      var p = context.payload || {};
-
+      const payload = context.payload || {};
       if (type === 'advisorAdvice') {
         return [
           '臣以为，当前局势不可只看一城一地。',
-          p.cityName ? p.cityName + '之事，关乎民心、粮草与守备三端。' : '',
+          payload.cityName ? payload.cityName + '之事，关乎民心、粮草与守备三端。' : '',
           '若府库尚足，可先稳民心；若敌军逼近，则应先整军修防。',
           '主公宜择其急者而行，不可使内政与军务同时失衡。'
         ].filter(Boolean).join('');
       }
-
       if (type === 'npcMessage') {
         return [
-          p.npcName ? p.npcName + '遣人传话：' : '有人传话：',
-          p.summary || '局势有变，还请主公早作决断。'
+          payload.npcName ? payload.npcName + '遣人传话：' : '有人传话：',
+          payload.summary || '局势有变，还请主公早作决断。'
         ].join('');
       }
-
       if (type === 'letterBody') {
         return [
-          p.senderName ? p.senderName + '来信：' : '来信：',
-          p.summary || '近来局势多变，愿与主公再议后事。'
+          payload.senderName ? payload.senderName + '来信：' : '来信：',
+          payload.summary || '近来局势多变，愿与主公再议后事。'
         ].join('');
       }
-
       if (type === 'battleReportDetail') {
         return [
           '此役虽只见战报数行，实则牵动军心与地势。',
-          p.summary || '',
+          payload.summary || '',
           '若继续进兵，需留意粮道与后方守备。'
         ].filter(Boolean).join('');
       }
-
-      return p.summary || '局势未明，仍需主公亲自权衡。';
+      return payload.summary || '局势未明，仍需主公亲自权衡。';
     }
 
     async function generateAiContent(type, payload) {
       gameState.aiContentCache ||= {};
       gameState.aiContentPending ||= {};
+      const key = buildAiContentKey(type, payload);
+      const cached = gameState.aiContentCache[key];
+      if (cached?.text) return cached.text;
+      if (gameState.aiContentPending[key]) return gameState.aiContentPending[key];
 
-      var key = buildAiContentKey(type, payload);
-
-      var cached = gameState.aiContentCache[key];
-      if (cached && cached.text) {
-        return cached.text;
-      }
-
-      if (gameState.aiContentPending[key]) {
-        return gameState.aiContentPending[key];
-      }
-
-      var context = buildCompactAiContentContext(type, payload);
-
-      var task = (async function() {
-        var text;
-        var usedApi = false;
-
+      const context = buildCompactAiContentContext(type, payload);
+      const task = (async () => {
+        let text = '';
+        let usedApi = false;
         try {
-          if (canUseAiContentApi() && window.remoteLLMAdapter && window.remoteLLMAdapter.generateAiContent) {
+          if (canUseAiContentApi() && window.remoteLLMAdapter?.generateAiContent) {
             text = await window.remoteLLMAdapter.generateAiContent(context);
             usedApi = true;
           } else {
             text = generateAiContentFallback(type, context);
           }
-        } catch (err) {
-          console.error('AI 内容生成失败，使用 fallback', type, err);
+        } catch (error) {
+          console.error('AI 内容生成失败，使用 fallback', type, error);
           text = generateAiContentFallback(type, context);
         }
 
         text = String(text || '').trim() || generateAiContentFallback(type, context);
-
         gameState.aiContentCache[key] = {
-          key: key,
-          type: type,
+          key,
+          type,
           turn: gameState.turn,
           title: payload.title || '',
-          text: text,
+          text,
           source: usedApi ? 'api' : 'fallback',
           createdAt: Date.now()
         };
-
         saveToStorage(false);
         return text;
       })();
 
       gameState.aiContentPending[key] = task;
-
       try {
         return await task;
       } finally {
@@ -5979,33 +5062,20 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function openAiContentModal(type, payload) {
-      var title = payload.title || '详情';
-      gameState.activeModal = {
-        type: 'aiContent',
-        contentType: type,
-        payload: payload,
-        title: title,
-        loading: true,
-        text: ''
-      };
-
+      const title = payload.title || '详情';
+      gameState.activeModal = { type: 'aiContent', contentType: type, payload, title, loading: true, text: '' };
       renderModal();
-
-      generateAiContent(type, payload).then(function(text) {
-        if (
-          gameState.activeModal &&
-          gameState.activeModal.type === 'aiContent' &&
-          gameState.activeModal.contentType === type
-        ) {
+      generateAiContent(type, payload).then(text => {
+        if (gameState.activeModal?.type === 'aiContent' && gameState.activeModal.contentType === type) {
           gameState.activeModal.loading = false;
           gameState.activeModal.text = text;
-          var key = buildAiContentKey(type, payload);
-          gameState.activeModal.source = (gameState.aiContentCache[key] && gameState.aiContentCache[key].source) || 'fallback';
+          const key = buildAiContentKey(type, payload);
+          gameState.activeModal.source = gameState.aiContentCache[key]?.source || 'fallback';
           renderModal();
         }
-      }).catch(function(err) {
-        console.error('AI 内容弹窗生成失败', err);
-        if (gameState.activeModal && gameState.activeModal.type === 'aiContent') {
+      }).catch(error => {
+        console.error('AI 内容弹窗生成失败', error);
+        if (gameState.activeModal?.type === 'aiContent') {
           gameState.activeModal.loading = false;
           gameState.activeModal.text = generateAiContentFallback(type, buildCompactAiContentContext(type, payload));
           gameState.activeModal.source = 'fallback';
@@ -6017,29 +5087,36 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function normalizeAiContentCache() {
       gameState.aiContentCache ||= {};
       gameState.aiContentPayloads ||= {};
-
-      Object.keys(gameState.aiContentCache).forEach(function(key) {
-        var item = gameState.aiContentCache[key];
-        if (!item || gameState.turn - Number(item.turn || 0) > 3) {
-          delete gameState.aiContentCache[key];
-        }
+      Object.keys(gameState.aiContentCache).forEach(key => {
+        const item = gameState.aiContentCache[key];
+        if (!item || gameState.turn - Number(item.turn || 0) > 3) delete gameState.aiContentCache[key];
       });
-
-      Object.keys(gameState.aiContentPayloads || {}).forEach(function(id) {
-        var payload = gameState.aiContentPayloads[id];
-        if (payload && payload.turn != null && gameState.turn - payload.turn > 3) {
-          delete gameState.aiContentPayloads[id];
-        }
+      Object.keys(gameState.aiContentPayloads).forEach(id => {
+        const payload = gameState.aiContentPayloads[id];
+        if (payload && payload.turn != null && gameState.turn - payload.turn > 3) delete gameState.aiContentPayloads[id];
       });
     }
 
-    // ---------- 按需 AI 内容生成系统结束 ----------
+    function getLetterBackdropClass(letter) {
+      const sourceText = [
+        letter?.senderId,
+        letter?.senderName,
+        letter?.senderFaction,
+        letter?.title,
+        letter?.body,
+        letter?.kind
+      ].join(' ');
+      if (letter?.senderId === 'liuBiao' || letter?.critical) return 'letter-bg-arrival';
+      if (/军|兵|战|营|攻|守|粮道|断粮|刺探|谋略|内应|伏|援|防务/.test(sourceText)) return 'letter-bg-war';
+      return 'letter-bg-study';
+    }
 
     function renderModal() {
       const root = document.getElementById('gameModalRoot');
       if (!root) return;
       const modal = gameState.activeModal;
       root.classList.toggle('show', Boolean(modal));
+      root.classList.toggle('letter-open', modal?.type === 'letter');
       if (!modal) {
         root.innerHTML = '';
         return;
@@ -6065,7 +5142,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const letter = gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
         letter.read = true;
-        var letterPayloadId = 'letter_' + letter.id + '_' + gameState.turn;
+        const letterPayloadId = 'letter_' + letter.id + '_' + gameState.turn;
         gameState.aiContentPayloads ||= {};
         gameState.aiContentPayloads[letterPayloadId] ||= {
           id: 'letter_' + letter.id,
@@ -6074,10 +5151,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           senderName: letter.senderName || '',
           title: letter.title || '',
           summary: letter.summary || letter.body || '',
-          choices: (letter.choices || []).map(function(c) { return c.label; }),
+          choices: (letter.choices || []).map(choice => choice.label),
           turn: gameState.turn
         };
-        var letterGuideHint = '';
+        let letterGuideHint = '';
         if (isGuideActive() && letter.choices && letter.choices.length > 0) {
           letterGuideHint = '<div class="guide-options-list" style="margin-top:12px;">';
           letter.choices.forEach(choice => {
@@ -6092,7 +5169,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           });
           letterGuideHint += '</div>';
         }
-        root.innerHTML = `<div class="game-modal">
+        root.innerHTML = `<div class="game-modal letter-modal ${getLetterBackdropClass(letter)}">
           <div class="letter-head"><div><h2>${escapeHtml(letter.title)}</h2><span class="tag">${escapeHtml(letter.senderName)}｜${escapeHtml(letter.date)}</span></div></div>
           <div class="letter-body">${escapeHtml(letter.body)}</div>
           ${letterGuideHint}
@@ -6108,6 +5185,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           <div class="modal-head"><h2>${escapeHtml(modal.title)}</h2><button class="ghost-btn" data-close-modal="1">收起</button></div>
           <div class="dialogue-text">${escapeHtml(modal.text)}</div>
         </div>`;
+        return;
+      }
+      if (modal.type === 'aiContent') {
+        root.innerHTML = renderAiContentModal(modal);
         return;
       }
       if (modal.type === 'urgent') {
@@ -6239,14 +5320,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function renderAiContentModal(modal) {
-      var loading = modal.loading;
-      var sourceLabel = '';
-      if (!loading && modal.source === 'fallback') {
-        sourceLabel = '<span class="tag muted">本地简版</span>';
-      } else if (!loading && modal.source === 'api') {
-        sourceLabel = '<span class="tag">AI 生成</span>';
-      }
-
+      const sourceLabel = !modal.loading && modal.source === 'fallback'
+        ? '<span class="tag muted">本地简版</span>'
+        : (!modal.loading && modal.source === 'api' ? '<span class="tag">AI 生成</span>' : '');
       return [
         '<div class="game-modal">',
         '<div class="modal-head">',
@@ -6255,7 +5331,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         '<button class="ghost-btn" data-close-modal="1">关闭</button>',
         '</div>',
         '<div class="card">',
-        loading
+        modal.loading
           ? '<p class="muted">谋士正在整理言辞……</p>'
           : '<p class="dialogue-text">' + escapeHtml(modal.text || '暂无内容。') + '</p>',
         '</div>',
@@ -6292,14 +5368,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (controller === 'player' && oldController !== 'player') {
         gameState.player.prestige = clamp(gameState.player.prestige + (options.prestige || 5), 0, 100);
         if (region.nominalOwner === 'liubiao' && regionId !== gameState.player.startingCity && !options.skipProtectionDecay) {
-          const before = gameState.player.protection;
-          gameState.player.protection = 0;
-          const reason = '你擅自出兵攻占刘表名义属地 ' + region.name + '，襄阳震怒，庇护瞬间化为乌有（' + before + ' → 0）。';
-          if (reports) {
-            reports.push({ tone: 'bad', text: reason });
-          } else {
-            addNews('bad', reason);
-          }
+          applyProtectionDecay(18, '你私自接管刘表名义属地 ' + region.name, reports);
         }
         if (region.nominalOwner === 'yuan' && !gameState.player.independent) {
           gameState.characters.yuanShao.alert = clamp(gameState.characters.yuanShao.alert + (options.alert || 10), 0, 100);
@@ -6349,10 +5418,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       window.runNpcWarAI = runNpcWarAI;
       window.validateNpcCampaignSystem = validateNpcCampaignSystem;
       window.forceNpcCampaign = forceNpcCampaign;
-      window.validatePlayerThreatSystem = validatePlayerThreatSystem;
-      window.forceNpcAttackPlayer = forceNpcAttackPlayer;
-      window.getPlayerExposureLevel = getPlayerExposureLevel;
-      window.activeNpcCampaignsAgainstPlayer = activeNpcCampaignsAgainstPlayer;
       window.reloadMapEditorRegions = () => {
         manualMapRegions = null;
         mapData = createMapData();
@@ -6525,10 +5590,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function resetActionPoints() {
       gameState.actionPoints = getMaxActionPoints();
-      if (gameState.appointments) {
-        gameState.appointments.autoGovSpentThisTurn = 0;
-        gameState.appointments.autoMilSpentThisTurn = 0;
-      }
     }
 
     function normalizeActionPointsAfterLoad() {
@@ -6542,7 +5603,21 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function sanitizeChineseName(value) {
-      return (String(value || '').match(/[\u4e00-\u9fff]/g) || []).join('').slice(0, 6);
+      return Array.from(String(value || '').normalize('NFKC'))
+        .filter(char => /[\u3400-\u9fffA-Za-z0-9·._-]/.test(char))
+        .join('')
+        .slice(0, 12);
+    }
+
+    function playerNameLength(value) {
+      return Array.from(String(value || '')).reduce((total, char) => {
+        return total + (/[\u3400-\u9fff]/.test(char) ? 1 : 0.5);
+      }, 0);
+    }
+
+    function isValidPlayerName(value) {
+      const length = playerNameLength(value);
+      return length === 0 || (length >= 2 && length <= 6);
     }
 
     function randomChineseName() {
@@ -6551,35 +5626,340 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return surnames[Math.floor(Math.random() * surnames.length)] + given[Math.floor(Math.random() * given.length)];
     }
 
+    function syncCharacterCreationStageClasses() {
+      const characterCreate = document.getElementById('characterCreate');
+      if (!characterCreate) return;
+      const stageBackgrounds = {
+        arrival: './assets/opening/opening_arrival_landscape.png',
+        name: './assets/opening/opening_name_study.png',
+        identity: './assets/opening/opening_identity_war_camp.png',
+        confirm: './assets/opening/opening_identity_war_camp.png'
+      };
+      ['arrival', 'name', 'identity', 'confirm'].forEach(step => {
+        characterCreate.classList.toggle('stage-' + step, characterCreationStep === step);
+      });
+      characterCreate.dataset.creationStage = characterCreationStep;
+      characterCreate.style.setProperty('--creation-bg-image', `url("${stageBackgrounds[characterCreationStep] || stageBackgrounds.arrival}")`);
+    }
+
     function updateCharacterCreation() {
       const input = document.getElementById('playerNameInput');
       const note = document.getElementById('nameValidation');
+      const namePreview = document.getElementById('namePreview');
       const start = document.querySelector('[data-start-game]');
       if (!input || !note || !start) return;
+      syncCharacterCreationStageClasses();
       if (!isComposingPlayerName && input.value !== characterDraft.name) input.value = characterDraft.name;
       document.querySelectorAll('[data-identity]').forEach(button => {
         button.classList.toggle('selected', button.getAttribute('data-identity') === characterDraft.identity);
       });
-      const length = characterDraft.name.length;
-      const valid = length === 0 || (length >= 2 && length <= 6);
+      const valid = isValidPlayerName(characterDraft.name);
       note.classList.toggle('bad', !valid);
       note.textContent = valid
-        ? (length ? '姓名有效。' : '姓名留空时，将自动生成一个中文名。')
-        : '姓名需为 2 到 6 个中文字符。';
+        ? '姓名须二至六字；英文与数字按半字计算；若不具名，主簿将代拟入册。'
+        : '姓名须二至六字，英文与数字按半字计算。';
       start.disabled = !valid;
+
+      const steps = ['arrival', 'name', 'identity', 'confirm'];
+      const currentIndex = steps.indexOf(characterCreationStep);
+      document.querySelectorAll('[data-creation-step]').forEach(step => {
+        step.classList.toggle('active', step.getAttribute('data-creation-step') === characterCreationStep);
+      });
+      document.querySelectorAll('[data-dialogue-progress]').forEach(step => {
+        const stepIndex = steps.indexOf(step.getAttribute('data-dialogue-progress'));
+        step.classList.toggle('current', stepIndex === currentIndex);
+        step.classList.toggle('done', stepIndex < currentIndex);
+      });
+
+      const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
+      const draftName = characterDraft.name || '名册待录';
+      const speaker = document.getElementById('creationSpeaker');
+      const line = document.getElementById('creationLine');
+      const voiceMark = document.getElementById('dialogueVoiceMark');
+      const identityBrief = document.getElementById('identityBrief');
+      const commissionName = document.getElementById('commissionName');
+      const commissionIdentity = document.getElementById('commissionIdentity');
+      if (namePreview) namePreview.textContent = draftName === '名册待录' ? '名册待录' : '已录 · ' + draftName;
+      if (commissionName) commissionName.textContent = draftName;
+      if (commissionIdentity) commissionIdentity.textContent = identity.name;
+      const identityBriefs = {
+        commandant: '朱笔旁批：桂阳都尉。定位军事控局；优势在郡兵与军令，风险是地方士族起初更谨慎。',
+        granary: '朱笔旁批：桂阳督粮官。定位屯田后勤；优势在粮草与府库，风险是正面军力略弱。',
+        magistrate: '朱笔旁批：桂阳县令。定位民政治安；优势在民心、治安与政务，风险是军事起步较弱。'
+      };
+      if (identityBrief) identityBrief.textContent = identityBriefs[identity.id] || identityBriefs.commandant;
+
+      const dialogue = {
+        arrival: {
+          speaker: '荆州牧 · 刘表',
+          mark: '刘',
+          line: '“桂阳虽远，实为荆南门户。此令不入明堂，只在今夜交予你。”'
+        },
+        name: {
+          speaker: '州府主簿',
+          mark: '簿',
+          line: '“主公问你名姓，不为虚礼。此名一落，桂阳诸署皆认此令。”'
+        },
+        identity: {
+          speaker: '荆州牧 · 刘表',
+          mark: '刘',
+          line: '“' + draftName + '，桂阳兵、粮、民心皆不可偏废。你先执哪一柄，便先承哪一重责。”'
+        },
+        confirm: {
+          speaker: '荆州牧 · 刘表',
+          mark: '令',
+          line: '“刘表已落印，桂阳自此归你节制。先稳门户，再谈天下。”'
+        }
+      };
+      const currentDialogue = dialogue[characterCreationStep] || dialogue.arrival;
+      if (speaker) speaker.textContent = currentDialogue.speaker;
+      if (line) line.textContent = currentDialogue.line;
+      if (voiceMark) voiceMark.textContent = currentDialogue.mark || currentDialogue.speaker.slice(0, 1);
     }
 
-    function startNewCharacter() {
+    function getStoredSaveSummary() {
+      const candidates = [SAVE_KEY, SAVE_KEY_BACKUP];
+      for (const key of candidates) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const stored = JSON.parse(raw);
+          if (!sanitizeLoadedData(stored) || !stored.storyFlags?.characterCreated) continue;
+          return {
+            turn: stored.turn || 1,
+            playerName: stored.player?.name || '无名之士',
+            savedAt: Number(localStorage.getItem(SAVE_KEY + ':lastSavedAt')) || null
+          };
+        } catch (_) {
+          // 损坏的候选存档会由读取流程尝试回退。
+        }
+      }
+      return null;
+    }
+
+    function authUserFromBackend(user) {
+      const username = user?.username || 'guest';
+      return {
+        id: user?.id || null,
+        username,
+        account: username,
+        displayName: user?.displayName || username,
+        isGuest: Boolean(user?.isGuest)
+      };
+    }
+
+    function persistBackendAuthSession(payload) {
+      if (!payload?.token || !payload?.user) throw new Error('AUTH_PAYLOAD_INVALID');
+      writeBackendSession(payload);
+      return authUserFromBackend(payload.user);
+    }
+
+    function authErrorMessage(error) {
+      const code = error?.payload?.error || error?.message;
+      if (code === 'USERNAME_TAKEN') return '这个账号已经被注册了。';
+      if (code === 'INVALID_CREDENTIALS') return '账号或密钥不正确。';
+      if (code === 'USERNAME_AND_PASSWORD_REQUIRED') return '账号需 3-40 位，只能使用字母、数字、下划线、点、@ 或短横线；密钥至少 6 位。';
+      if (code === 'AUTH_PAYLOAD_INVALID') return '后端返回的登录凭证不完整。';
+      return error?.message || '未知错误';
+    }
+
+    const authApi = {
+      async login(payload) {
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
+      },
+      async register(payload) {
+        const account = payload.account.trim();
+        const result = await backendFetch('/api/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: account,
+            password: payload.password,
+            displayName: account
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
+      },
+      async guest() {
+        const result = await backendFetch('/api/auth/guest', {
+          method: 'POST',
+          body: JSON.stringify({
+            deviceId: getBackendDeviceId(),
+            displayName: '游客'
+          })
+        }, { skipAuth: true });
+        return { ok: true, user: persistBackendAuthSession(result) };
+      }
+    };
+    window.sanguoAuthApi = authApi;
+
+    function updateAuthScreen() {
+      const screen = document.getElementById('authScreen');
+      if (!screen) return;
+      screen.querySelectorAll('[data-auth-mode]').forEach(button => {
+        button.classList.toggle('active', button.getAttribute('data-auth-mode') === authMode);
+      });
+      const title = document.getElementById('authPanelTitle');
+      const kicker = document.getElementById('authPanelKicker');
+      const submit = document.getElementById('authSubmit');
+      const password = document.getElementById('authPassword');
+      if (title) title.textContent = authMode === 'register' ? '注册新账号' : '登录账号';
+      if (kicker) kicker.textContent = authMode === 'register' ? '新牒入册' : '府牒验身';
+      if (submit) submit.textContent = authMode === 'register' ? '注册' : '登录';
+      if (password) password.autocomplete = authMode === 'register' ? 'new-password' : 'current-password';
+    }
+
+    function readAuthPayload() {
+      return {
+        account: document.getElementById('authAccount')?.value.trim() || '',
+        password: document.getElementById('authPassword')?.value || ''
+      };
+    }
+
+    function setAuthStatus(message, bad = false) {
+      const status = document.getElementById('authStatus');
+      if (!status) return;
+      status.textContent = message;
+      status.classList.toggle('bad', bad);
+    }
+
+    function enterMainMenuAfterAuth(user) {
+      authUser = user || { account: 'guest', displayName: '游客' };
+      try {
+        sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authUser));
+      } catch (_) {
+        // 浏览器隐私模式下无法写入时，保留内存登录态即可。
+      }
+      launchScreen = 'menu';
+      render();
+    }
+
+    async function submitAuthForm() {
+      const payload = readAuthPayload();
+      if (!payload.account) return setAuthStatus('请先写下账号。', true);
+      if (payload.password.length < 6) return setAuthStatus('密钥至少需要 6 个字符。', true);
+      setAuthStatus(authMode === 'register' ? '正在登记新牒...' : '正在校验府牒...');
+      try {
+        const result = await authApi[authMode](payload);
+        if (!result?.ok) return setAuthStatus(result?.message || '校验未通过。', true);
+        enterMainMenuAfterAuth(result.user);
+      } catch (error) {
+        setAuthStatus('请求后端失败：' + authErrorMessage(error), true);
+      }
+    }
+
+    async function enterAsGuest() {
+      setAuthStatus('正在创建游客身份...');
+      try {
+        const result = await authApi.guest();
+        enterMainMenuAfterAuth(result.user);
+      } catch (error) {
+        setAuthStatus('游客入口请求后端失败：' + authErrorMessage(error), true);
+      }
+    }
+
+    function updateMainMenu() {
+      const summary = getStoredSaveSummary();
+      const continueButton = document.getElementById('continueGame');
+      const status = document.getElementById('menuSaveStatus');
+      if (continueButton) continueButton.disabled = !summary;
+      if (!status) return;
+      if (!summary) {
+        status.textContent = '尚无可继续的本地进度。开始新游戏后，序章将从头播放。';
+        return;
+      }
+      const savedAt = summary.savedAt ? new Date(summary.savedAt).toLocaleString('zh-CN') : '时间未知';
+      status.textContent = '最近进度｜' + summary.playerName + '｜第 ' + summary.turn + ' 回合｜' + savedAt;
+    }
+
+    function renderLaunchLayers() {
+      document.getElementById('authScreen')?.classList.toggle('show', launchScreen === 'auth');
+      document.getElementById('mainMenu')?.classList.toggle('show', launchScreen === 'menu');
+      const characterCreate = document.getElementById('characterCreate');
+      characterCreate?.classList.toggle('show', launchScreen === 'character');
+      syncCharacterCreationStageClasses();
+      document.getElementById('intro')?.classList.toggle('show', launchScreen === 'intro');
+      document.getElementById('officeHandoff')?.classList.toggle('show', launchScreen === 'handoff');
+      const transition = document.getElementById('openingTransition');
+      transition?.classList.toggle('show', launchScreen === 'transition' || launchScreen === 'commissioning');
+      transition?.classList.toggle('departure', launchScreen === 'commissioning');
+      updateAuthScreen();
+      updateMainMenu();
+    }
+
+    function resetRuntimeForNewGame() {
+      gameState = createInitialState();
+      characterDraft = { name: '', identity: 'commandant' };
+      characterCreationStep = 'arrival';
+      FACTIONS.player.name = '玩家';
+      manualMapRegions = null;
+      mapData = createMapData();
+      syncMapDataFromGameState();
+      if (autosaveTimer) clearInterval(autosaveTimer);
+      autosaveTimer = null;
+      updateAutosaveDisplay();
+    }
+
+    function beginNewGameFlow() {
+      stopOpeningTransition();
+      stopOfficeHandoffTransition();
+      resetRuntimeForNewGame();
+      launchScreen = 'character';
+      render();
+    }
+
+    async function resumeSavedGame(show = true) {
+      stopOpeningTransition();
+      stopOfficeHandoffTransition();
+      const loaded = await loadGameProgress(show);
+      if (!loaded || !loaded.storyFlags?.characterCreated) {
+        if (show) toast('没有可继续的游戏进度');
+        return false;
+      }
+      gameState = loaded;
+      gameState.storyFlags.introSeen = true;
+      characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
+      FACTIONS.player.name = gameState.player.name || '玩家';
+      mapData = createMapData();
+      syncMapDataFromGameState();
+      normalizeActionPointsAfterLoad();
+      launchScreen = 'game';
+      startAutosaveTimer();
+      updateAutosaveDisplay();
+      render();
+      return true;
+    }
+
+    function returnToMainMenu() {
+      stopIntroVideo();
+      stopOpeningTransition();
+      stopOfficeHandoffTransition();
+      launchScreen = 'menu';
+      render();
+    }
+
+    function startNewCharacter(options = {}) {
       if (gameState.storyFlags.characterCreated) return;
       const identity = PLAYER_IDENTITIES[characterDraft.identity] || PLAYER_IDENTITIES.commandant;
       const name = characterDraft.name || randomChineseName();
-      if (name.length < 2 || name.length > 6) {
+      if (!isValidPlayerName(name)) {
         updateCharacterCreation();
-        return toast('姓名需为 2 到 6 个中文字符');
+        return toast('姓名须二至六字');
       }
       const guiyang = gameState.cities.guiyang;
       characterDraft.name = name;
       gameState.player.name = name;
+      if (gameState.characterRoster.player) {
+        gameState.characterRoster.player.name = name;
+        gameState.characterRoster.player.portraitPlaceholder = name.slice(-2);
+      }
       gameState.player.title = identity.title;
       gameState.player.birthplace = '桂阳';
       gameState.player.startingCity = 'guiyang';
@@ -6599,9 +5979,24 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const center = getRegion('guiyang')?.center || guiyang;
       setMapFocusOn(center.x, center.y, 2.55);
       resetActionPoints();
+      gameState.storyFlags.introSeen = true;
+      gameState.currentGoal = '稳定桂阳：整顿治安，安抚士族，备粮并训练郡兵。';
+      addNews('good', '刘表密令：桂阳实际控制权交予' + gameState.player.name + '。第一阶段目标：稳定桂阳。');
+      launchScreen = 'game';
+      updateTabLockStates();
       saveToStorage(false);
+      startAutosaveTimer();
+      updateAutosaveDisplay();
       render();
-      beginIntro();
+      const showIntroGuide = () => {
+        if (launchScreen !== 'game' || !gameState.storyFlags.characterCreated) return;
+        initTutorialGuide();
+      };
+      if (options.delayGuide) {
+        setTimeout(showIntroGuide, 650);
+      } else {
+        showIntroGuide();
+      }
     }
 
     function renderTutorialCard() {
@@ -6677,27 +6072,16 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       renderRightPanel();
       renderStrategyDock();
       updateTabLockStates();
-      renderModal();
+      if (launchScreen === 'game') {
+        renderModal();
+      } else {
+        const modalRoot = document.getElementById('gameModalRoot');
+        modalRoot?.classList.remove('show');
+        if (modalRoot) modalRoot.innerHTML = '';
+      }
       document.getElementById('playerRank').textContent = gameState.player.title;
-      const charCreateVisible = !gameState.storyFlags.characterCreated;
-      const introVisible = gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen;
-      document.getElementById('characterCreate').classList.toggle('show', charCreateVisible);
-      document.getElementById('intro').classList.toggle('show', introVisible);
-      const topbar = document.querySelector('.topbar');
-      if (topbar) {
-        topbar.classList.toggle('topbar-dim', charCreateVisible);
-        topbar.classList.toggle('topbar-hide', introVisible);
-      }
+      renderLaunchLayers();
       updateCharacterCreation();
-      // Restore guide highlights after DOM rebuild
-      if (isGuideActive() && gameState.tutorial.highlightedElements?.length > 0) {
-        requestAnimationFrame(() => {
-          gameState.tutorial.highlightedElements.forEach(selector => {
-            const el = document.querySelector(selector);
-            if (el) el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
-          });
-        });
-      }
     }
 
     function renderHud() {
@@ -6708,13 +6092,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         ['当前目标', gameState.currentGoal],
         ['粮草', fmt(totals.food)],
         ['府库', fmt(totals.money)],
-        ['刘表庇护', gameState.player.protection + ' / 100', 'protectionHelp'],
-        ['士族疑心', gameState.characters.jingnanGentry.suspicion + ' / 100', 'suspicionHelp']
+        ['刘表庇护', gameState.player.protection + ' / 100'],
+        ['士族疑心', gameState.characters.jingnanGentry.suspicion + ' / 100']
       ];
-      document.getElementById('hud').innerHTML = items.map(item => {
-        const helpAttr = item[2] ? ` data-help-key="${item[2]}"` : '';
-        return `<div class="hud-item"${helpAttr}><span>${item[0]}</span><strong>${item[1]}</strong></div>`;
-      }).join('');
+      document.getElementById('hud').innerHTML = items.map(item => `
+        <div class="hud-item"><span>${item[0]}</span><strong>${item[1]}</strong></div>
+      `).join('');
     }
 
     function getActName() {
@@ -6729,17 +6112,22 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const cities = controlledCities();
       const totals = cityTotals();
       document.getElementById('leftPanel').innerHTML = `
-        <div class="card">
-          <h3>${p.name}｜${p.title}</h3>
-          <div class="kv-grid">
-            <div class="kv"><span>实际控城</span><strong>${cities.length} 座</strong></div>
-            <div class="kv"><span>总驻军</span><strong>${fmt(totals.troops)}</strong></div>
+        <div class="card commander-card">
+          <div class="commander-heading">
+            <span>桂阳署印</span>
+            <h3>${p.name}｜${p.title}</h3>
+          </div>
+          <div class="commander-summary">
+            <strong>${cities.length} 座控城</strong>
+            <span>驻军 ${fmt(totals.troops)}｜战役槽 ${activeCampaignSlotCount()} / ${p.commandSlots}</span>
+          </div>
+          <div class="kv-grid commander-facts">
             <div class="kv"><span>声望</span><strong>${p.prestige}</strong></div>
             <div class="kv"><span>野心</span><strong>${p.ambition}</strong></div>
-            <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${getCampaignSlotLimit()}</strong></div>
             <div class="kv"><span>紧急事务</span><strong>${gameState.urgentMatters.filter(item => !item.resolved).length}</strong></div>
+            <div class="kv"><span>府库合计</span><strong>${fmt(totals.money)}</strong></div>
           </div>
-          ${metric('刘表庇护', p.protection, 'protectionHelp')}
+          ${metric('刘表庇护', p.protection)}
           ${metric('士族信任', gameState.characters.jingnanGentry.trust)}
           ${metric('豪强影响', gameState.characters.guiyangClans.influence)}
           ${metric('合法性', p.legitimacy)}
@@ -6879,9 +6267,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return result.slice(0, 2);
     }
 
-    function metric(label, value, helpKey) {
-      const attr = helpKey ? ` data-help-key="${helpKey}"` : '';
-      return `<div class="metric"${attr}><span>${label}</span><div class="meter"><i style="--value:${clamp(value, 0, 100)}%"></i></div><strong>${Math.round(value)}</strong></div>`;
+    function metric(label, value) {
+      return `<div class="metric"><span>${label}</span><div class="meter"><i style="--value:${clamp(value, 0, 100)}%"></i></div><strong>${Math.round(value)}</strong></div>`;
     }
 
     function apBox(label, value) {
@@ -6890,6 +6277,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function renderMap() {
       syncMapDataFromGameState();
+      normalizeMapView();
       const transform = `translate(${gameState.mapState.panX} ${gameState.mapState.panY}) scale(${gameState.mapState.zoom})`;
       document.getElementById('mapWorld').setAttribute('transform', transform);
       renderMapPatchLayer();
@@ -7184,7 +6572,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           </g>
         `;
       }).join('');
-      const marching = gameState.campaigns.filter(campaign => !isCampaignFinished(campaign) && isCampaignVisibleOnMap(campaign)).map(campaign => {
+      const marching = gameState.campaigns.filter(campaign => !['complete', 'cancelled'].includes(campaign.status) && isCampaignVisibleOnMap(campaign)).map(campaign => {
         const from = getRegion(campaign.source)?.center || gameState.cities[campaign.source];
         const to = getRegion(campaign.target)?.center || gameState.cities[campaign.target];
         if (!from || !to) return '';
@@ -7267,7 +6655,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
       if (gameState.activePanel === 'military') {
         rightTitle.textContent = '军府';
-        rightTag.textContent = activeCampaignSlotCount() + ' / ' + getCampaignSlotLimit() + ' 战役槽';
+        rightTag.textContent = activeCampaignSlotCount() + ' / ' + gameState.player.commandSlots + ' 战役槽';
         panel.innerHTML = renderMilitaryPanel();
         return;
       }
@@ -7300,60 +6688,26 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function characterMatchesFilter(character, filter) {
-      if (!filter || filter === 'all') return true;
-
-      if (filter.startsWith('faction:')) {
-        return character.faction === filter.slice('faction:'.length);
-      }
-
+      if (filter === 'all') return true;
       if (filter === 'recruited') return character.status === 'recruited';
-      if (filter === 'contactable') {
-        return ['discovered', 'contactable'].includes(character.status);
-      }
+      if (filter === 'contactable') return character.status === 'contactable';
       if (filter === 'rumored') return character.status === 'rumored';
       if (filter === 'historical') return character.historical;
       if (filter === 'random') return character.randomTalent;
-      if (filter === '名士') return character.type === '名士';
-      if (filter === '医者') return character.type === '医者';
-      if (filter === '豪强') return character.type === '豪强';
-      if (filter === '方士') return character.type === '方士';
       return character.type === filter;
     }
 
     function renderCharacterPanel() {
       const filter = gameState.characterFilter || 'all';
       const characters = visibleCharacters().filter(character => characterMatchesFilter(character, filter));
-      if (gameState.characterProfileId) {
-        const profile = gameState.characterRoster?.[gameState.characterProfileId];
-        if (
-          profile &&
-          isExternalCharacter(profile) &&
-          profile.status !== 'hidden' &&
-          profile.status !== 'dead'
-        ) {
-          return renderCharacterProfilePage(profile);
-        }
-        gameState.characterProfileId = null;
-      }
       let selected = gameState.characterRoster?.[gameState.selectedCharacterId];
-
-      if (
-        !selected ||
-        isInternalPlayerCharacterId(selected.id) ||
-        selected.status === 'hidden' ||
-        selected.status === 'dead' ||
-        !characters.some(c => c.id === selected.id)
-      ) {
-        selected = characters[0] || null;
+      if (!selected || isInternalPlayerCharacterId(selected.id)) {
+        selected = characters[0] || gameState.characterRoster?.liuBiao || null;
         gameState.selectedCharacterId = selected?.id || null;
       }
       const filters = [
         ['all', '全部'], ['recruited', '已招募'], ['contactable', '可接触'], ['rumored', '传闻'],
-        ['武将', '武将'], ['谋士', '谋士'], ['政务', '政务'], ['名士', '名士'], ['医者', '医者'], ['豪强', '豪强'],
-        ['faction:liu', '刘备'], ['faction:cao', '曹操'], ['faction:yuan', '袁绍'],
-        ['faction:sun', '孙氏'], ['faction:liubiao', '刘表'], ['faction:liuzhang', '刘璋'],
-        ['faction:zhanglu', '张鲁'], ['faction:mateng', '马腾'], ['faction:gongsun', '公孙瓒'],
-        ['faction:yuanshu', '袁术'], ['faction:local', '地方']
+        ['historical', '历史人物'], ['random', '随机人物'], ['武将', '武将'], ['谋士', '谋士'], ['政务', '政务']
       ];
       return `
         <div class="card">
@@ -7361,89 +6715,26 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           <p>眼下只展开桂阳与荆州人物圈。远方名士会随着侦察、来信和重大事件逐步进入视野。</p>
           <div class="character-toolbar">${filters.map(([id, label]) => `<button class="ghost-btn ${filter === id ? 'active' : ''}" data-character-filter="${id}">${label}</button>`).join('')}</div>
           <div class="character-grid">${characters.map(character => `
-            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-open-character-profile="${character.id}">
+            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-select-character="${character.id}">
               <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
               <div class="character-card-body"><strong>${escapeHtml(character.name)}</strong><small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small><small>${escapeHtml(character.status)}</small></div>
             </article>
           `).join('') || '<div class="turn-event-item">当前筛选下暂无人物。</div>'}</div>
         </div>
+        ${renderCharacterDetail(selected)}
       `;
     }
 
-    function renderAppointmentCard(character) {
-      if (!character || character.status !== 'recruited' || !isExternalCharacter(character)) return '';
-      const charId = character.id;
-      const existing = findCharacterAppointment(charId);
-      let statusText = '<span class="muted">未任命</span>';
-      if (existing) {
-        if (existing.type === 'city') {
-          const city = gameState.cities?.[existing.cityId];
-          const cityName = city ? city.name : existing.cityId;
-          const slotLabel = { administratorId: '主政', militaryOfficerId: '军事官', policyOfficerId: '政策官' }[existing.slot] || existing.slot;
-          statusText = `<strong>${escapeHtml(cityName)} ${slotLabel}</strong>`;
-        } else if (existing.type === 'campaign') {
-          const campaign = (gameState.campaigns || []).find(c => c.id === existing.campaignId);
-          const targetName = campaign ? regionName(campaign.target) : existing.campaignId;
-          statusText = `<strong>战役主将（${escapeHtml(targetName)}）</strong>`;
-        }
-      }
-
-      const playerCities = controlledCities().filter(c => isActiveMapCity(c.id));
-      const cityOptions = playerCities.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') || '<option value="">暂无城池</option>';
-
-      const playerCampaigns = (gameState.campaigns || []).filter(c =>
-        c.faction === 'player' && c.type === 'attack' && isActiveCampaign(c)
-      );
-      const campaignOptions = playerCampaigns.map(c => {
-        const targetName = regionName(c.target);
-        return `<option value="${c.id}">${escapeHtml(targetName)}（${escapeHtml(c.phase)}）</option>`;
-      }).join('') || '<option value="">暂无进行中战役</option>';
-
-      return `<div class="card appointment-card" data-appointment-character="${charId}">
-        <h3>任命</h3>
-        <p>当前任命：${statusText}</p>
-        <div style="margin-top:8px">
-          <strong>任命到城市</strong>
-          <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-            <select data-appoint-city-select="${charId}" style="flex:1;min-width:120px">${cityOptions}</select>
-            <select data-appoint-slot-select="${charId}" style="flex:1;min-width:100px">
-              <option value="administratorId">主政</option>
-              <option value="militaryOfficerId">军事官</option>
-              <option value="policyOfficerId">政策官</option>
-            </select>
-          </div>
-          <button data-appoint-city-official="${charId}" style="margin-top:6px">确认任命</button>
-        </div>
-        <div style="margin-top:8px">
-          <strong>任命为主将</strong>
-          <div style="display:flex;gap:6px;margin-top:4px">
-            <select data-appoint-campaign-select="${charId}" style="flex:1">${campaignOptions}</select>
-          </div>
-          <button data-appoint-campaign-commander="${charId}" style="margin-top:6px">任命为主将</button>
-        </div>
-      </div>`;
-    }
-
-    function renderCharacterProfilePage(character) {
-      if (!character) {
-        return `<div class="card"><p style="color:var(--muted)">暂无符合当前筛选的人物。</p></div>`;
-      }
+    function renderCharacterDetail(character) {
+      if (!character) return '';
       const canTalk = !['hidden', 'rumored', 'dead', 'captured'].includes(character.status);
-      const canInvestigate = character.status === 'rumored' && (isTabUnlocked('scheme') || isTabUnlocked('inner'));
-      const investigateCost = isTabUnlocked('scheme') ? '谋略点' : '亲信点';
       const attitude = getNpcAttitudeLabel(character);
       refreshNpcPlan(character);
       const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
       const style = character.speechStyle || {};
       return `<div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-          <h2 style="margin:0">${escapeHtml(character.name)}</h2>
-          <button class="ghost-btn" data-close-character-profile="1">返回名录</button>
-        </div>
+        <h2>${escapeHtml(character.name)}</h2>
         <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
-      </div>
-      <div class="card">
-        <h3>人物简介</h3>
         <p>${escapeHtml(character.summary)}</p>
         <div class="kv-grid">
           <div class="kv"><span>统率</span><strong>${character.stats.command}</strong></div>
@@ -7458,13 +6749,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         <div class="button-grid">
           ${Object.entries(CONVERSATION_ACTIONS).map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`).join('')}
         </div>
-        ${character.status === 'rumored' ? `
-        <div style="margin-top:10px">
-          <button data-investigate-character="${character.id}" ${canInvestigate ? '' : 'disabled'}>
-            调查传闻${canInvestigate ? '（' + investigateCost + '）' : ''}
-          </button>
-          ${canInvestigate ? '' : '<p style="font-size:0.78rem;color:var(--muted);margin-top:4px">需要先解锁亲信或谋略系统。</p>'}
-        </div>` : ''}
       </div>
       <div class="card">
         <h3>目标与自我判断</h3>
@@ -7475,12 +6759,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       </div>
       <div class="card"><h3>内心状态</h3>${renderNpcAgencyCard(character)}</div>
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
-      <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>
-      ${renderAppointmentCard(character)}`;
-    }
-
-    function renderCharacterDetail(character) {
-      return renderCharacterProfilePage(character);
+      <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>`;
     }
 
     function renderNpcAgencyCard(character) {
@@ -7538,12 +6817,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function renderMilitaryOverviewCard() {
       const sourceCities = controlledCities().filter(c => realTroops(c.garrison) > 100);
       const queuedCount = gameState.orders.filter(order => ['battle', 'transfer'].includes(order.type)).length;
-      const activeCount = gameState.campaigns.filter(c => !isCampaignFinished(c)).length;
+      const activeCount = gameState.campaigns.filter(c => !['complete', 'cancelled'].includes(c.status)).length;
       return `<div class="card">
         <h2>军府总览</h2>
         <div class="kv-grid">
           <div class="kv"><span>本回合军令点</span><strong>${gameState.actionPoints.mil} / ${getMaxActionPoints().mil}</strong></div>
-          <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${getCampaignSlotLimit()}</strong></div>
+          <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${gameState.player.commandSlots}</strong></div>
           <div class="kv"><span>可用出兵城</span><strong>${sourceCities.length}</strong></div>
           <div class="kv"><span>待出发军令</span><strong>${queuedCount}</strong></div>
           <div class="kv"><span>进行中战役</span><strong>${activeCount}</strong></div>
@@ -7576,7 +6855,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           ${selectOption('night', '夜袭', routeMode)}
           ${selectOption('cut', '断粮道', routeMode)}
         </select></div>
-        <div style="font-size:0.78rem;color:#d9ad58;margin:4px 0;cursor:help;background:rgba(217,173,88,0.08);display:inline-block;padding:2px 8px;border-radius:4px;border:1px solid rgba(217,173,88,0.2)" data-help-key="routeHelp">ⓘ 悬浮查看各路线代价与收益</div>
         ${targetData ? `
         <div class="kv-grid" style="margin-top:8px">
           <div class="kv"><span>目标势力</span><strong>${factionName(cityController(targetData.city.id))}</strong></div>
@@ -7619,9 +6897,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         <h3>军事整备</h3>
         <p>对选中的己方城市执行军事整备命令，消耗 1 点军令点。</p>
         <div class="button-grid">
-          <button data-military-order="drill" data-military-city="${cityId}" data-help-key="militaryDrill" ${cityId ? '' : 'disabled'}>整军（士气 +5｜粮 -80）</button>
-          <button data-military-order="defense" data-military-city="${cityId}" data-help-key="militaryDefense" ${cityId ? '' : 'disabled'}>加固防线（城防 +4｜府库 -80）</button>
-          <button data-military-order="reserve" data-military-city="${cityId}" data-help-key="militaryReserve" ${cityId ? '' : 'disabled'}>预备队（城防 +2 士气 +2）</button>
+          <button data-military-order="drill" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>整军（士气 +5｜粮 -80）</button>
+          <button data-military-order="defense" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>加固防线（城防 +4｜府库 -80）</button>
+          <button data-military-order="reserve" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>预备队（城防 +2 士气 +2）</button>
         </div>
       </div>`;
     }
@@ -7632,7 +6910,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     function renderCampaignsCard() {
-      const active = gameState.campaigns.filter(campaign => isActiveCampaign(campaign));
+      const active = gameState.campaigns.filter(campaign => !['complete', 'cancelled'].includes(campaign.status));
       return `<div class="card"><h3>进行中战役</h3>${active.length ? active.map(renderCampaignItem).join('') : '<div class="campaign-item">当前没有长期战役。</div>'}</div>`;
     }
 
@@ -7647,36 +6925,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function renderCampaignItem(campaign) {
       const progress = campaign.status === 'marching' ? Math.round((1 - campaign.travelRemaining / Math.max(1, campaign.eta)) * 100) : campaign.status === 'siege' ? Math.round((1 - campaign.siegeRemaining / 2) * 100) : 100;
-      let buttons = '';
-      if (campaign.faction === 'player') {
-        if (campaign.status === 'marching') {
-          buttons = `<div class="button-grid"><button data-withdraw="${campaign.id}">撤回军队</button><button data-end-campaign="${campaign.id}">结束战役</button></div>`;
-        } else if (campaign.status === 'siege') {
-          buttons = `<div class="button-grid">
-            <button data-reinforce-campaign="${campaign.id}">增援此战役</button>
-            <button data-withdraw="${campaign.id}">撤军</button>
-            <button data-abandon="${campaign.id}">放弃围城</button>
-          </div>`;
-        }
-      } else if (campaign.faction !== 'player' && campaign.status === 'siege' && isControlledBy(campaign.target, 'player')) {
-        buttons = `<div class="button-grid"><button data-request-relief="${campaign.id}" data-relief-city="${campaign.target}">守城求援</button><button data-diversion="${campaign.id}" data-diversion-target="${campaign.source}" style="display:none">围魏救赵</button></div>`;
-      }
-      let commanderLine = '';
-      if (campaign.faction === 'player' && campaign.type === 'attack') {
-        const commander = getCampaignCommander(campaign);
-        if (commander) {
-          const mod = getCommanderBattleModifier(campaign);
-          commanderLine = `<div>主将：<strong>${escapeHtml(commander.name)}</strong> ｜ 攻势修正：x${mod.attack.toFixed(2)} <button class="ghost-btn" data-remove-campaign-commander="${campaign.id}">撤任主将</button></div>`;
-        } else {
-          commanderLine = `<div class="muted">主将：未任命</div>`;
-        }
-      }
       return `<div class="campaign-item">
         <strong>${escapeHtml(regionName(campaign.source))} → ${escapeHtml(regionName(campaign.target))}</strong>
         <div>${escapeHtml(campaign.phase)}｜ETA ${campaign.travelRemaining || 0}｜粮草 ${campaign.supply} 回合｜兵 ${fmt(realTroops(campaign.army))}</div>
-        ${commanderLine}
         <div class="campaign-progress"><i style="--value:${clamp(progress, 0, 100)}%"></i></div>
-        ${buttons}
+        ${campaign.status === 'siege' ? `<div class="button-grid"><button data-request-relief="${campaign.id}" data-relief-city="${campaign.target}">求援</button><button data-diversion="${campaign.id}" data-diversion-target="${campaign.source}">围魏救赵</button></div>` : ''}
       </div>`;
     }
 
@@ -7711,37 +6964,47 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const distant = reach > 2;
       const reachText = reach === 0 ? '我方治下' : reach === 1 ? '接壤可行动' : reach === 2 ? '二线可交涉' : '远方情报';
       return `
-        <div class="card">
-          <h2>${city.name}</h2>
-          <div class="tag-row">
-            <span class="tag">名义：${factionName(nominalOwner)}</span>
-            <span class="tag">实际：${factionName(controller)}</span>
+        <div class="card city-detail-card">
+          <div class="city-detail-head">
+            <div>
+              <h2>${city.name}</h2>
+              <div class="city-owner-line">
+                <span>名义：${factionName(nominalOwner)}</span>
+                <span>实际：${factionName(controller)}</span>
+              </div>
+            </div>
+            <span class="city-reach-mark">${reachText}</span>
+          </div>
+          <div class="tag-row city-meta-row">
+            <span class="tag">等级 ${city.level}</span>
             <span class="tag">${escapeHtml(city.terrain)}</span>
             <span class="tag">${escapeHtml(city.resource)}</span>
-            <span class="tag">${reachText}</span>
+            <span class="tag">前线价值 ${city.strategic}</span>
             ${region ? `<span class="tag">控制区：${region.resources.map(escapeHtml).join('、')}</span>` : ''}
           </div>
-          <div class="kv-grid" style="margin-top:8px">
-            <div class="kv"><span>等级</span><strong>${city.level}</strong></div>
+          <div class="kv-grid city-core-grid">
             <div class="kv"><span>人口</span><strong>${fmt(city.population)}</strong></div>
             <div class="kv"><span>驻军</span><strong>${distant ? '约' + compactNumber(realTroops(city.garrison)) : fmt(realTroops(city.garrison))}</strong></div>
-            <div class="kv"><span>前线价值</span><strong>${city.strategic}</strong></div>
-            <div class="kv"><span>农业</span><strong>${Math.round(city.agriculture)}</strong></div>
-            <div class="kv"><span>商业</span><strong>${Math.round(city.commerce)}</strong></div>
             <div class="kv"><span>存粮</span><strong>${fmt(city.food)}</strong></div>
             <div class="kv"><span>府库</span><strong>${fmt(city.money)}</strong></div>
-            <div class="kv"><span>粮食产能</span><strong id="foodProd-${city.id}">${fmt(economy.foodProduction)} / 回合</strong></div>
+            <div class="kv"><span>农业</span><strong>${Math.round(city.agriculture)}</strong></div>
+            <div class="kv"><span>商业</span><strong>${Math.round(city.commerce)}</strong></div>
             <div class="kv"><span>税收贡献</span><strong id="taxIncome-${city.id}">${fmt(economy.taxIncome)} / 回合</strong></div>
-            <div class="kv"><span>粮食消耗</span><strong id="foodConsume-${city.id}">${fmt(economy.foodConsumption)} / 回合</strong></div>
             <div class="kv"><span>净粮</span><strong id="netFood-${city.id}">${economy.netFood >= 0 ? '+' : ''}${fmt(economy.netFood)}</strong></div>
+          </div>
+          <div class="city-secondary-grid">
+            <div class="kv"><span>粮食产能</span><strong id="foodProd-${city.id}">${fmt(economy.foodProduction)} / 回合</strong></div>
+            <div class="kv"><span>粮食消耗</span><strong id="foodConsume-${city.id}">${fmt(economy.foodConsumption)} / 回合</strong></div>
             ${region ? `<div class="kv"><span>地块邻接</span><strong>${region.neighbors.map(regionName).join('、') || '未设置'}</strong></div>` : ''}
             ${region ? `<div class="kv"><span>势力范围</span><strong>${region.polygon.length} 个边界点</strong></div>` : ''}
           </div>
-          ${metric('民心', city.publicSupport)}
-          <p class="muted">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
-          ${metric('治安', city.order)}
-          ${metric('士气', city.morale)}
-          ${metric('城防', city.defense)}
+          <div class="city-status-block">
+            ${metric('民心', city.publicSupport)}
+            ${metric('治安', city.order)}
+            ${metric('士气', city.morale)}
+            ${metric('城防', city.defense)}
+          </div>
+          <p class="muted city-support-note">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
         </div>
         <div class="card">
           <h3>政策与局势判断</h3>
@@ -8120,7 +7383,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             ${selectOption('night', '夜袭', draft.route)}
             ${selectOption('cut', '断粮道', draft.route)}
           </select></div>
-          <div style="font-size:0.78rem;color:#d9ad58;margin:2px 0 6px;cursor:help;background:rgba(217,173,88,0.08);display:inline-block;padding:2px 8px;border-radius:4px;border:1px solid rgba(217,173,88,0.2)" data-help-key="routeHelp">ⓘ 悬浮查看各路线代价与收益</div>
           <div class="form-row"><span>战术方案</span><select data-draft-field="tactic">
             ${selectOption('balanced', '稳扎稳打', draft.tactic)}
             ${selectOption('assault', '强攻夺城', draft.tactic)}
@@ -8128,21 +7390,19 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             ${selectOption('feint', '佯攻诱敌', draft.tactic)}
             ${selectOption('reserve', '保留预备队', draft.tactic)}
           </select></div>
-          <div style="font-size:0.78rem;color:#d9ad58;margin:2px 0 6px;cursor:help;background:rgba(217,173,88,0.08);display:inline-block;padding:2px 8px;border-radius:4px;border:1px solid rgba(217,173,88,0.2)" data-help-key="tacticHelp">ⓘ 悬浮查看各战术代价与收益</div>
           <div class="form-row"><span>作战目标</span><select data-draft-field="objective">
             ${selectOption('capture', '夺城', draft.objective)}
             ${selectOption('contain', '牵制', draft.objective)}
             ${selectOption('exhaust', '消耗守军', draft.objective)}
             ${selectOption('supply', '切断粮道', draft.objective)}
           </select></div>
-          <div style="font-size:0.78rem;color:#d9ad58;margin:2px 0 6px;cursor:help;background:rgba(217,173,88,0.08);display:inline-block;padding:2px 8px;border-radius:4px;border:1px solid rgba(217,173,88,0.2)" data-help-key="objectiveHelp">ⓘ 悬浮查看各作战目标代价与收益</div>
           <div class="kv-grid">
             <div class="kv"><span>敌守军</span><strong>${fmt(realTroops(target.garrison))}</strong></div>
             <div class="kv"><span>城防</span><strong>${target.defense}</strong></div>
             <div class="kv"><span>敌士气</span><strong>${target.morale}</strong></div>
             <div class="kv"><span>预估战力</span><strong>${estimateBattlePower(draft, source, target).label}</strong></div>
             <div class="kv"><span>行军 ETA</span><strong>${Number.isFinite(eta) ? eta + ' 回合' : '无路线'}</strong></div>
-            <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${getCampaignSlotLimit()}</strong></div>
+            <div class="kv"><span>战役槽</span><strong>${activeCampaignSlotCount()} / ${gameState.player.commandSlots}</strong></div>
           </div>
           <div class="button-grid">
             <button data-queue-battle="1">加入本回合军令</button>
@@ -8254,7 +7514,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         <div class="card">
           <h2>刘表：荆州牧</h2>
           <p>你受刘表密令赴任桂阳。庇护越强，豪强、士族与外部势力越不敢公开试探；但这份背书会被你的选择消耗。</p>
-          ${metric('刘表庇护', gameState.player.protection, 'protectionHelp')}
+          ${metric('刘表庇护', gameState.player.protection)}
           ${metric('刘表权威', liuBiao.authority)}
           ${metric('刘表信任', liuBiao.trust)}
           <div class="tag-row"><span class="tag">${level.name}</span><span class="tag">密令：${liuBiao.order}</span></div>
@@ -8331,10 +7591,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       `;
     }
 
-    const PUBLIC_SUPPORT_MAX_TURN_DROP = 5;
-    const NPC_PUBLIC_SUPPORT_STABLE_DROP = -0.35;
-    const NPC_PUBLIC_SUPPORT_STABLE_GAIN = 0.35;
-
     function getPublicSupportEconomyModifier(city) {
       const ps = Number(city.publicSupport || 0);
       if (ps >= 70) return { food: 1.08, tax: 1.05, recruit: 1.05, publicDelta: 0.4, orderDelta: 0.4, label: '民心稳固' };
@@ -8362,35 +7618,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (ps < 10) return '产粮、税收、征兵重挫，战时可能开城';
       if (ps < 30) return '产粮、税收、征兵下降，治安持续恶化';
       return mod.label;
-    }
-
-    function getPublicSupportStressInfo(city) {
-      return {
-        warDamage: Number(city.warDamage || 0) >= 15,
-        noFood: Number(city.food || 0) <= 0,
-        highGrain: Number(city.grainRate || 50) >= 80,
-        highTax: Number(city.taxRate || 50) >= 80,
-        underSiege: isCityUnderActiveSiege(city.id)
-      };
-    }
-
-    function hasPublicSupportRealStress(city) {
-      const s = getPublicSupportStressInfo(city);
-      return s.warDamage || s.noFood || s.highGrain || s.highTax || s.underSiege;
-    }
-
-    function normalizeNpcNaturalPublicDelta(city, eco) {
-      let delta = Number(eco.publicDelta || 0);
-
-      if (!isNpcPublicCity(city)) return delta;
-
-      const hasRealStress = hasPublicSupportRealStress(city);
-
-      if (!hasRealStress) {
-        return clamp(delta, NPC_PUBLIC_SUPPORT_STABLE_DROP, NPC_PUBLIC_SUPPORT_STABLE_GAIN);
-      }
-
-      return clamp(delta, -2, 1);
     }
 
     function calculateCityEconomy(city) {
@@ -8467,7 +7694,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       if (!draft) return;
       const source = gameState.cities[draft.source];
       const target = gameState.cities[draft.target];
-      if (activeCampaignSlotCount() + pendingLongCampaignCount() >= getCampaignSlotLimit()) return toast('当前战役槽已满，最多可同时维持 ' + getCampaignSlotLimit() + ' 路战役。请等待现有战役结束，或控制更多城池后再发动新战役。');
+      if (activeCampaignSlotCount() + pendingLongCampaignCount() >= gameState.player.commandSlots) return toast('当前战役槽已满。请结束现有战役、撤军，或提升军府能力后再发动新战役。');
       if (!findCampaignRoute(source.id, target.id, draft.route)) return toast('目标城池暂无可用行军路线');
       const availableTroops = Math.max(0, realTroops(source.garrison) - 300 - pendingTroopsFrom(source.id));
       if (availableTroops < 100) return toast('该城没有足够的可调兵力');
@@ -8696,9 +7923,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function simpleHash(str) {
       let hash = 5381;
-      for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash) + str.charCodeAt(i);
-        hash = hash & hash;
+      for (let index = 0; index < str.length; index += 1) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(index);
+        hash &= hash;
       }
       return Math.abs(hash).toString(36);
     }
@@ -8718,401 +7945,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
-    function getAutoGovBudgetLimit() {
-      return Infinity;
-    }
-
-    function getAutoMilBudgetLimit() {
-      return Infinity;
-    }
-
-    function canSpendAutoGovPoint(reports, city) {
-      normalizeAppointments(gameState);
-      gameState.appointments.autoGovSpentThisTurn ||= 0;
-
-      if ((gameState.actionPoints?.gov || 0) <= 0) {
-        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动治理未执行：政务点不足。' });
-        return false;
-      }
-
-      gameState.actionPoints.gov -= 1;
-      gameState.appointments.autoGovSpentThisTurn += 1;
-      return true;
-    }
-
-    function canSpendAutoMilPoint(reports, city) {
-      normalizeAppointments(gameState);
-      gameState.appointments.autoMilSpentThisTurn ||= 0;
-
-      if ((gameState.actionPoints?.mil || 0) <= 0) {
-        reports?.push({ tone: 'warn', text: (city ? city.name : '某城') + '自动军事整备未执行：军令点不足。' });
-        return false;
-      }
-
-      gameState.actionPoints.mil -= 1;
-      gameState.appointments.autoMilSpentThisTurn += 1;
-      return true;
-    }
-
-    function applyAutoRecruit(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'militaryOfficerId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命军事官，自动征兵未执行。' });
-        return;
-      }
-
-      if (city.publicSupport <= 5) {
-        reports.push({ tone: 'warn', text: city.name + '民心过低，' + character.name + '暂缓征兵。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      const amount = Math.round(city.population * city.recruitBase * 0.45 * multiplier);
-      city.population = Math.max(8000, city.population - Math.round(amount * 1.1));
-      city.garrison.infantry += Math.round(amount * 0.65);
-      city.garrison.archers += Math.round(amount * 0.22);
-      city.garrison.cavalry += Math.round(amount * 0.13);
-      city.publicSupport = clamp(city.publicSupport - 1.5, 0, 100);
-      city.order = clamp(city.order - 0.8, 0, 100);
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持征兵，补充新兵 ' + fmt(amount) + '。' });
-    }
-
-    function applyAutoTrain(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'militaryOfficerId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命军事官，自动练兵未执行。' });
-        return;
-      }
-
-      if (city.food <= 0) {
-        reports.push({ tone: 'warn', text: city.name + '粮草枯竭，自动练兵未执行。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      const foodCost = Math.round(realTroops(city.garrison) * 0.42);
-      const lowFood = city.food < foodCost;
-      const effect = lowFood
-        ? 2
-        : clamp((5 + city.morale / 28 + city.level) * multiplier, 3, 14);
-      city.food = Math.max(0, city.food - foodCost);
-      city.morale = clamp(city.morale + effect, 0, 100);
-
-      if (lowFood) {
-        reports.push({ tone: 'warn', text: character.name + '在' + city.name + '主持练兵，粮草不足，训练效果降低，士气 +' + Math.round(effect) + '。' });
-      } else {
-        reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持练兵，士气 +' + Math.round(effect) + '，消耗粮草 ' + fmt(foodCost) + '。' });
-      }
-    }
-
-    function applyAutoRelief(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动赈济未执行。' });
-        return;
-      }
-
-      const costFood = Math.round(city.population / 85);
-      if (city.food < costFood) {
-        reports.push({ tone: 'warn', text: city.name + '粮草不足，自动赈济未执行。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      const effect = clamp((costFood / Math.max(600, city.population / 120)) * 1.4 + city.order / 45, 2, 9) * multiplier;
-      city.food = Math.max(0, city.food - costFood);
-      city.publicSupport = clamp(city.publicSupport + effect, 0, 100);
-      city.order = clamp(city.order + effect * 0.45, 0, 100);
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持赈济，民心回升，粮草支出 ' + fmt(costFood) + '。' });
-    }
-
-    function applyAutoFarming(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动屯田未执行。' });
-        return;
-      }
-
-      const cost = Math.round(180 + city.population / 1000);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动屯田未执行。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      city.money = Math.max(0, city.money - cost);
-      city.agriculture = clamp(city.agriculture + clamp(city.publicSupport / 24, 1.2, 4.8) * multiplier, 0, 100);
-      city.construction = '屯田';
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持屯田，短期耗费府库，长期粮食产能提高。' });
-    }
-
-    function applyAutoDefense(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动修城防未执行。' });
-        return;
-      }
-
-      const cost = Math.round(130 + city.level * 90 + city.defense * 4);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动修城防未执行。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      const labor = clamp((city.publicSupport + city.order) / 120, 0.45, 1.35);
-      const effect = clamp(city.level * 1.4 * labor * multiplier, 2, 11);
-      city.money = Math.max(0, city.money - cost);
-      city.defense = clamp(city.defense + effect, 0, 100);
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持修城防，城防 +' + Math.round(effect) + '，府库支出 ' + fmt(cost) + '。' });
-    }
-
-    function applyAutoOrder(city, reports) {
-      const { character, multiplier } = getCityOfficialEffect(city.id, 'administratorId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命主政官，自动维护治安未执行。' });
-        return;
-      }
-
-      const cost = Math.round(90 + city.population / 1800);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动维护治安未执行。' });
-        return;
-      }
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      city.money = Math.max(0, city.money - cost);
-      city.order = clamp(city.order + clamp((city.level + 4) * multiplier, 3, 12), 0, 100);
-      city.publicSupport = clamp(city.publicSupport + 1.2 * multiplier, 0, 100);
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '整顿治安，豪强私斗暂歇。' });
-    }
-
-    function getCharacterCivilMultiplier(character) {
-      const s = character?.stats || {};
-      return clamp(1 + (Number(s.politics || 50) - 50) * 0.005, 0.9, 1.25);
-    }
-
-    function applyAutoReliefByOfficial(city, character, multiplier, reports) {
-      if (!character) return;
-      const costFood = Math.round(city.population / 85);
-      if (city.food < costFood) {
-        reports.push({ tone: 'warn', text: city.name + '粮草不足，自动赈济未执行。' });
-        return;
-      }
-      if (!canSpendAutoGovPoint(reports, city)) return;
-      const effect = clamp((costFood / Math.max(600, city.population / 120)) * 1.4 + city.order / 45, 2, 9) * multiplier;
-      city.food = Math.max(0, city.food - costFood);
-      city.publicSupport = clamp(city.publicSupport + effect, 0, 100);
-      city.order = clamp(city.order + effect * 0.45, 0, 100);
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动赈济，粮草支出 ' + fmt(costFood) + '。' });
-    }
-
-    function applyAutoFarmingByOfficial(city, character, multiplier, reports) {
-      if (!character) return;
-      const cost = Math.round(180 + city.population / 1000);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动屯田未执行。' });
-        return;
-      }
-      if (!canSpendAutoGovPoint(reports, city)) return;
-      city.money = Math.max(0, city.money - cost);
-      city.agriculture = clamp(city.agriculture + clamp(city.publicSupport / 24, 1.2, 4.8) * multiplier, 0, 100);
-      city.construction = '屯田';
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动屯田。' });
-    }
-
-    function applyAutoDefenseByOfficial(city, character, multiplier, reports) {
-      if (!character) return;
-      const cost = Math.round(130 + city.level * 90 + city.defense * 4);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动修城防未执行。' });
-        return;
-      }
-      if (!canSpendAutoGovPoint(reports, city)) return;
-      const labor = clamp((city.publicSupport + city.order) / 120, 0.45, 1.35);
-      const effect = clamp(city.level * 1.4 * labor * multiplier, 2, 11);
-      city.money = Math.max(0, city.money - cost);
-      city.defense = clamp(city.defense + effect, 0, 100);
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '主持自动修城防，城防 +' + Math.round(effect) + '。' });
-    }
-
-    function applyAutoOrderByOfficial(city, character, multiplier, reports) {
-      if (!character) return;
-      const cost = Math.round(90 + city.population / 1800);
-      if (city.money < cost) {
-        reports.push({ tone: 'warn', text: city.name + '府库不足，自动维护治安未执行。' });
-        return;
-      }
-      if (!canSpendAutoGovPoint(reports, city)) return;
-      city.money = Math.max(0, city.money - cost);
-      city.order = clamp(city.order + clamp((city.level + 4) * multiplier, 3, 12), 0, 100);
-      city.publicSupport = clamp(city.publicSupport + 1.2 * multiplier, 0, 100);
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动维护治安。' });
-    }
-
-    function applyAutoCivilMode(city, mode, character, reports) {
-      if (!character) return;
-      const multiplier = getCharacterCivilMultiplier(character);
-      if (mode === 'relief') applyAutoReliefByOfficial(city, character, multiplier, reports);
-      else if (mode === 'farming') applyAutoFarmingByOfficial(city, character, multiplier, reports);
-      else if (mode === 'defense') applyAutoDefenseByOfficial(city, character, multiplier, reports);
-      else if (mode === 'order') applyAutoOrderByOfficial(city, character, multiplier, reports);
-    }
-
-    function getCharacterMilitaryPrepMultiplier(character) {
-      const s = character?.stats || {};
-      return clamp(
-        1 + (Number(s.command || 50) - 50) * 0.005 + (Number(s.strategy || 50) - 50) * 0.002,
-        0.9,
-        1.3
-      );
-    }
-
-    function applyAutoMilitaryPrep(city, mode, character, reports) {
-      if (!character || !['drill', 'defense', 'reserve'].includes(mode)) return;
-      const multiplier = getCharacterMilitaryPrepMultiplier(character);
-
-      if (mode === 'drill') {
-        if (city.food < 80) {
-          reports.push({ tone: 'warn', text: city.name + '粮草不足，' + character.name + '无法自动整军。' });
-          return;
-        }
-        if (!canSpendAutoMilPoint(reports, city)) return;
-        city.food = Math.max(0, city.food - 80);
-        const gain = Math.round(5 * multiplier);
-        city.morale = clamp(city.morale + gain, 0, 100);
-        reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动整军，士气 +' + gain + '。' });
-      }
-
-      if (mode === 'defense') {
-        if (city.money < 80) {
-          reports.push({ tone: 'warn', text: city.name + '府库不足，' + character.name + '无法自动加固防线。' });
-          return;
-        }
-        if (!canSpendAutoMilPoint(reports, city)) return;
-        city.money = Math.max(0, city.money - 80);
-        const gain = Math.round(4 * multiplier);
-        city.defense = clamp(city.defense + gain, 0, 100);
-        reports.push({ tone: 'good', text: character.name + '在' + city.name + '自动加固防线，城防 +' + gain + '。' });
-      }
-
-      if (mode === 'reserve') {
-        if (!canSpendAutoMilPoint(reports, city)) return;
-        const defenseGain = Math.round(2 * multiplier);
-        const moraleGain = Math.round(2 * multiplier);
-        city.defense = clamp(city.defense + defenseGain, 0, 100);
-        city.morale = clamp(city.morale + moraleGain, 0, 100);
-        city.reserveReady = true;
-        reports.push({ tone: 'good', text: character.name + '在' + city.name + '部署预备队，城防 +' + defenseGain + '，士气 +' + moraleGain + '。' });
-      }
-    }
-
-    function applyAutoPolicy(city, policyMode, reports) {
-      const { character } = getCityOfficialEffect(city.id, 'policyOfficerId');
-      if (!character) {
-        reports.push({ tone: 'warn', text: city.name + '未任命政策官，自动政策调整未执行。' });
-        return;
-      }
-
-      let targetTax = null;
-      let targetGrain = null;
-      let actionName = '';
-
-      if (policyMode === 'taxLight') {
-        targetTax = 38; targetGrain = 45;
-        actionName = '降税轻粮';
-      } else if (policyMode === 'balanced') {
-        targetTax = 50; targetGrain = 50;
-        actionName = '税粮平衡';
-      } else if (policyMode === 'grainHeavy') {
-        targetTax = 52; targetGrain = 65;
-        actionName = '征粮偏高';
-      } else if (policyMode === 'publicFirst') {
-        if (city.publicSupport >= 45) return; // 不需要调整
-        targetTax = 35; targetGrain = 38;
-        actionName = '民心优先';
-      }
-
-      if (targetTax === null || targetGrain === null) return;
-
-      // 如果当前值已经接近目标，不扣 gov
-      const taxDiff = Math.abs(city.taxRate - targetTax);
-      const grainDiff = Math.abs(city.grainRate - targetGrain);
-      if (taxDiff <= 2 && grainDiff <= 2) return;
-
-      if (!canSpendAutoGovPoint(reports, city)) return;
-
-      city.taxRate = targetTax;
-      city.grainRate = targetGrain;
-      normalizeCityPolicy(city);
-
-      reports.push({ tone: 'good', text: character.name + '在' + city.name + '调整政策为' + actionName + '。' });
-    }
-
-    function processAppointmentAutoTasks(reports) {
-      normalizeAppointments(gameState);
-      const autoTasks = gameState.appointments.autoTasks || {};
-
-      Object.entries(autoTasks).forEach(([cityId, task]) => {
-        if (!task || task.enabled !== true) return;
-
-        const city = gameState.cities?.[cityId];
-        if (!city || !isControlledBy(city.id, 'player')) return;
-
-        const administrators = getCityOfficials(cityId, 'administratorId');
-        const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
-        const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
-
-        if (task.militaryMode && task.militaryMode !== 'none') {
-          if (!militaryOfficers.length) {
-            reports.push({ tone: 'warn', text: city.name + '自动兵务跳过：未任命军事官。' });
-          } else {
-            if (task.militaryMode === 'recruit') applyAutoRecruit(city, reports);
-            else if (task.militaryMode === 'train') applyAutoTrain(city, reports);
-          }
-        }
-
-        const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
-        const civilLimit = Math.min(civilModes.length, administrators.length, getCityAdministratorLimit(city));
-
-        for (let i = 0; i < civilLimit; i++) {
-          applyAutoCivilMode(city, civilModes[i], administrators[i], reports);
-        }
-        if (civilModes.length > administrators.length) {
-          reports.push({ tone: 'warn', text: city.name + '主政官不足，部分自动城政未执行。' });
-        }
-
-        if (task.policyMode && task.policyMode !== 'none') {
-          if (!policyOfficers.length) {
-            reports.push({ tone: 'warn', text: city.name + '自动政策跳过：未任命政策官。' });
-          } else {
-            applyAutoPolicy(city, task.policyMode, reports);
-          }
-        }
-
-        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
-        const prepLimit = Math.min(militaryPrepModes.length, militaryOfficers.length, getCityMilitaryOfficerLimit(city));
-
-        for (let i = 0; i < prepLimit; i++) {
-          applyAutoMilitaryPrep(city, militaryPrepModes[i], militaryOfficers[i], reports);
-        }
-        if (militaryPrepModes.length > militaryOfficers.length) {
-          reports.push({ tone: 'warn', text: city.name + '军事官不足，部分自动军事整备未执行。' });
-        }
-      });
-    }
-
     function endTurn() {
       if (isGuideActive()) {
         return endGuideTurn();
@@ -9122,29 +7954,16 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const before = snapshotPlayerState();
       const reports = [];
       gameState.turnEvents = [];
-      normalizeAppointments(gameState);
-      gameState.appointments.autoGovSpentThisTurn = 0;
-      gameState.appointments.autoMilSpentThisTurn = 0;
-
-      beginPublicSupportTurnAudit();
-
-      processAppointmentAutoTasks(reports);
       processOrders(reports);
       unlockTabsByTutorialProgress();
       advanceCampaigns(reports);
-      cleanupInvalidCampaigns(reports);
       processEconomy(reports);
       processPublicSupportCrises(reports);
       runFactionAI(reports);
       runNpcWarAI(reports);
-      checkNewBorderFactions();
-      checkIntelligenceNetworkUnlocks();
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
       evaluateNpcInitiatives();
-
-      finalizePublicSupportTurnAudit(reports);
-
       unlockTabsByTutorialProgress();
       advanceDate(TURN_DAYS);
       gameState.turn += 1;
@@ -9373,29 +8192,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       };
     }
 
-    function computeOptionValues(draft, source, target, optionKey, optionValue) {
-      const modDraft = { ...draft, [optionKey]: optionValue };
-      const route = findCampaignRoute(source.id, target.id, modDraft.route);
-      const eta = calculateTravelTurns(route, { troops: modDraft.troops, supply: 6 });
-      const power = estimateBattlePower(modDraft, source, target);
-      const foodCost = Math.round((modDraft.troops || 0) * 0.34);
-      const ownLossLow = Math.round((modDraft.troops || 0) * 0.13);
-      const ownLossHigh = Math.round((modDraft.troops || 0) * 0.34);
-      const enemyLossLow = Math.round(realTroops(target.garrison) * 0.22);
-      const enemyLossHigh = Math.round(realTroops(target.garrison) * 0.62);
-      return {
-        attackPower: Math.round(power.attack),
-        eta,
-        foodCost,
-        ownLossLow,
-        ownLossHigh,
-        enemyLossLow,
-        enemyLossHigh,
-        powerLabel: power.label,
-        ratio: power.ratio
-      };
-    }
-
     function removeTroops(garrison, amount) {
       const total = Math.max(1, realTroops(garrison));
       ['infantry', 'cavalry', 'archers', 'siege'].forEach(kind => {
@@ -9553,8 +8349,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           reports.push({ tone: 'good', text: '使者往来，' + FACTIONS[fid].name + '对你的态度有所缓和。' });
         }
       }
-      const dipFactionId = getDiplomacyActionFaction(action);
-      if (dipFactionId) unlockCharactersByFaction(dipFactionId, '外交接触', 4);
     }
 
     function resolveInner(order, reports) {
@@ -9710,18 +8504,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       Object.values(gameState.cities || {}).forEach(city => {
         if (triggeredCount >= 3) return;
         if (isRemovedCityId(city.id)) return;
-
-        if (isNpcPublicCity(city)) {
-          const npcEligible =
-            Number(city.publicSupport || 0) <= 0 ||
-            Number(city.food || 0) <= 0 ||
-            Number(city.warDamage || 0) >= 30 ||
-            isCityUnderActiveSiege(city.id) ||
-            Number(city.grainRate || 50) >= 90;
-
-          if (!npcEligible) return;
-        }
-
         const level = getPublicUnrestLevel(city);
         if (level === 'stable') return;
         const last = unrest.lastCrisisTurnByCity[city.id] ?? -99;
@@ -9734,74 +8516,20 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       });
     }
 
-    function beginPublicSupportTurnAudit() {
-      gameState.publicSupportTurnAudit = {
-        turn: gameState.turn,
-        start: {},
-        end: {},
-        capped: []
-      };
-
-      Object.values(gameState.cities || {}).forEach(city => {
-        if (!city || isRemovedCityId(city.id)) return;
-        gameState.publicSupportTurnAudit.start[city.id] = Number(city.publicSupport || 0);
-      });
-    }
-
-    function finalizePublicSupportTurnAudit(reports) {
-      const audit = gameState.publicSupportTurnAudit;
-      if (!audit || !audit.start) return;
-
-      Object.values(gameState.cities || {}).forEach(city => {
-        if (!city || isRemovedCityId(city.id)) return;
-
-        const start = Number(audit.start[city.id] ?? city.publicSupport ?? 0);
-        const current = Number(city.publicSupport || 0);
-        const minAllowed = Math.max(0, start - PUBLIC_SUPPORT_MAX_TURN_DROP);
-
-        if (current < minAllowed) {
-          audit.capped.push({
-            cityId: city.id,
-            cityName: city.name,
-            controller: cityController(city.id),
-            start,
-            beforeCap: current,
-            afterCap: minAllowed,
-            preventedDrop: Number((minAllowed - current).toFixed(2))
-          });
-
-          city.publicSupport = minAllowed;
-        }
-
-        audit.end[city.id] = Number(city.publicSupport || 0);
-      });
-    }
-
     function processEconomy(reports) {
       Object.values(gameState.cities).filter(city => !isRemovedCityId(city.id)).forEach(city => {
         const eco = calculateCityEconomy(city);
         city.food = Math.max(0, city.food + eco.netFood);
         city.money = Math.max(0, city.money + eco.taxIncome - eco.grainCost);
-        let publicDelta = Number(eco.publicDelta || 0);
-
-        if (isNpcPublicCity(city)) {
-          publicDelta = normalizeNpcNaturalPublicDelta(city, eco);
-        }
-
-        city.publicSupport = clamp(city.publicSupport + publicDelta, 0, 100);
+        city.publicSupport = clamp(city.publicSupport + eco.publicDelta, 0, 100);
         city.order = clamp(city.order + eco.orderDelta, 0, 100);
         city.agriculture = clamp(city.agriculture + (eco.growth - 1) * 0.45 - city.warDamage * 0.006, 0, 100);
         city.commerce = clamp(city.commerce + (eco.commerceFactor - 1) * 0.55 - city.warDamage * 0.008, 0, 100);
         city.warDamage = clamp(city.warDamage - 3, 0, 100);
         if (city.food <= 0) {
           city.morale = clamp(city.morale - 7, 0, 100);
-
-          const foodPublicLoss = isNpcPublicCity(city) ? 2 : 4;
-          city.publicSupport = clamp(city.publicSupport - foodPublicLoss, 0, 100);
-
-          if (isControlledBy(city.id, 'player')) {
-            reports.push({ tone: 'bad', text: city.name + '缺粮，军心与民心同步下降。' });
-          }
+          city.publicSupport = clamp(city.publicSupport - 4, 0, 100);
+          if (isControlledBy(city.id, 'player')) reports.push({ tone: 'bad', text: city.name + '缺粮，军心与民心同步下降。' });
         }
         if (city.publicSupport < 25 && city.order < 35 && Math.random() < 0.18) {
           city.garrison.infantry = Math.max(0, city.garrison.infantry - 120);
@@ -9833,8 +8561,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         gameState.storyFlags.yuanDisarm = true;
         reports.push({ tone: 'bad', text: '袁绍调兵令抵达：要求你交出黎阳部分兵权。可在"袁绍"面板选择表忠、拒绝或起兵。' });
       }
-      if (y.alert >= 84 && !gameState.storyFlags.openConflict && canNpcTargetPlayerCity('yuan', 'liyang', 'yecheng', {}) && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
-        createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800, routeMode: 'official' }, reports);
+      if (y.alert >= 84 && !gameState.storyFlags.openConflict && Math.random() < protectedNpcChance('npcAttack', 0.35)) {
+        createNpcCampaign({ faction: 'yuan', source: 'yecheng', target: 'liyang', troops: 2800 }, reports);
       }
       if (gameState.turn % 3 === 0 && cityController('pingyuan') === 'local') {
         if (Math.random() < 0.5) {
@@ -9845,8 +8573,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
       if (gameState.turn % 2 === 0) {
         cao.threat = clamp(cao.threat + 3, 0, 100);
-        if (isControlledBy('baima', 'player') && canNpcTargetPlayerCity('cao', 'baima', 'guandu', {}) && Math.random() < protectedNpcChance('npcAttack', 0.22)) {
-          createNpcCampaign({ faction: 'cao', source: 'guandu', target: 'baima', troops: 2100, routeMode: 'official' }, reports);
+        if (isControlledBy('baima', 'player') && Math.random() < protectedNpcChance('npcAttack', 0.22)) {
+          createNpcCampaign({ faction: 'cao', source: 'guandu', target: 'baima', troops: 2100 }, reports);
         } else {
           reports.push({ tone: 'warn', text: '曹操稳固许昌与官渡，斥候开始测绘黄河渡口。' });
         }
@@ -10133,10 +8861,50 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       render();
     }
 
+    function clampMapZoom(zoom) {
+      const numericZoom = Number(zoom);
+      return clamp(Number.isFinite(numericZoom) ? numericZoom : MIN_MAP_ZOOM, MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+    }
+
+    function normalizeMapState(mapState = gameState.mapState) {
+      const nextMapState = (mapState && typeof mapState === 'object') ? mapState : { zoom: MIN_MAP_ZOOM, panX: 0, panY: 0 };
+      nextMapState.zoom = clampMapZoom(nextMapState.zoom);
+      nextMapState.panX = Number.isFinite(Number(nextMapState.panX)) ? Number(nextMapState.panX) : 0;
+      nextMapState.panY = Number.isFinite(Number(nextMapState.panY)) ? Number(nextMapState.panY) : 0;
+      return nextMapState;
+    }
+
+    function clampMapTransform() {
+      const svg = document.getElementById('mapStage');
+      if (!svg || !gameState?.mapState) return;
+      const rect = svg.getBoundingClientRect();
+      const viewBox = svg.viewBox?.baseVal;
+      const viewportWidth = viewBox?.width || rect.width || MAP_SIZE.width;
+      const viewportHeight = viewBox?.height || rect.height || MAP_SIZE.height;
+      const mapWidth = MAP_SIZE.width * gameState.mapState.zoom;
+      const mapHeight = MAP_SIZE.height * gameState.mapState.zoom;
+      if (mapWidth > viewportWidth) {
+        gameState.mapState.panX = clamp(gameState.mapState.panX, viewportWidth - mapWidth, 0);
+      } else {
+        gameState.mapState.panX = (viewportWidth - mapWidth) / 2;
+      }
+      if (mapHeight > viewportHeight) {
+        gameState.mapState.panY = clamp(gameState.mapState.panY, viewportHeight - mapHeight, 0);
+      } else {
+        gameState.mapState.panY = (viewportHeight - mapHeight) / 2;
+      }
+    }
+
+    function normalizeMapView() {
+      gameState.mapState = normalizeMapState(gameState.mapState);
+      clampMapTransform();
+    }
+
     function setMapFocusOn(x, y, zoom) {
-      gameState.mapState.zoom = clamp(zoom, 0.75, 4.2);
+      gameState.mapState.zoom = clampMapZoom(zoom);
       gameState.mapState.panX = MAP_SIZE.width / 2 - x * gameState.mapState.zoom;
       gameState.mapState.panY = MAP_SIZE.height / 2 - y * gameState.mapState.zoom;
+      normalizeMapView();
     }
 
     function clientToSvgPoint(clientX, clientY) {
@@ -10235,14 +9003,18 @@ const MAP_SIZE = { width: 1448, height: 1086 };
 
     function zoomMapAt(clientX, clientY, deltaZoom) {
       const oldZoom = gameState.mapState.zoom;
-      const newZoom = clamp(oldZoom + deltaZoom, 0.75, 4.2);
-      if (newZoom === oldZoom) return;
+      const newZoom = clampMapZoom(oldZoom + deltaZoom);
+      if (newZoom === oldZoom) {
+        normalizeMapView();
+        return;
+      }
       const point = clientToSvgPoint(clientX, clientY);
       const worldX = (point.x - gameState.mapState.panX) / oldZoom;
       const worldY = (point.y - gameState.mapState.panY) / oldZoom;
       gameState.mapState.zoom = newZoom;
       gameState.mapState.panX = point.x - worldX * newZoom;
       gameState.mapState.panY = point.y - worldY * newZoom;
+      normalizeMapView();
     }
 
     function zoomMapAtCenter(deltaZoom) {
@@ -10331,34 +9103,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       return result;
     }
     window.validateNpcPlans = validateNpcPlans;
-
-    function validateCharacterContactUnlocks() {
-      const rows = Object.values(gameState.characterRoster || {})
-        .filter(c => isExternalCharacter(c))
-        .map(c => ({
-          id: c.id,
-          name: c.name,
-          status: c.status,
-          faction: c.faction,
-          canTalk: ['discovered', 'contactable', 'recruited'].includes(c.status),
-          shouldShowInvestigate: c.status === 'rumored',
-          discoveredBy: c.discoveredBy || ''
-        }));
-
-      return {
-        rumoredCharacters: rows.filter(c => c.status === 'rumored'),
-        discoveredCharacters: rows.filter(c => c.status === 'discovered'),
-        contactableStatusCharacters: rows.filter(c => c.status === 'contactable'),
-        contactableCharacters: rows.filter(c => ['discovered', 'contactable'].includes(c.status)),
-        canTalkCharacters: rows.filter(c => c.canTalk),
-        blockedRumoredCharacters: rows.filter(c => c.status === 'rumored' && !c.canTalk),
-        rows
-      };
-    }
-
-    window.promoteRumoredCharacter = promoteRumoredCharacter;
-    window.investigateCharacter = investigateCharacter;
-    window.validateCharacterContactUnlocks = validateCharacterContactUnlocks;
 
     function validateConversationAgency(characterId) {
       if (characterId && isInternalPlayerCharacterId(characterId)) {
@@ -10684,7 +9428,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function readBackendSession() {
       try {
         return JSON.parse(localStorage.getItem(BACKEND_SESSION_KEY) || 'null');
-      } catch (error) {
+      } catch (_) {
         return null;
       }
     }
@@ -10696,7 +9440,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function getBackendDeviceId() {
       let id = localStorage.getItem(BACKEND_DEVICE_KEY);
       if (!id) {
-        id = (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+        id = window.crypto?.randomUUID
+          ? window.crypto.randomUUID()
+          : String(Date.now()) + Math.random().toString(16).slice(2);
         localStorage.setItem(BACKEND_DEVICE_KEY, id);
       }
       return id;
@@ -10714,7 +9460,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       let payload = null;
       try {
         payload = text ? JSON.parse(text) : null;
-      } catch (error) {
+      } catch (_) {
         payload = { raw: text };
       }
       if (!response.ok) {
@@ -10739,7 +9485,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         method: 'POST',
         body: JSON.stringify({
           deviceId: getBackendDeviceId(),
-          displayName: gameState?.player?.name || 'Player'
+          displayName: gameState?.player?.name || authUser?.displayName || 'Player'
         })
       }, { skipAuth: true });
       writeBackendSession(payload);
@@ -10766,7 +9512,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           saveData: gameState
         })
       });
-      if (show) toast('\u8fdb\u5ea6\u5df2\u4fdd\u5b58\u5230\u6570\u636e\u5e93');
+      if (show) toast('进度已保存到数据库');
       return payload;
     }
 
@@ -10775,10 +9521,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const loaded = payload?.saveData;
       if (!loaded) return null;
       if (!sanitizeLoadedData(loaded)) {
-        if (show) toast('\u6570\u636e\u5e93\u5b58\u6863\u5f02\u5e38\uff0c\u5df2\u56de\u9000\u4e3a\u521d\u59cb\u72b6\u6001');
+        if (show) toast('数据库存档异常，已回退为初始状态');
         return createInitialState();
       }
-      if (show) toast('\u5df2\u4ece\u6570\u636e\u5e93\u8bfb\u53d6\u8fdb\u5ea6');
+      if (show) toast('已从数据库读取进度');
       return normalizeLoaded(loaded);
     }
 
@@ -10789,7 +9535,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         return true;
       } catch (error) {
         console.warn('Backend save failed, using local storage:', error);
-        if (show) toast(localSaved ? '\u540e\u7aef\u4e0d\u53ef\u7528\uff0c\u5df2\u4fdd\u5b58\u5230\u672c\u5730' : '\u4fdd\u5b58\u5931\u8d25');
+        if (show) toast(localSaved ? '后端不可用，已保存到本地' : '保存失败');
         return localSaved;
       }
     }
@@ -10849,12 +9595,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       });
     }
     if (!window.remoteLLMAdapter?.generateAiContent) {
-      window.__initLLMAdapter?.(Object.assign(window.remoteLLMAdapter || {}, {
-        generateAiContent: async function(context) {
-          var payload = await backendFetch('/api/ai/content', {
+      window.__initLLMAdapter?.(Object.assign({}, window.remoteLLMAdapter || {}, {
+        generateAiContent: async context => {
+          const payload = await backendFetch('/api/ai/content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ context: context })
+            body: JSON.stringify({ context })
           });
           return payload.text || payload.content || '';
         }
@@ -10963,8 +9709,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function purgeInternalPlayerCharactersFromState(state) {
       if (!state) return state;
 
-      delete state.characterRoster?.player;
-      delete state.characterDiscovery?.player;
+      INTERNAL_PLAYER_CHARACTER_IDS.forEach(id => {
+        if (id === 'player') {
+          delete state.characterRoster?.[id];
+          delete state.characterDiscovery?.[id];
+        }
+      });
 
       if (isInternalPlayerCharacterId(state.selectedCharacterId)) {
         state.selectedCharacterId = null;
@@ -11566,11 +10316,10 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       const migrated = loaded && typeof loaded === 'object' ? loaded : {};
       migrated.schemaVersion ||= 4;
       migrated.player ||= {};
-      migrated.player.commandSlots = Math.max(Number(migrated.player.commandSlots || 0), 5);
+      migrated.player.commandSlots ||= 2;
       migrated.randomTalentSeed ||= Math.floor(Date.now() % 2147483647) || 190;
       migrated.characterRoster ||= {};
       migrated.characterDiscovery ||= {};
-      migrated.characterProfileId ||= null;
       migrated.conversations ||= [];
       migrated.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
       migrated.specialEventState ||= { triggered: {}, cooldowns: {}, queue: [] };
@@ -11592,6 +10341,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       migrated.aiContentCache ||= {};
       migrated.aiContentPayloads ||= {};
       migrated.aiContentPending ||= {};
+      migrated.characterProfileId ||= null;
+      migrated.appointments ||= { cityOfficials: {}, campaignCommanders: {}, autoTasks: {} };
       migrated.aiUsage ||= {};
       migrated.aiUsage.turn ||= migrated.turn || 1;
       migrated.aiUsage.turnDialogueCalls ||= 0;
@@ -11599,26 +10350,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       migrated.aiUsage.turnContentCalls ||= 0;
       migrated.aiUsage.maxContentCallsPerTurn ||= 6;
       migrated.schemaVersion = GAME_SCHEMA_VERSION;
-      // 清理旧存档中存在的异常战役
-      (migrated.campaigns || []).forEach(c => {
-        if (!c.army || typeof c.army !== 'object') c.army = { infantry: 0, archers: 0, cavalry: 0 };
-        // finished 状态：全部释放槽位并归零
-        if (FINISHED_CAMPAIGN_STATUSES.includes(c.status)) {
-          c.slotOccupied = false;
-          c.travelRemaining = 0;
-          c.siegeRemaining = 0;
-          c.supply = 0;
-        }
-        // 未 finished 但 army 归零：标记 destroyed
-        if (!FINISHED_CAMPAIGN_STATUSES.includes(c.status) && c.army && ((c.army.infantry || 0) + (c.army.archers || 0) + (c.army.cavalry || 0)) <= 0) {
-          c.status = 'destroyed';
-          c.phase = '全军覆没';
-          c.slotOccupied = false;
-          c.travelRemaining = 0;
-          c.siegeRemaining = 0;
-          c.supply = 0;
-        }
-      });
       normalizeAppointments(migrated);
       return purgeRemovedCitiesFromState(migrated);
     }
@@ -11668,6 +10399,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         aiUsage: Object.assign(fresh.aiUsage, loaded.aiUsage || {}),
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
+      normalized.mapState = normalizeMapState(normalized.mapState);
       if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 2) {
         applyInitialPublicSupportProfiles(normalized, true);
       }
@@ -11677,35 +10409,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       ensureRoutePair(ROUTES, 'guiyang', 'yuzhang');
       normalized = purgeRemovedCitiesFromState(normalized);
       normalized = purgeInternalPlayerCharactersFromState(normalized);
-      // 清理旧存档异常战役
-      (normalized.campaigns || []).forEach(c => {
-        if (!c.army || typeof c.army !== 'object') c.army = { infantry: 0, archers: 0, cavalry: 0 };
-        // finished 状态：全部释放槽位并归零
-        if (FINISHED_CAMPAIGN_STATUSES.includes(c.status)) {
-          c.slotOccupied = false;
-          c.travelRemaining = 0;
-          c.siegeRemaining = 0;
-          c.supply = 0;
-        }
-        // 未 finished 但 army 归零：标记 destroyed
-        if (!FINISHED_CAMPAIGN_STATUSES.includes(c.status) && c.army && ((c.army.infantry || 0) + (c.army.archers || 0) + (c.army.cavalry || 0)) <= 0) {
-          c.status = 'destroyed';
-          c.phase = '全军覆没';
-          c.slotOccupied = false;
-          c.travelRemaining = 0;
-          c.siegeRemaining = 0;
-          c.supply = 0;
-        }
-      });
-      normalizeAppointments(normalized);
-      cleanupInvalidAppointments(normalized);
       return ensureCharacterSystemState(normalized);
     }
 
     function validatePublicSupportSystem() {
       const unrest = gameState.publicUnrestState || {};
-      const audit = gameState.publicSupportTurnAudit || {};
-      const capped = audit.capped || [];
       const rows = Object.values(gameState.cities || {}).map(city => {
         const eco = calculateCityEconomy(city);
         const mod = getPublicSupportEconomyModifier(city);
@@ -11727,14 +10435,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           taxIncome: eco.taxIncome,
           crisisLevel: getPublicUnrestLevel(city),
           initialCalculatedSupport: calculateInitialPublicSupport(city),
-          turnStartPublicSupport: audit.start?.[city.id] ?? null,
-          turnEndPublicSupport: audit.end?.[city.id] ?? null,
-          turnDelta: audit.start?.[city.id] != null
-            ? Number((Number(city.publicSupport || 0) - Number(audit.start[city.id])).toFixed(2))
-            : null,
-          wasCappedThisTurn: capped.some(x => x.cityId === city.id),
-          stressInfo: getPublicSupportStressInfo(city),
-          hasRealStress: hasPublicSupportRealStress(city),
           rebellion: rebellion ? {
             turn: rebellion.turn,
             rebelTroops: rebellion.rebelTroops,
@@ -11749,46 +10449,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       });
       console.table(rows);
       return rows;
-    }
-
-    function validatePublicSupportTurnCap() {
-      const audit = gameState.publicSupportTurnAudit || {};
-      const capped = audit.capped || [];
-
-      const rows = Object.values(gameState.cities || {}).map(city => {
-        const start = audit.start?.[city.id];
-        const end = audit.end?.[city.id] ?? city.publicSupport;
-        const controller = cityController(city.id);
-        const hasRealStress = hasPublicSupportRealStress(city);
-
-        return {
-          id: city.id,
-          name: city.name,
-          controller,
-          start,
-          end,
-          delta: start == null ? null : Number((end - start).toFixed(2)),
-          hasRealStress,
-          stressInfo: getPublicSupportStressInfo(city),
-          wasCappedThisTurn: capped.some(x => x.cityId === city.id),
-          violatesCap: start != null && end < start - PUBLIC_SUPPORT_MAX_TURN_DROP
-        };
-      });
-
-      return {
-        maxDrop: PUBLIC_SUPPORT_MAX_TURN_DROP,
-        capped,
-        violations: rows.filter(r => r.violatesCap),
-        npcUnexpectedDrops: rows.filter(r =>
-          r.controller !== 'player' &&
-          r.controller !== 'local' &&
-          r.delta != null &&
-          r.delta < -1 &&
-          !r.hasRealStress &&
-          !r.wasCappedThisTurn
-        ),
-        rows
-      };
     }
 
     function setCityPublicSupport(cityId, value) {
@@ -11810,27 +10470,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     window.validatePublicSupportSystem = validatePublicSupportSystem;
-    window.validatePublicSupportTurnCap = validatePublicSupportTurnCap;
     window.setCityPublicSupport = setCityPublicSupport;
     window.forcePublicSupportCrisis = forcePublicSupportCrisis;
 
     function resetGame() {
       if (!confirm('确定重开？当前未保存进度会丢失。')) return;
-      clearGuideHighlights();
-      removeGuideOverlay();
-      gameState = createInitialState();
-      characterDraft = { name: '', identity: 'commandant' };
-      FACTIONS.player.name = '玩家';
-      manualMapRegions = null;
-      mapData = createMapData();
-      syncMapDataFromGameState();
       localStorage.removeItem(SAVE_KEY);
       localStorage.removeItem(SAVE_KEY_BACKUP);
       localStorage.removeItem(SAVE_KEY + ':lastSavedAt');
-      if (autosaveTimer) clearInterval(autosaveTimer);
-      autosaveTimer = null;
-      updateAutosaveDisplay();
-      render();
+      beginNewGameFlow();
     }
 
     // ===================== 分阶段新手引导系统 =====================
@@ -12162,6 +10810,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       document.querySelectorAll('.tutorial-tooltip').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-overlay').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-svg-proxy').forEach(el => el.remove());
+      document.querySelectorAll('.tutorial-html-proxy').forEach(el => el.remove());
       gameState.tutorial.highlightedElements = [];
     }
 
@@ -12170,6 +10819,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const overlay = document.createElement('div');
         overlay.className = 'tutorial-overlay';
         overlay.id = 'tutorialOverlay';
+        overlay.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); });
         document.body.appendChild(overlay);
       }
     }
@@ -12182,9 +10832,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function highlightGuideElement(selector, tooltipText, tooltipPosition) {
       const el = document.querySelector(selector);
       if (!el) return;
-      el.scrollIntoView({ block: 'center' });
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      }
       el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
       gameState.tutorial.highlightedElements.push(selector);
+      createGuideHtmlProxy(el, selector);
 
       if (tooltipText) {
         const rect = el.getBoundingClientRect();
@@ -12207,6 +10860,31 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       }
 
       showGuideOverlay();
+    }
+
+    function createGuideHtmlProxy(target, selector) {
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const proxy = document.createElement('button');
+      proxy.type = 'button';
+      proxy.className = 'tutorial-html-proxy';
+      proxy.setAttribute('aria-label', '执行引导目标操作');
+      proxy.dataset.guideProxySelector = selector;
+      proxy.style.left = Math.max(0, rect.left - 4) + 'px';
+      proxy.style.top = Math.max(0, rect.top - 4) + 'px';
+      proxy.style.width = Math.min(window.innerWidth - Math.max(0, rect.left - 4), rect.width + 8) + 'px';
+      proxy.style.height = Math.min(window.innerHeight - Math.max(0, rect.top - 4), rect.height + 8) + 'px';
+      proxy.addEventListener('click', event => {
+        event.stopPropagation();
+        event.preventDefault();
+        const liveTarget = document.querySelector(selector);
+        if (!liveTarget || liveTarget.disabled || liveTarget.getAttribute('aria-disabled') === 'true') {
+          toast('当前引导目标暂不可用');
+          return;
+        }
+        liveTarget.click();
+      });
+      document.body.appendChild(proxy);
     }
 
     function highlightGuideSvgElement(selector, tooltipText, tooltipPosition) {
@@ -12363,7 +11041,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       gameState.tutorial.guidePhase = 0;
       gameState.tutorial.forceAction = null;
       gameState.tutorial._stepIndex = {};
-      gameState.turn = 1; // 引导完成后重置回合数
       // 标记所有任务完成
       gameState.tutorial.tasks.forEach(task => { task.completed = true; });
       gameState.tutorial.trackedTaskId = null;
@@ -12393,51 +11070,28 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     function setupPhase1() {
       const step = getGuideStepIndex(1);
       switch (step) {
-        case 0: // 高亮桂阳城节点（圆圈+城名）
+        case 0: // 高亮桂阳城
           setForceAction('clickCity', 'guiyang');
-          const gyCenter = getRegion('guiyang')?.center || gameState.cities.guiyang;
-          if (gyCenter) {
-            setMapFocusOn(gyCenter.x, gyCenter.y, 2.55);
-            renderMap();
-          }
-          highlightGuideSvgElement('.city-node[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
+          highlightGuideSvgElement('[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
           break;
-        case 1: // 高亮城政tab，强制点击
-          setForceAction('clickTab', 'city');
-          highlightGuideElement('[data-tab="city"]', '点击进入城政面板', 'top');
-          break;
-        case 2: // 悬浮窗提示下拉部署城政命令
-          highlightGuideElement('#rightPanel', '下拉部署城政命令', 'left');
-          setTimeout(() => advanceGuideStep(), 1800);
-          return;
-        case 3: // 高亮征兵按钮，强制点击
+        case 1: // 高亮征兵按钮
+          gameState.activePanel = 'city';
           setForceAction('cityOrder', 'recruit');
-          highlightGuideElement('[data-city-order="recruit"]', '下拉找到征兵，点击扩充兵力', 'left');
+          highlightGuideElement('[data-city-order="recruit"]', '点击征兵扩充兵力。税率/征粮可通过滑块调整', 'left');
           break;
-        case 4: // 高亮税粮拨杆区域，提示可拖动
-          highlightGuideElement('.policy-control-card', '税率和征粮强度可以拖动调整，试试看', 'left');
-          setTimeout(() => advanceGuideStep(), 1800);
-          return;
-        case 5: // 高亮军事tab，强制点击
-          setForceAction('clickTab', 'military');
-          highlightGuideElement('[data-tab="military"]', '点亮下方军事选项', 'top');
-          break;
-        case 6: // 高亮整军按钮，强制点击 + 悬停tooltip示例
+        case 2: // 切到军事面板
+          gameState.activePanel = 'military';
+          render();
+          setTimeout(() => {
+            setForceAction('clickTab', 'military');
+            highlightGuideElement('[data-tab="military"]', '切换到军事面板，训练郡兵');
+          }, 100);
+          return; // skip default flow
+        case 3: // 高亮整军按钮
           setForceAction('militaryOrder', 'drill');
           highlightGuideElement('[data-military-order="drill"]', '整军提升士气，悬停可查看代价和收益', 'left');
-          setTimeout(() => {
-            const drillBtn = document.querySelector('[data-military-order="drill"]');
-            if (drillBtn) {
-              const helpText = HELP_TEXT['militaryDrill'];
-              const text = typeof helpText === 'function' ? helpText() : (helpText || '');
-              if (text) {
-                const rect = drillBtn.getBoundingClientRect();
-                showTooltip(text, rect.right + 12, rect.top);
-              }
-            }
-          }, 300);
           break;
-        case 7: // 高亮结束回合，强制点击
+        case 4: // 高亮结束回合
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合，结算本回合命令', 'left');
           break;
@@ -12457,31 +11111,17 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setTimeout(() => {
             setForceAction('clickTab', 'military');
             highlightGuideElement('[data-tab="military"]', '保持军事面板，悬停可查看出兵路线、战术方案和作战目标的代价和收益');
-            // 额外高亮帮助链接（非强制交互，仅视觉引导）
-            ['routeHelp', 'tacticHelp', 'objectiveHelp'].forEach(key => {
-              const el = document.querySelector('[data-help-key="' + key + '"]');
-              if (el) el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
-            });
           }, 100);
           return;
-        case 1: // 自动切换到刘表tab
-          gameState.activePanel = 'liubiao';
-          saveToStorage(false);
-          render();
-          // 显示提示后延迟推进
-          setTimeout(() => {
-            highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令');
-            setTimeout(() => advanceGuideStep(), 1500);
-          }, 200);
-          return;
-        case 2: // 刘表庇护HUD - 自动显示tooltip后推进（悬停查看，非强制点击）
-          saveToStorage(false);
-          setTimeout(() => {
-            highlightGuideElement('[data-help-key="protectionHelp"]', '刘表庇护值决定外部势力对你的态度，悬停可查看详情');
-            setTimeout(() => advanceGuideStep(), 1800);
-          }, 200);
-          return;
-        case 3: // 高亮结束回合按钮并强制点击
+        case 1: // 刘表tab
+          setForceAction('clickTab', 'liubiao');
+          highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令', 'top');
+          break;
+        case 2: // 刘表庇护HUD
+          setForceAction('clickHudItem', 'protectionHelp');
+          highlightGuideElement('[data-help-key="protectionHelp"]', '点击查看刘表庇护的具体效果', 'left');
+          break;
+        case 3: // 结束回合
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合以推进时间', 'left');
           break;
@@ -12499,12 +11139,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setForceAction('clickTab', 'inner');
           highlightGuideElement('[data-tab="inner"]', '亲信决定你能否掌控府衙、粮道与情报', 'top');
           break;
-        case 1: // 整肃亲兵 + 安插府衙亲信
+        case 1: // 整肃亲兵
           setForceAction('clickInner', 'organize');
           highlightGuideElement('[data-inner-action="organize"]', '整肃亲兵提升内部忠诚，悬停查看利弊', 'left');
-          // 额外高亮安插府衙亲信按钮（非强制交互，仅视觉引导）
-          const campGateEl = document.querySelector('[data-inner-action="campGate"]');
-          if (campGateEl) campGateEl.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
           break;
         case 2: // 人物tab
           setForceAction('clickTab', 'characters');
@@ -12555,9 +11192,13 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           setForceAction('clickTab', 'diplomacy');
           highlightGuideElement('[data-tab="diplomacy"]', '外交用于结盟、借道、示好', 'top');
           break;
-        case 3: // 纳粮（承认自治换取归附，示好动作）
-          setForceAction('clickDiplomacy', 'autonomy');
-          highlightGuideElement('[data-diplomacy-action="autonomy"]', '通过纳粮（承认自治）可以向其他势力示好', 'left');
+        case 3: // 纳粮
+          setForceAction('clickDiplomacy', 'demandFood');
+          highlightGuideElement('[data-diplomacy-action="demandFood"]', '纳粮可向周边势力征收粮草', 'left');
+          break;
+        case 4: // 结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '结束回合结算', 'left');
           break;
         default:
           endGuideTurn();
@@ -12571,9 +11212,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       switch (step) {
         case 0: // 高亮豫章城
           setForceAction('clickCity', 'yuzhang');
-          // 聚焦地图到豫章
-          const yzCenter = getRegion('yuzhang')?.center || gameState.cities.yuzhang;
-          if (yzCenter) setMapFocusOn(yzCenter.x, yzCenter.y, 2.2);
           highlightGuideSvgElement('[data-select-city="yuzhang"]', '豫章是孙氏在荆南的门户', 'top');
           break;
         case 1: // 谋略tab
@@ -12581,8 +11219,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           highlightGuideElement('[data-tab="scheme"]', '谋略可在战前改变局势', 'top');
           break;
         case 2: // 刺探豫章
-          setForceAction('clickScheme', 'scout:yuzhang');
+          setForceAction('clickScheme', 'scout');
           highlightGuideElement('[data-scheme-action="scout"][data-target="yuzhang"]', '刺探可获取目标城兵力、城防和粮草信息', 'left');
+          break;
+        case 3: // 结束回合
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '结束回合结算刺探结果', 'left');
           break;
         default:
           endGuideTurn();
@@ -12884,85 +11526,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       'cityOrder:fortify': '<strong>修城防</strong><br><span style="color:var(--good)">好处：提高防守能力，敌军来攻时更稳。</span><br><span style="color:var(--bad)">代价：消耗府库和劳力。</span><br>消耗 1 政务点',
       'cityOrder:tuntian': '<strong>屯田</strong><br><span style="color:var(--good)">好处：提高粮食产出，适合长期作战。</span><br><span style="color:var(--bad)">代价：短期见效慢，可能占用劳力。</span><br>消耗 1 政务点',
       'cityOrder:relief': '<strong>赈济</strong><br><span style="color:var(--good)">好处：提升民心，减少不满。</span><br><span style="color:var(--bad)">代价：消耗粮食和府库。</span><br>消耗 1 政务点',
-      'cityOrder:security': '<strong>整顿治安</strong><br><span style="color:var(--good)">好处：提升治安，降低豪强作乱和内乱风险。</span><br><span style="color:var(--bad)">代价：短期消耗府库，可能激怒地方豪强。</span><br>消耗 1 政务点',
-      protectionHelp: () => `<span style="color:#88d17c">刘表是你的名义主君与保护伞。</span><br>庇护值决定外部势力对你的态度：<br>· NPC进攻概率降低 <span style="color:#f0c060">${Math.round((1 - protectionModifier('npcAttack')) * 100)}%</span><br>· 阴谋策反成功率降低 <span style="color:#f0c060">最高50%</span><br>· 暗杀/叛变概率降低 <span style="color:#f0c060">最高70%</span><br>· 庇护 ≥ 60 解锁 <span style="color:#f0c060">外交Tab</span><br><span style="color:#d94d43">⚠ 擅自攻占刘表名义属地 → 庇护立即归零</span><br>当前等级：${protectionLevel().name}（${Math.round(gameState.player.protection)}/100）`,
-      suspicionHelp: () => `<span style="color:#d94d43">荆南士族家族对你的疑虑程度。</span><br>疑心越高，士族越倾向向襄阳通风报信：<br>· <span style="color:#f0c060">≥48</span> 警惕：士族开始关注你的动向<br>· <span style="color:#d94d43">≥70</span> 危险：士族积极串联<br>· <span style="color:#d94d43">≥72 且偶数回合</span>：自动消耗刘表庇护 -4<br>· 每 <span style="color:#f0c060">3回合</span> 自动增长 <span style="color:#d94d43">+2</span><br><span style="color:#88d17c">降低方法：维持桂阳治安≥66且民心≥64、向刘表汇报。</span><br>当前：信任${Math.round(gameState.characters.jingnanGentry.trust)}｜疑心${Math.round(gameState.characters.jingnanGentry.suspicion)}｜${gameState.characters.jingnanGentry.status}`,
-      militaryDrill: () => '<span style="color:#88d17c">整军备战</span><br>消耗：<span style="color:#f0c060">1 军令点</span>｜粮草 <span style="color:#d94d43">-80</span><br>收益：城池士气 <span style="color:#88d17c">+5</span><br>说明：提高驻军士气，降低溃散风险。适合出战前准备。<br><span style="color:#888">命令在当前回合结束后统一结算。</span>',
-      militaryDefense: () => '<span style="color:#88d17c">加固城防</span><br>消耗：<span style="color:#f0c060">1 军令点</span>｜府库 <span style="color:#d94d43">-80</span><br>收益：城防值 <span style="color:#88d17c">+4</span><br>说明：加固城墙、箭楼和防御工事。敌军攻城时城防越高越难攻破。<br><span style="color:#888">命令在当前回合结束后统一结算。</span>',
-      militaryReserve: () => '<span style="color:#88d17c">编练预备队</span><br>消耗：<span style="color:#f0c060">1 军令点</span><br>收益：城防 <span style="color:#88d17c">+2</span>｜士气 <span style="color:#88d17c">+2</span><br>说明：扩充后备兵员，双线提升城防和士气。性价比最高的整备项。<br><span style="color:#888">命令在当前回合结束后统一结算。</span>',
-      routeHelp: () => `${(() => {
-  const draft = gameState.draftBattle;
-  if (!draft) return '<span style="color:var(--muted)">请先选择出兵城和目标城，进入详细部署后查看各路线数值对比。</span>';
-  const source = gameState.cities[draft.source];
-  const target = gameState.cities[draft.target];
-  if (!source || !target) return '<span style="color:var(--muted)">请先选择出兵城和目标城。</span>';
-  const routes = [
-    { key: 'official', name: '正面官道', color: '#88d17c' },
-    { key: 'river', name: '沿河推进', color: '#88d17c' },
-    { key: 'raid', name: '绕路奇袭', color: '#f0c060' },
-    { key: 'night', name: '夜袭', color: '#f0c060' },
-    { key: 'cut', name: '断粮道', color: '#d94d43' }
-  ];
-  const current = computeOptionValues(draft, source, target, 'route', draft.route);
-  const rows = routes.map(r => {
-    const v = computeOptionValues(draft, source, target, 'route', r.key);
-    const isCurrent = r.key === draft.route;
-    const diff = v.attackPower - current.attackPower;
-    const diffStr = diff > 0 ? '<span style="color:#88d17c">+' + fmt(diff) + ' ▲</span>' : diff < 0 ? '<span style="color:#e07864">' + fmt(diff) + ' ▼</span>' : '<span style="color:var(--muted)">不变</span>';
-    const etaStr = Number.isFinite(v.eta) ? v.eta : '-';
-    const hl = isCurrent ? 'border-left:3px solid var(--gold);padding-left:8px;margin-left:-11px;' : 'padding-left:0;margin-left:0;';
-    return '<div style="' + hl + 'margin-bottom:6px"><b style="color:' + r.color + '">' + r.name + '</b>' + (isCurrent ? ' ←' : '') + '<br>攻击力 ' + fmt(v.attackPower) + ' ' + diffStr + '｜ETA ' + etaStr + ' 回合<br>粮草 ' + fmt(v.foodCost) + '｜战力比 ' + (v.ratio >= 1.35 ? '优势明显' : v.ratio >= 1.05 ? '可战' : v.ratio >= 0.82 ? '胜负未定' : '风险极高') + '</div>';
-  });
-  return '<span style="color:#f0c060">出兵路线对比（高亮为当前选中）</span><br><br>' + rows.join('');
-})()}`,
-      tacticHelp: () => `${(() => {
-  const draft = gameState.draftBattle;
-  if (!draft) return '<span style="color:var(--muted)">请先进入详细部署后查看各战术数值对比。</span>';
-  const source = gameState.cities[draft.source];
-  const target = gameState.cities[draft.target];
-  if (!source || !target) return '<span style="color:var(--muted)">请先选择出兵城和目标城。</span>';
-  const tactics = [
-    { key: 'balanced', name: '稳扎稳打', color: '#88d17c' },
-    { key: 'assault', name: '强攻夺城', color: '#f0c060' },
-    { key: 'siege', name: '围城断粮', color: '#f0c060' },
-    { key: 'feint', name: '佯攻诱敌', color: '#88d17c' },
-    { key: 'reserve', name: '保留预备队', color: '#88d17c' }
-  ];
-  const current = computeOptionValues(draft, source, target, 'tactic', draft.tactic);
-  const rows = tactics.map(t => {
-    const v = computeOptionValues(draft, source, target, 'tactic', t.key);
-    const isCurrent = t.key === draft.tactic;
-    const diff = v.attackPower - current.attackPower;
-    const diffStr = diff > 0 ? '<span style="color:#88d17c">+' + fmt(diff) + '</span>' : diff < 0 ? '<span style="color:#e07864">' + fmt(diff) + '</span>' : '<span style="color:var(--muted)">不变</span>';
-    const hl = isCurrent ? 'border-left:3px solid var(--gold);padding-left:8px;margin-left:-11px;' : 'padding-left:0;margin-left:0;';
-    return '<div style="' + hl + 'margin-bottom:6px"><b style="color:' + t.color + '">' + t.name + '</b>' + (isCurrent ? ' ←' : '') + '<br>攻击力 ' + fmt(v.attackPower) + ' ' + diffStr + '｜粮草 ' + fmt(v.foodCost) + '<br>己方伤亡 ' + fmt(v.ownLossLow) + '~' + fmt(v.ownLossHigh) + '｜敌方伤亡 ' + fmt(v.enemyLossLow) + '~' + fmt(v.enemyLossHigh) + '</div>';
-  });
-  return '<span style="color:#f0c060">战术方案对比（高亮为当前选中）</span><br><br>' + rows.join('');
-})()}`,
-      objectiveHelp: () => `${(() => {
-  const draft = gameState.draftBattle;
-  if (!draft) return '<span style="color:var(--muted)">请先进入详细部署后查看各作战目标数值对比。</span>';
-  const source = gameState.cities[draft.source];
-  const target = gameState.cities[draft.target];
-  if (!source || !target) return '<span style="color:var(--muted)">请先选择出兵城和目标城。</span>';
-  const objectives = [
-    { key: 'capture', name: '夺城', color: '#f0c060', occupy: true, desc: '占领城池，纳入版图' },
-    { key: 'contain', name: '牵制', color: '#88d17c', occupy: false, desc: '拖住敌军，阻止支援' },
-    { key: 'exhaust', name: '消耗守军', color: '#88d17c', occupy: false, desc: '杀伤敌军有生力量' },
-    { key: 'supply', name: '切断粮道', color: '#d94d43', occupy: false, desc: '断补给线，城防自溃' }
-  ];
-  const current = computeOptionValues(draft, source, target, 'objective', draft.objective);
-  const rows = objectives.map(o => {
-    const v = computeOptionValues(draft, source, target, 'objective', o.key);
-    const isCurrent = o.key === draft.objective;
-    const diff = v.attackPower - current.attackPower;
-    const diffStr = diff > 0 ? '<span style="color:#88d17c">+' + fmt(diff) + '</span>' : diff < 0 ? '<span style="color:#e07864">' + fmt(diff) + '</span>' : '<span style="color:var(--muted)">不变</span>';
-    const hl = isCurrent ? 'border-left:3px solid var(--gold);padding-left:8px;margin-left:-11px;' : 'padding-left:0;margin-left:0;';
-    return '<div style="' + hl + 'margin-bottom:6px"><b style="color:' + o.color + '">' + o.name + '</b>' + (isCurrent ? ' ←' : '') + '<br>攻击力 ' + fmt(v.attackPower) + ' ' + diffStr + '｜粮草 ' + fmt(v.foodCost) + '<br>占领：' + (o.occupy ? '<span style="color:#88d17c">是</span>' : '<span style="color:#e07864">否</span>') + '｜' + o.desc + '</div>';
-  });
-  return '<span style="color:#f0c060">作战目标对比（高亮为当前选中）</span><br><br>' + rows.join('') + '<br><span style="color:#f0c060">注意：只有"夺城"才能在胜利后实际占领城池。</span>';
-})()}`,
-      militaryTabHelp: () => `调兵遣将、整备防务、出阵远征。<br>· 出阵消耗 <span style="color:#f0c060">2 军令点</span>（当前回合上限：${gameState.actionPoints.mil}）<br>· 整军/加固防线/预备队各消耗 <span style="color:#f0c060">1 军令点</span><br>· 战役槽会随你控制城池数量增加，开局至少可维持 5 路战役。<br>· 先选出兵城和目标城，再在详细部署中配置路线、战术和作战目标<br>· 长途远征需多个回合，考虑粮草补给<br>· 命令在当前回合结束后统一结算`
+      'cityOrder:security': '<strong>整顿治安</strong><br><span style="color:var(--good)">好处：提升治安，降低豪强作乱和内乱风险。</span><br><span style="color:var(--bad)">代价：短期消耗府库，可能激怒地方豪强。</span><br>消耗 1 政务点'
     };
     let tooltipState = { timer: null, visible: false, el: null };
 
@@ -13000,8 +11564,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         return;
       }
       const key = target.getAttribute('data-help-key');
-      const val = key ? HELP_TEXT[key] : target.getAttribute('data-help');
-      const text = typeof val === 'function' ? val() : (val || '');
+      const text = key ? HELP_TEXT[key] : target.getAttribute('data-help');
       if (!text) { hideTooltip(); return; }
       clearTimeout(tooltipState.timer);
       tooltipState.timer = setTimeout(() => {
@@ -13053,63 +11616,157 @@ const MAP_SIZE = { width: 1448, height: 1086 };
       toast('mapData JSON 已生成');
     }
 
+    function showIntroPlayButton(label = '播放开场', fallback = false) {
+      const button = document.getElementById('introPlay');
+      if (!button) return;
+      button.textContent = label;
+      button.dataset.introFallback = fallback ? '1' : '0';
+      button.classList.add('show');
+    }
+
+    function hideIntroPlayButton() {
+      document.getElementById('introPlay')?.classList.remove('show');
+    }
+
+    function playIntroVideo() {
+      const video = document.getElementById('introVideo');
+      if (!video) return;
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') {
+        playback
+          .then(hideIntroPlayButton)
+          .catch(() => showIntroPlayButton());
+      }
+    }
+
+    function stopIntroVideo() {
+      const video = document.getElementById('introVideo');
+      if (video) {
+        video.pause();
+        video.currentTime = 0;
+      }
+      hideIntroPlayButton();
+    }
+
+    function stopOpeningTransition() {
+      if (openingTransitionTimer) clearTimeout(openingTransitionTimer);
+      openingTransitionTimer = null;
+      document.getElementById('openingTransition')?.classList.remove('playing');
+    }
+
+    function stopOfficeHandoffTransition() {
+      if (officeHandoffTimer) clearTimeout(officeHandoffTimer);
+      officeHandoffTimer = null;
+    }
+
+    function completeOpeningTransition() {
+      if (openingTransitionTimer) clearTimeout(openingTransitionTimer);
+      openingTransitionTimer = null;
+      document.getElementById('openingTransition')?.classList.remove('playing');
+      if (openingTransitionMode === 'departure') {
+        startNewCharacter({ delayGuide: true });
+        return;
+      }
+      characterCreationStep = 'arrival';
+      launchScreen = 'character';
+      render();
+    }
+
+    function beginOfficeHandoffTransition() {
+      stopOfficeHandoffTransition();
+      launchScreen = 'handoff';
+      render();
+      officeHandoffTimer = setTimeout(() => {
+        officeHandoffTimer = null;
+        startNewCharacter({ delayGuide: true });
+      }, 4200);
+    }
+
+    function beginOpeningTransition(mode = 'audience') {
+      stopOpeningTransition();
+      stopOfficeHandoffTransition();
+      openingTransitionMode = mode;
+      launchScreen = mode === 'departure' ? 'commissioning' : 'transition';
+      const kicker = document.getElementById('transitionKicker');
+      const title = document.getElementById('transitionTitle');
+      const copy = document.getElementById('transitionCopy');
+      if (kicker) kicker.textContent = mode === 'departure' ? '密令已下｜南赴桂阳' : '襄阳夜召｜州府内堂';
+      if (title) title.textContent = mode === 'departure' ? '赴桂阳' : '一纸密令';
+      if (copy) copy.textContent = mode === 'departure'
+        ? '朱印已落，晨雾未开。荆南门户，自此由你执掌。'
+        : '墨色未散，州府的灯火已在夜雨中亮起。';
+      render();
+      const transition = document.getElementById('openingTransition');
+      if (transition) {
+        void transition.offsetWidth;
+        transition.classList.add('playing');
+      }
+      openingTransitionTimer = setTimeout(completeOpeningTransition, mode === 'departure' ? 2600 : 3600);
+    }
+
+    function beginCommissioningTransition() {
+      const name = characterDraft.name || randomChineseName();
+      if (!isValidPlayerName(name)) {
+        updateCharacterCreation();
+        return toast('姓名须二至六字');
+      }
+      characterDraft.name = name;
+      updateCharacterCreation();
+      beginOpeningTransition('departure');
+    }
+
     function beginIntro() {
-      if (!gameState.storyFlags.characterCreated || gameState.storyFlags.introSeen) return;
-      const lines = [
-        '公元190年，董卓乱政，群雄并起。',
-        '荆州表面安定，宗族、豪强与士族却各有盘算。',
-        '某夜，襄阳。荆州牧刘表召见了你。',
-        '"桂阳偏远，却是荆南门户。"',
-        '"此地若稳，荆州可安。此地若乱，荆州必失。"',
-        '"吾欲托付于卿。"'
-      ];
-      let index = 0;
+      if (launchScreen !== 'intro') return;
       const intro = document.getElementById('intro');
-      const line = document.getElementById('introLine');
-      const introMap = document.getElementById('introMap');
-      const letter = document.getElementById('introLetter');
-      const choice = document.getElementById('introChoice');
+      const video = document.getElementById('introVideo');
       intro.classList.add('show');
-      introMap.classList.remove('focus');
-      line.textContent = lines[0];
-      letter.classList.remove('show');
-      choice.classList.remove('show');
-      clearInterval(beginIntro.timer);
-      beginIntro.timer = setInterval(() => {
-        index += 1;
-        if (index < lines.length) {
-          line.textContent = lines[index];
-          if (index >= 2) introMap.classList.add('focus');
-          if (index === 2) letter.classList.add('show');
-        } else {
-          clearInterval(beginIntro.timer);
-          choice.classList.add('show');
-        }
-      }, 2600);
+      if (!video) return showIntroPlayButton('视频未能加载，继续创建角色', true);
+      video.currentTime = 0;
+      hideIntroPlayButton();
+      playIntroVideo();
     }
 
     function finishIntro() {
-      clearInterval(beginIntro.timer);
-      captureRegion('guiyang', 'player', null, { render: false, select: false, skipProtectionDecay: true });
-      gameState.player.protection = 100;
+      stopIntroVideo();
       gameState.storyFlags.introSeen = true;
-      gameState.selectedCityId = 'guiyang';
-      gameState.currentGoal = '稳定桂阳：整顿治安，安抚士族，备粮并训练郡兵。';
-      addNews('good', '刘表密令：桂阳实际控制权交予' + gameState.player.name + '。第一阶段目标：稳定桂阳。');
-      document.getElementById('intro').classList.remove('show');
-      const center = getRegion('guiyang')?.center || gameState.cities.guiyang;
-      setMapFocusOn(center.x, center.y, 2.55);
-      updateTabLockStates();
-      saveToStorage(false);
-      startAutosaveTimer();
-      updateAutosaveDisplay();
-      render();
-      // 开局引导选择
-      initTutorialGuide();
+      beginOpeningTransition('audience');
     }
 
     function bindEvents() {
       document.addEventListener('click', async event => {
+        const authModeButton = event.target.closest('[data-auth-mode]');
+        if (authModeButton) {
+          authMode = authModeButton.getAttribute('data-auth-mode') === 'register' ? 'register' : 'login';
+          setAuthStatus(authMode === 'register' ? '填写账号和密钥后即可注册。' : '输入账号和密钥登录。');
+          updateAuthScreen();
+          return;
+        }
+        if (event.target.closest('[data-auth-guest]')) {
+          await enterAsGuest();
+          return;
+        }
+        const menuAction = event.target.closest('[data-menu-action]');
+        if (menuAction) {
+          const action = menuAction.getAttribute('data-menu-action');
+          if (action === 'continue' || action === 'load') await resumeSavedGame(true);
+          if (action === 'new') beginNewGameFlow();
+          if (action === 'back') returnToMainMenu();
+          return;
+        }
+        const creationAdvance = event.target.closest('[data-creation-advance]');
+        if (creationAdvance) {
+          const targetStep = creationAdvance.getAttribute('data-creation-advance');
+          if (targetStep === 'identity' && !characterDraft.name) characterDraft.name = randomChineseName();
+          characterCreationStep = targetStep;
+          updateCharacterCreation();
+          return;
+        }
+        const creationRetreat = event.target.closest('[data-creation-retreat]');
+        if (creationRetreat) {
+          characterCreationStep = creationRetreat.getAttribute('data-creation-retreat');
+          updateCharacterCreation();
+          return;
+        }
         const identity = event.target.closest('[data-identity]');
         if (identity) {
           characterDraft.identity = identity.getAttribute('data-identity');
@@ -13128,7 +11785,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           return;
         }
         if (event.target.closest('[data-start-game]')) {
-          startNewCharacter();
+          beginCommissioningTransition();
+          return;
+        }
+        if (event.target.closest('[data-complete-transition]')) {
+          completeOpeningTransition();
           return;
         }
         const tutorial = event.target.closest('[data-tutorial-next]');
@@ -13201,13 +11862,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           openLetterModal(openLetter.getAttribute('data-open-letter'));
           return;
         }
-        const aiContentBtn = event.target.closest('[data-ai-content-type]');
-        if (aiContentBtn) {
-          var aiType = aiContentBtn.getAttribute('data-ai-content-type');
-          var aiPayloadId = aiContentBtn.getAttribute('data-ai-content-payload-id');
+        const aiContentButton = event.target.closest('[data-ai-content-type]');
+        if (aiContentButton) {
+          const aiType = aiContentButton.getAttribute('data-ai-content-type');
+          const aiPayloadId = aiContentButton.getAttribute('data-ai-content-payload-id');
           gameState.aiContentPayloads ||= {};
-          var aiPayload = gameState.aiContentPayloads[aiPayloadId] || {};
-          openAiContentModal(aiType, aiPayload);
+          openAiContentModal(aiType, gameState.aiContentPayloads[aiPayloadId] || {});
           return;
         }
         const openTurnEvent = event.target.closest('[data-open-turn-event]');
@@ -13258,7 +11918,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const characterTarget = event.target.closest('[data-select-character]');
         if (characterTarget) {
           gameState.selectedCharacterId = characterTarget.getAttribute('data-select-character');
-          gameState.characterProfileId = gameState.selectedCharacterId;
           renderRightPanel();
           return;
         }
@@ -13272,11 +11931,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           }
           return;
         }
-        const investigateBtn = event.target.closest('[data-investigate-character]');
-        if (investigateBtn) {
-          investigateCharacter(investigateBtn.getAttribute('data-investigate-character'));
-          return;
-        }
         const relief = event.target.closest('[data-request-relief]');
         if (relief) {
           requestRelief(relief.getAttribute('data-request-relief'), relief.getAttribute('data-relief-city'));
@@ -13287,43 +11941,26 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           launchDiversionAttack(diversion.getAttribute('data-diversion'), diversion.getAttribute('data-diversion-target'));
           return;
         }
-        const withdrawBtn = event.target.closest('[data-withdraw]');
-        if (withdrawBtn) {
-          withdrawCampaign(withdrawBtn.getAttribute('data-withdraw'));
-          return;
-        }
-        const endBtn = event.target.closest('[data-end-campaign]');
-        if (endBtn) {
-          withdrawCampaign(endBtn.getAttribute('data-end-campaign'));
-          return;
-        }
-        const abandonBtn = event.target.closest('[data-abandon]');
-        if (abandonBtn) {
-          abandonCampaign(abandonBtn.getAttribute('data-abandon'));
-          return;
-        }
-        const reinforceCampaignBtn = event.target.closest('[data-reinforce-campaign]');
-        if (reinforceCampaignBtn) {
-          requestCampaignReinforcement(reinforceCampaignBtn.getAttribute('data-reinforce-campaign'));
-          return;
-        }
         if (calibrationState.enabled && event.target.closest('#mapStage')) {
           handleCalibrationMapClick(event);
           return;
         }
         // HUD item click for guide (clickHudItem forceAction)
         const hudHelpItem = event.target.closest('[data-help-key]');
-        if (hudHelpItem && isGuideActive() && isForceAction('clickHudItem')) {
+        if (hudHelpItem && isGuideActive() && gameState.tutorial.forceAction?.type === 'clickHudItem') {
           const helpKey = hudHelpItem.getAttribute('data-help-key');
           if (checkForceAction('clickHudItem', helpKey)) return;
-          const val = HELP_TEXT[helpKey];
-          const text = typeof val === 'function' ? val() : (val || '');
-          if (text) {
-            const rect = hudHelpItem.getBoundingClientRect();
-            showTooltip(text, rect.left, rect.bottom + 6);
+          if (isForceAction('clickHudItem', helpKey)) {
+            // Show the help tooltip immediately
+            const val = HELP_TEXT[helpKey];
+            const text = typeof val === 'function' ? val() : (val || '');
+            if (text) {
+              const rect = hudHelpItem.getBoundingClientRect();
+              showTooltip(text, rect.left, rect.bottom + 6);
+            }
+            advanceGuideStep();
+            return;
           }
-          advanceGuideStep();
-          return;
         }
         const cityTarget = event.target.closest('[data-select-city]');
         if (cityTarget) {
@@ -13355,20 +11992,8 @@ const MAP_SIZE = { width: 1448, height: 1086 };
             }
           }
           if (action === 'load') {
-            clearGuideHighlights();
-            removeGuideOverlay();
-            const loaded = await loadGameProgress(true);
-            if (loaded) {
-              gameState = loaded;
-              characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
-              FACTIONS.player.name = gameState.player.name || '玩家';
-              mapData = createMapData();
-              syncMapDataFromGameState();
-              startAutosaveTimer();
-              updateAutosaveDisplay();
-              render();
-              if (isGuideActive()) processGuidePhase();
-            }
+            const loaded = await resumeSavedGame(true);
+            if (loaded && isGuideActive()) processGuidePhase();
           }
           if (action === 'reset') resetGame();
           return;
@@ -13452,27 +12077,9 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         const scheme = event.target.closest('[data-scheme-action]');
         if (scheme) {
           const actionType = scheme.getAttribute('data-scheme-action');
-          const schemeTarget = scheme.getAttribute('data-target');
-          // checkForceAction with combined key "actionType:cityId" for scheme guide validation
-          const schemeKey = schemeTarget ? actionType + ':' + schemeTarget : actionType;
-          if (checkForceAction('clickScheme', schemeKey)) return;
-          // Also check base actionType (backward compatible)
-          if (isGuideActive() && gameState.tutorial.forceAction?.type === 'clickScheme') {
-            const faTarget = gameState.tutorial.forceAction.target;
-            // If forceAction target is "scout:yuzhang", check both actionType and city
-            if (faTarget.includes(':')) {
-              const [faAction, faCity] = faTarget.split(':');
-              if (faAction !== actionType || faCity !== schemeTarget) {
-                toast('请按照引导操作');
-                return;
-              }
-            } else if (faTarget !== actionType) {
-              toast('请按照引导操作');
-              return;
-            }
-          }
-          queueScheme(actionType, schemeTarget);
-          if (isGuideActive() && isForceAction('clickScheme', schemeKey)) {
+          if (checkForceAction('clickScheme', actionType)) return;
+          queueScheme(actionType, scheme.getAttribute('data-target'));
+          if (isGuideActive() && isForceAction('clickScheme', actionType)) {
             advanceGuideStep();
           }
           return;
@@ -13534,44 +12141,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           toast('主将任命完成');
           return;
         }
-        const appointCityBtn = event.target.closest('[data-appoint-city-official]');
-        if (appointCityBtn) {
-          const charId = appointCityBtn.getAttribute('data-appoint-city-official');
-          const card = appointCityBtn.closest('.appointment-card');
-          if (card) {
-            const citySelect = card.querySelector('[data-appoint-city-select="' + charId + '"]');
-            const slotSelect = card.querySelector('[data-appoint-slot-select="' + charId + '"]');
-            if (citySelect && slotSelect) {
-              appointCityOfficial(citySelect.value, slotSelect.value, charId);
-            }
-          }
-          return;
-        }
-        const removeCityBtn = event.target.closest('[data-remove-city-official]');
-        if (removeCityBtn) {
-          const cityId = removeCityBtn.getAttribute('data-remove-city-official-city');
-          const slot = removeCityBtn.getAttribute('data-remove-city-official-slot');
-          const characterId = removeCityBtn.getAttribute('data-remove-city-official-character');
-          removeCityOfficial(cityId, slot, characterId);
-          return;
-        }
-        const appointCampaignBtn = event.target.closest('[data-appoint-campaign-commander]');
-        if (appointCampaignBtn) {
-          const charId = appointCampaignBtn.getAttribute('data-appoint-campaign-commander');
-          const card = appointCampaignBtn.closest('.appointment-card');
-          if (card) {
-            const campaignSelect = card.querySelector('[data-appoint-campaign-select="' + charId + '"]');
-            if (campaignSelect) {
-              appointCampaignCommander(campaignSelect.value, charId);
-            }
-          }
-          return;
-        }
-        const removeCampaignBtn = event.target.closest('[data-remove-campaign-commander]');
-        if (removeCampaignBtn) {
-          removeCampaignCommander(removeCampaignBtn.getAttribute('data-remove-campaign-commander'));
-          return;
-        }
         const yuan = event.target.closest('[data-yuan-action]');
         if (yuan) {
           performYuanAction(yuan.getAttribute('data-yuan-action'));
@@ -13603,18 +12172,14 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           clearOrders();
           return;
         }
-        const introChoice = event.target.closest('[data-intro-choice]');
-        if (introChoice) {
-          finishIntro(introChoice.getAttribute('data-intro-choice'));
+        const introPlay = event.target.closest('[data-play-intro]');
+        if (introPlay) {
+          if (introPlay.dataset.introFallback === '1') finishIntro();
+          else playIntroVideo();
           return;
         }
         if (event.target.closest('[data-skip-intro]')) {
-          finishIntro('accept');
-          return;
-        }
-        // Guide mode catch-all: block clicks that aren't handled by specific handlers above
-        if (isGuideActive()) {
-          toast('请按照引导操作');
+          finishIntro();
           return;
         }
         const mapClick = event.target.closest('#mapStage');
@@ -13637,6 +12202,22 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           selectNearestCityFromMapEvent(event);
         }
       });
+
+      document.addEventListener('submit', event => {
+        if (event.target.id === 'authForm') {
+          event.preventDefault();
+          submitAuthForm();
+        }
+      });
+
+      const introVideo = document.getElementById('introVideo');
+      if (introVideo) {
+        introVideo.addEventListener('play', hideIntroPlayButton);
+        introVideo.addEventListener('ended', finishIntro);
+        introVideo.addEventListener('error', () => {
+          showIntroPlayButton('视频未能加载，继续创建角色', true);
+        });
+      }
 
       document.addEventListener('keydown', event => {
         if (event.altKey && event.key.toLowerCase() === 'm') {
@@ -13720,24 +12301,6 @@ const MAP_SIZE = { width: 1448, height: 1086 };
           gameState.draftTransfer[transferField.getAttribute('data-transfer-field')] = transferField.value;
           renderRightPanel();
         }
-        const autoTaskField = event.target.closest('[data-auto-task-field]');
-        if (autoTaskField) {
-          const cityId = autoTaskField.getAttribute('data-auto-task-city');
-          const field = autoTaskField.getAttribute('data-auto-task-field');
-          const value = autoTaskField.type === 'checkbox'
-            ? autoTaskField.checked
-            : autoTaskField.value;
-          setCityAutoTask(cityId, field, value);
-          return;
-        }
-        const toggleAutoMode = event.target.closest('[data-toggle-auto-mode]');
-        if (toggleAutoMode) {
-          const cityId = toggleAutoMode.getAttribute('data-auto-task-city');
-          const field = toggleAutoMode.getAttribute('data-toggle-auto-mode');
-          const mode = toggleAutoMode.getAttribute('data-auto-mode');
-          toggleCityAutoTaskMode(cityId, field, mode);
-          return;
-        }
         const plannerField = event.target.closest('[data-military-planner-field]');
         if (plannerField) {
           gameState.militaryPlanner = gameState.militaryPlanner || {};
@@ -13787,6 +12350,7 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         if (Math.abs(dx) + Math.abs(dy) > 1.5) dragState.moved = true;
         gameState.mapState.panX += dx;
         gameState.mapState.panY += dy;
+        normalizeMapView();
         dragState.point = point;
         renderMap();
       });
@@ -13814,6 +12378,11 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         zoomMapAt(event.clientX, event.clientY, direction * 0.18);
         renderMap();
       }, { passive: false });
+
+      window.addEventListener('resize', () => {
+        normalizeMapView();
+        renderMap();
+      });
     }
 
     function initGame() {
@@ -13830,14 +12399,12 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     // 长悬停 tooltip 事件
     document.addEventListener('mouseover', event => { handleHelpHover(event); });
     document.addEventListener('mouseleave', event => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target?.closest('[data-help], [data-help-key]')) hideTooltip();
+      if (!event.target.closest('[data-help], [data-help-key]')) hideTooltip();
     }, true);
     document.addEventListener('click', () => { hideTooltip(); });
     document.addEventListener('scroll', () => { hideTooltip(); }, true);
     if (loadedGameState) normalizeActionPointsAfterLoad();
     else resetActionPoints();
-    if (gameState.storyFlags.characterCreated && !gameState.storyFlags.introSeen) beginIntro();
     render();
     validateCityData();
     // Restore guide highlights if guide was active
@@ -13898,19 +12465,15 @@ const MAP_SIZE = { width: 1448, height: 1086 };
         aiUsage: gameState.aiUsage,
         cacheCount: Object.keys(gameState.aiContentCache || {}).length,
         payloadCount: Object.keys(gameState.aiContentPayloads || {}).length,
-        cache: Object.entries(gameState.aiContentCache || {}).map(function(entry) {
-          var key = entry[0];
-          var item = entry[1];
-          return {
-            key: key,
-            type: item.type,
-            turn: item.turn,
-            title: item.title,
-            hasText: !!item.text,
-            source: item.source || 'unknown',
-            createdAt: item.createdAt
-          };
-        })
+        cache: Object.entries(gameState.aiContentCache || {}).map(([key, item]) => ({
+          key,
+          type: item.type,
+          turn: item.turn,
+          title: item.title,
+          hasText: !!item.text,
+          source: item.source || 'unknown',
+          createdAt: item.createdAt
+        }))
       };
     }
 
@@ -14078,4 +12641,3 @@ const MAP_SIZE = { width: 1448, height: 1086 };
     }
 
     window.validateGuiyangYuzhangLink = validateGuiyangYuzhangLink;
-  

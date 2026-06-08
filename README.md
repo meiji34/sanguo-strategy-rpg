@@ -4,7 +4,7 @@
 ![SQLite](https://img.shields.io/badge/SQLite-save_data-78dcca?style=for-the-badge)
 ![DeepSeek](https://img.shields.io/badge/DeepSeek-dialogue_proxy-00a6d6?style=for-the-badge)
 
-> 地图驱动式三国权谋战略 RPG 原型。  
+> 地图驱动式三国权谋战略 RPG 原型。
 > 前端负责地图、回合、指令和 UI；后端负责用户会话、云端存档和 AI 文本代理。
 
 ```text
