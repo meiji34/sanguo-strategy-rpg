@@ -10810,6 +10810,7 @@ const MAX_MAP_ZOOM = 4.2;
       document.querySelectorAll('.tutorial-tooltip').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-overlay').forEach(el => el.remove());
       document.querySelectorAll('.tutorial-svg-proxy').forEach(el => el.remove());
+      document.querySelectorAll('.tutorial-html-proxy').forEach(el => el.remove());
       gameState.tutorial.highlightedElements = [];
     }
 
@@ -10831,8 +10832,12 @@ const MAX_MAP_ZOOM = 4.2;
     function highlightGuideElement(selector, tooltipText, tooltipPosition) {
       const el = document.querySelector(selector);
       if (!el) return;
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      }
       el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
       gameState.tutorial.highlightedElements.push(selector);
+      createGuideHtmlProxy(el, selector);
 
       if (tooltipText) {
         const rect = el.getBoundingClientRect();
@@ -10855,6 +10860,31 @@ const MAX_MAP_ZOOM = 4.2;
       }
 
       showGuideOverlay();
+    }
+
+    function createGuideHtmlProxy(target, selector) {
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const proxy = document.createElement('button');
+      proxy.type = 'button';
+      proxy.className = 'tutorial-html-proxy';
+      proxy.setAttribute('aria-label', '执行引导目标操作');
+      proxy.dataset.guideProxySelector = selector;
+      proxy.style.left = Math.max(0, rect.left - 4) + 'px';
+      proxy.style.top = Math.max(0, rect.top - 4) + 'px';
+      proxy.style.width = Math.min(window.innerWidth - Math.max(0, rect.left - 4), rect.width + 8) + 'px';
+      proxy.style.height = Math.min(window.innerHeight - Math.max(0, rect.top - 4), rect.height + 8) + 'px';
+      proxy.addEventListener('click', event => {
+        event.stopPropagation();
+        event.preventDefault();
+        const liveTarget = document.querySelector(selector);
+        if (!liveTarget || liveTarget.disabled || liveTarget.getAttribute('aria-disabled') === 'true') {
+          toast('当前引导目标暂不可用');
+          return;
+        }
+        liveTarget.click();
+      });
+      document.body.appendChild(proxy);
     }
 
     function highlightGuideSvgElement(selector, tooltipText, tooltipPosition) {
@@ -11917,7 +11947,7 @@ const MAX_MAP_ZOOM = 4.2;
         }
         // HUD item click for guide (clickHudItem forceAction)
         const hudHelpItem = event.target.closest('[data-help-key]');
-        if (hudHelpItem && isGuideActive()) {
+        if (hudHelpItem && isGuideActive() && gameState.tutorial.forceAction?.type === 'clickHudItem') {
           const helpKey = hudHelpItem.getAttribute('data-help-key');
           if (checkForceAction('clickHudItem', helpKey)) return;
           if (isForceAction('clickHudItem', helpKey)) {
