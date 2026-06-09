@@ -2,6 +2,7 @@ Update/
 origin/
 .env
 node_modules/
+.claude/
 /data/
 *.sqlite
 *.sqlite-shm

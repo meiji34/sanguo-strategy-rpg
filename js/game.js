@@ -130,6 +130,7 @@ const MAX_MAP_ZOOM = 4.2;
         currentPlan: data.currentPlan || '观望局势',
         specialSchemes: Array.isArray(data.specialSchemes) ? data.specialSchemes : [],
         passiveBonuses: Array.isArray(data.passiveBonuses) ? data.passiveBonuses : [],
+        battleTags: Array.isArray(data.battleTags) ? data.battleTags : [],
         weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses : [],
         recruitmentDifficulty: Number(data.recruitmentDifficulty ?? 52),
         discoveredBy: data.discoveredBy || '',
@@ -374,6 +375,95 @@ const MAX_MAP_ZOOM = 4.2;
       return commander;
     }
 
+    function getCharacterBattleTags(character) {
+      if (!character) return [];
+      if (Array.isArray(character.battleTags) && character.battleTags.length) return uniqueTextList(character.battleTags);
+      return inferCharacterBattleTags(character);
+    }
+
+    function inferCharacterBattleTags(character) {
+      const text = [
+        character.name,
+        character.role,
+        character.title,
+        character.type,
+        character.summary,
+        ...(Array.isArray(character.values) ? character.values : []),
+        ...(Array.isArray(character.specialSchemes) ? character.specialSchemes : []),
+        ...(Array.isArray(character.passiveBonuses) ? character.passiveBonuses : [])
+      ].filter(Boolean).join('、');
+      const tags = [];
+      const command = Number(character.stats?.command || 0);
+      const strategy = Number(character.stats?.strategy || 0);
+      const martial = character.type === '武将' || command >= 58;
+      if (/骑|马|西凉|白马|铁骑|羌骑|边骑|长驱|奔袭/.test(text)) tags.push('善骑兵');
+      if (/水|江|船|赤壁|水军|锦帆|渡|津|海|河/.test(text)) tags.push('善水战');
+      if (/袭|奇|伏|夜|截|劫营|突|声东击西|出奇|斥候/.test(text) || strategy >= 82) tags.push('善突袭');
+      if (martial && (/陆|步|阵|攻城|守城|军法|万人敌|将军|先登|坚守|统军/.test(text) || !tags.length)) tags.push('善陆战');
+      return uniqueTextList(tags);
+    }
+
+    function specialSchemeRequirement(character) {
+      const difficulty = Number(character?.recruitmentDifficulty || 55);
+      return {
+        trust: clamp(Math.round(difficulty - 8), 48, 72),
+        respect: clamp(Math.round(42 + Number(character?.stats?.strategy || 50) / 10), 45, 58)
+      };
+    }
+
+    function specialSchemeUnlockState(character) {
+      const req = specialSchemeRequirement(character);
+      if (!character) return { unlocked: false, req, reason: '人物不存在' };
+      if (character.status !== 'recruited') return { unlocked: false, req, reason: '需先招募此人' };
+      if (Number(character.trustPlayer || 0) < req.trust) return { unlocked: false, req, reason: '信任需达到 ' + req.trust };
+      if (Number(character.respectPlayer || 0) < req.respect) return { unlocked: false, req, reason: '尊重需达到 ' + req.respect };
+      return { unlocked: true, req, reason: '已解锁' };
+    }
+
+    function characterSpecialSchemeEntries(options = {}) {
+      const includeLocked = !!options.includeLocked;
+      return Object.values(gameState.characterRoster || {})
+        .filter(character => character && Array.isArray(character.specialSchemes) && character.specialSchemes.length)
+        .filter(character => includeLocked || specialSchemeUnlockState(character).unlocked)
+        .flatMap(character => uniqueTextList(character.specialSchemes).map((scheme, index) => ({
+          character,
+          scheme,
+          index,
+          state: specialSchemeUnlockState(character)
+        })));
+    }
+
+    function renderCharacterSpecialSchemeList(character) {
+      const schemes = uniqueTextList(character?.specialSchemes || []);
+      if (!schemes.length) return '<p>尚未显露特殊谋略。</p>';
+      const state = specialSchemeUnlockState(character);
+      return `
+        <div class="scheme-unlock-list">
+          ${schemes.map(scheme => `
+            <div class="turn-event-item">
+              <strong>${escapeHtml(scheme)}</strong>
+              <p class="muted">${state.unlocked ? '已解锁：可在谋略页下令使用。' : state.reason + '｜当前信任 ' + Number(character.trustPlayer || 0) + '/' + state.req.trust + '，尊重 ' + Number(character.respectPlayer || 0) + '/' + state.req.respect}</p>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderUnlockedSpecialSchemePanel(city, canReach) {
+      const entries = characterSpecialSchemeEntries();
+      if (!entries.length) {
+        return '<div class="card"><h3>人物特殊谋略</h3><p class="muted">招募人物并提升信任、尊重后，会在这里出现他们的专属谋略。</p></div>';
+      }
+      return `
+        <div class="card">
+          <h3>人物特殊谋略</h3>
+          <div class="button-grid">
+            ${entries.map(entry => `<button data-scheme-action="specialCharacterScheme" data-target="${city.id}" data-scheme-character="${entry.character.id}" data-special-scheme="${escapeHtml(entry.scheme)}" ${canReach ? '' : 'disabled'} data-help="${escapeHtml(entry.character.name + '提供的特殊谋略：' + entry.scheme + '<br>消耗 1 谋略点。效果受人物谋略、信任、尊重和当前情报网络影响。')}">${escapeHtml(entry.scheme)}｜${escapeHtml(entry.character.name)}</button>`).join('')}
+          </div>
+        </div>
+      `;
+    }
+
     function getCommanderBattleModifier(campaign) {
       const commander = getCampaignCommander(campaign);
       if (!commander) return { attack: 1, morale: 0, supply: 0, text: '' };
@@ -384,21 +474,46 @@ const MAX_MAP_ZOOM = 4.2;
       const loyalty = Number(s.loyalty || 50);
       const ambition = Number(s.ambition || 30);
 
-      const attack = clamp(
+      let attack = clamp(
         1 + (command - 50) * 0.006 + (strategy - 50) * 0.003 - Math.max(0, ambition - 80) * 0.002,
         0.9,
         1.35
       );
 
-      const morale = Math.round((command - 50) / 12 + (loyalty - 50) / 20);
-      const supply = Math.max(0, Math.round((strategy - 60) / 15));
+      const tags = getCharacterBattleTags(commander);
+      const tagHits = [];
+      const routeMode = campaign.routeMode || campaign.route || 'official';
+      const army = campaign.army || troops(0, 0, 0, 0, 0);
+      const armyTotal = Math.max(1, realTroops(army));
+      const cavalryShare = Number(army.cavalry || 0) / armyTotal;
+      const navyShare = Number(army.navy || 0) / armyTotal;
+      if (tags.includes('善骑兵') && (cavalryShare >= 0.18 || ['raid', 'night'].includes(routeMode))) {
+        attack *= 1.07;
+        tagHits.push('骑兵');
+      }
+      if (tags.includes('善水战') && (navyShare >= 0.16 || routeMode === 'river')) {
+        attack *= 1.08;
+        tagHits.push('水战');
+      }
+      if (tags.includes('善突袭') && ['raid', 'night', 'cut'].includes(routeMode)) {
+        attack *= 1.08;
+        tagHits.push('突袭');
+      }
+      if (tags.includes('善陆战') && (!routeMode || ['official', 'raid'].includes(routeMode))) {
+        attack *= 1.05;
+        tagHits.push('陆战');
+      }
+      attack = clamp(attack, 0.9, 1.55);
+
+      const morale = Math.round((command - 50) / 12 + (loyalty - 50) / 20 + tagHits.length * 0.5);
+      const supply = Math.max(0, Math.round((strategy - 60) / 15 + (tags.includes('善水战') && routeMode === 'river' ? 1 : 0)));
 
       return {
         commander,
         attack,
         morale,
         supply,
-        text: commander.name + '统军，攻势修正 x' + attack.toFixed(2)
+        text: commander.name + '统军，攻势修正 x' + attack.toFixed(2) + (tagHits.length ? '（' + tagHits.join('、') + '）' : '')
       };
     }
 
@@ -1886,8 +2001,16 @@ const MAX_MAP_ZOOM = 4.2;
       return (points || []).map(point => point.map(value => Number(value).toFixed(2).replace(/\.?0+$/, '')).join(',')).join(' ');
     }
 
-    function troops(infantry, cavalry, archers, siege) {
-      return { infantry, cavalry, archers, siege };
+    const TROOP_KINDS = ['infantry', 'cavalry', 'archers', 'siege', 'navy'];
+    const SPECIAL_TRAINING_ACTIONS = {
+      trainLand: { type: 'land', label: '练陆兵', troopLabel: '陆兵', troopKind: 'infantry', effectKey: 'land', food: 0.38, money: 0.12, baseRate: 0.34 },
+      trainCavalry: { type: 'cavalry', label: '练骑兵', troopLabel: '骑兵', troopKind: 'cavalry', effectKey: 'cavalry', food: 0.52, money: 0.36, baseRate: 0.18 },
+      trainNavy: { type: 'navy', label: '练水兵', troopLabel: '水兵', troopKind: 'navy', effectKey: 'navy', food: 0.44, money: 0.24, baseRate: 0.2 }
+    };
+    const MILITARY_PREP_MODE_LIST = ['drill', 'trainLand', 'trainCavalry', 'trainNavy', 'defense', 'reserve'];
+
+    function troops(infantry, cavalry, archers, siege, navy = 0) {
+      return { infantry, cavalry, archers, siege, navy };
     }
 
     function stripHtmlTags(value) {
@@ -2346,6 +2469,7 @@ const MAX_MAP_ZOOM = 4.2;
       base.initiative = Object.assign({}, inferredPersona.initiative || {}, personaOverride.initiative || {}, record.initiative || {});
       base.specialSchemes = Array.isArray(record.specialSchemes) ? record.specialSchemes : [];
       base.passiveBonuses = Array.isArray(record.passiveBonuses) ? record.passiveBonuses : [];
+      base.battleTags = Array.isArray(record.battleTags) && record.battleTags.length ? uniqueTextList(record.battleTags) : inferCharacterBattleTags(base);
       base.weaknesses = Array.isArray(record.weaknesses) ? record.weaknesses : [];
       base.currentPlan = record.currentPlan || personaOverride.currentPlan || '观望局势';
       base.npcAgency = Object.assign({
@@ -2506,7 +2630,8 @@ const MAX_MAP_ZOOM = 4.2;
         infantry: Math.max(0, Math.round(Number(value?.infantry || 0))),
         cavalry: Math.max(0, Math.round(Number(value?.cavalry || 0))),
         archers: Math.max(0, Math.round(Number(value?.archers || 0))),
-        siege: Math.max(0, Math.round(Number(value?.siege || 0)))
+        siege: Math.max(0, Math.round(Number(value?.siege || 0))),
+        navy: Math.max(0, Math.round(Number(value?.navy || 0)))
       };
     }
 
@@ -2763,7 +2888,69 @@ const MAX_MAP_ZOOM = 4.2;
     syncMapDataFromGameState();
 
     function getRegionBonus(cityId) {
-      return {};
+      const effects = getCityStrategicEffects(cityId);
+      return {
+        agriculture: effects.agriculture,
+        commerce: effects.commerce,
+        defense: effects.defense,
+        strategic: effects.strategic,
+        manpower: effects.manpower,
+        foodStock: effects.foodStock,
+        treasury: effects.treasury
+      };
+    }
+
+    function getCityStrategicSource(cityOrId) {
+      const city = typeof cityOrId === 'string' ? gameState.cities?.[cityOrId] : cityOrId;
+      if (!city) return { city: null, text: '' };
+      const values = [city.name, city.terrain, city.resource, ...(Array.isArray(city.resources) ? city.resources : [])]
+        .filter(Boolean)
+        .map(String);
+      return { city, text: values.join('、') };
+    }
+
+    function getCityStrategicTags(cityOrId) {
+      const { city, text } = getCityStrategicSource(cityOrId);
+      if (!city) return [];
+      const tags = [];
+      const has = pattern => pattern.test(text);
+      if (has(/战马|胡马|边骑|骑军|羌骑|铁骑|牧场|骑路/)) tags.push({ id: 'cavalry', label: '骑兵产地', desc: '练骑兵效率提高，骑兵出征更有优势' });
+      if (has(/水军|水寨|江港|水网|商港|海盐|远海商路|水道|江|河|津|渡|港/)) tags.push({ id: 'navy', label: '水战枢纽', desc: '练水兵效率提高，水路行军和水战更可靠' });
+      if (has(/兵源|民户|民兵|州府|宗族|士族|铁器|铜铁|羌胡兵|兵家旧地/)) tags.push({ id: 'land', label: '陆兵根基', desc: '练陆兵效率提高，常规作战更稳定' });
+      if (has(/山道|山地|险峡|栈道|关隘|驼队|边市|旧地/)) tags.push({ id: 'raid', label: '突袭地利', desc: '突袭、截粮与山道推进收益提高' });
+      if (has(/粮仓|沃野|稻米|稻麦|粮田|麦田|米道|粮道/)) tags.push({ id: 'food', label: '粮食特产', desc: '农业与粮草储备提高' });
+      if (has(/商路|商港|盐铁|盐井|海盐|远海商路|玉门商旅|边市|府库|银矿|铜矿/)) tags.push({ id: 'commerce', label: '商贸资源', desc: '商业与府库收入提高' });
+      if (has(/关隘|险峡|栈道|坚城|要塞|重城|锁钥|门户|新城/)) tags.push({ id: 'defense', label: '防御要地', desc: '城防与守备收益提高' });
+      if (has(/天子|帝都|州府|名士|名望|仁望|郡望|旧都/)) tags.push({ id: 'prestige', label: '名望重地', desc: '战略价值与人才吸引力提高' });
+      return tags;
+    }
+
+    function getCityStrategicEffects(cityOrId) {
+      const tags = getCityStrategicTags(cityOrId);
+      const city = typeof cityOrId === 'string' ? gameState.cities?.[cityOrId] : cityOrId;
+      const waters = Array.isArray(city?.waters) && city.waters.length > 0;
+      const has = id => tags.some(tag => tag.id === id);
+      return {
+        tags,
+        agriculture: (has('food') ? 8 : 0) + (has('land') ? 2 : 0),
+        commerce: (has('commerce') ? 8 : 0) + (has('prestige') ? 2 : 0),
+        defense: has('defense') ? 6 : has('raid') ? 2 : 0,
+        strategic: has('prestige') ? 6 : has('defense') ? 4 : has('navy') || has('cavalry') ? 3 : 0,
+        manpower: (has('land') ? 420 : 0) + (has('cavalry') ? 160 : 0),
+        foodStock: has('food') ? 520 : 0,
+        treasury: has('commerce') ? 180 : 0,
+        training: {
+          land: 1 + (has('land') ? 0.28 : 0) + (has('food') ? 0.08 : 0),
+          cavalry: 1 + (has('cavalry') ? 0.42 : 0) + (has('commerce') ? 0.06 : 0),
+          navy: 1 + (has('navy') ? 0.46 : 0) + (waters ? 0.16 : -0.12),
+          raid: 1 + (has('raid') ? 0.22 : 0)
+        },
+        battle: {
+          official: 1 + (has('land') ? 0.04 : 0),
+          river: 1 + (has('navy') ? 0.08 : 0),
+          raid: 1 + (has('raid') ? 0.08 : 0)
+        }
+      };
     }
 
     function getRegion(cityId) {
@@ -2800,12 +2987,17 @@ const MAX_MAP_ZOOM = 4.2;
 
     function totalTroops(t) {
       if (!t) return 0;
-      return Math.max(0, Math.round((t.infantry || 0) + (t.cavalry || 0) + (t.archers || 0) + (t.siege || 0) * 8));
+      return Math.max(0, Math.round((t.infantry || 0) + (t.cavalry || 0) + (t.archers || 0) + (t.navy || 0) + (t.siege || 0) * 8));
     }
 
     function realTroops(t) {
       if (!t) return 0;
-      return Math.max(0, Math.round((t.infantry || 0) + (t.cavalry || 0) + (t.archers || 0) + (t.siege || 0)));
+      return Math.max(0, Math.round((t.infantry || 0) + (t.cavalry || 0) + (t.archers || 0) + (t.siege || 0) + (t.navy || 0)));
+    }
+
+    function troopBreakdownText(t) {
+      const g = normalizeTroopSet(t || {});
+      return '步 ' + fmt(g.infantry) + '｜骑 ' + fmt(g.cavalry) + '｜弓 ' + fmt(g.archers) + '｜水 ' + fmt(g.navy) + '｜器 ' + fmt(g.siege);
     }
 
     function cityController(cityOrId) {
@@ -3966,9 +4158,9 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function extractTroops(garrison, amount) {
-      const picked = troops(0, 0, 0, 0);
+      const picked = troops(0, 0, 0, 0, 0);
       const total = Math.max(1, realTroops(garrison));
-      ['infantry', 'cavalry', 'archers', 'siege'].forEach(kind => {
+      TROOP_KINDS.forEach(kind => {
         const value = Math.min(garrison[kind], Math.round(amount * garrison[kind] / total));
         garrison[kind] -= value;
         picked[kind] = value;
@@ -3977,7 +4169,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function addTroops(garrison, reinforcements) {
-      ['infantry', 'cavalry', 'archers', 'siege'].forEach(kind => {
+      TROOP_KINDS.forEach(kind => {
         garrison[kind] = Math.max(0, Number(garrison[kind] || 0) + Number(reinforcements[kind] || 0));
       });
     }
@@ -5191,6 +5383,10 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = renderAiContentModal(modal);
         return;
       }
+      if (modal.type === 'trainingChoice') {
+        root.innerHTML = renderTrainingChoiceModal(modal);
+        return;
+      }
       if (modal.type === 'urgent') {
         const matter = gameState.urgentMatters.find(item => item.id === modal.matterId);
         if (!matter) return closeActiveModal();
@@ -5251,6 +5447,47 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = renderAppointmentPickerModal(modal);
         return;
       }
+    }
+
+    function renderTrainingChoiceModal(modal) {
+      const city = gameState.cities?.[modal.cityId];
+      if (!city || !isControlledBy(city.id, 'player')) {
+        setTimeout(closeActiveModal, 0);
+        return '';
+      }
+      const options = ['trainLand', 'trainCavalry', 'trainNavy']
+        .map(action => {
+          const plan = getSpecializedTrainingPlan(city, action);
+          if (!plan) return '';
+          const extraArchers = action === 'trainLand' ? Math.round(plan.amount * 0.28) : 0;
+          const detail = [
+            `<strong>${escapeHtml(plan.label)}</strong>`,
+            `<span style="color:var(--good)">本次预计训练：${escapeHtml(plan.troopLabel)} ${fmt(plan.amount)}${extraArchers ? '、弓手 ' + fmt(extraArchers) : ''}</span>`,
+            `消耗粮 ${fmt(plan.foodCost)}｜府库 ${fmt(plan.moneyCost)}｜士气 +${plan.moraleGain.toFixed(1)}`,
+            '城池特产已计入本次数量'
+          ].join('<br>');
+          const help = detail.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+          return `
+            <button class="training-choice-btn" data-training-choice="${action}" data-training-city="${city.id}" data-help="${help}">
+              <strong>${escapeHtml(plan.label.replace('练', ''))}</strong>
+              <span>悬停查看</span>
+            </button>
+          `;
+        })
+        .join('');
+      return `
+        <div class="game-modal training-choice-modal">
+          <div class="modal-head">
+            <div>
+              <h2>${escapeHtml(city.name)}｜练兵</h2>
+              <span class="tag">消耗 1 政务点</span>
+            </div>
+            <button class="ghost-btn" data-close-modal="1">关闭</button>
+          </div>
+          <p class="muted">选择本回合要训练的兵种。悬停兵种可查看本次训练数量、消耗与城池特产修正。</p>
+          <div class="training-choice-grid">${options}</div>
+        </div>
+      `;
     }
 
     function renderAppointmentPickerModal(modal) {
@@ -6700,6 +6937,14 @@ const MAX_MAP_ZOOM = 4.2;
     function renderCharacterPanel() {
       const filter = gameState.characterFilter || 'all';
       const characters = visibleCharacters().filter(character => characterMatchesFilter(character, filter));
+      const profile = gameState.characterRoster?.[gameState.characterProfileId];
+      if (profile && !isInternalPlayerCharacterId(profile.id) && profile.status !== 'hidden' && profile.status !== 'dead') {
+        gameState.selectedCharacterId = profile.id;
+        return renderCharacterDetail(profile);
+      }
+      if (gameState.characterProfileId && !profile) {
+        gameState.characterProfileId = null;
+      }
       let selected = gameState.characterRoster?.[gameState.selectedCharacterId];
       if (!selected || isInternalPlayerCharacterId(selected.id)) {
         selected = characters[0] || gameState.characterRoster?.liuBiao || null;
@@ -6715,13 +6960,12 @@ const MAX_MAP_ZOOM = 4.2;
           <p>眼下只展开桂阳与荆州人物圈。远方名士会随着侦察、来信和重大事件逐步进入视野。</p>
           <div class="character-toolbar">${filters.map(([id, label]) => `<button class="ghost-btn ${filter === id ? 'active' : ''}" data-character-filter="${id}">${label}</button>`).join('')}</div>
           <div class="character-grid">${characters.map(character => `
-            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-select-character="${character.id}">
+            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-open-character-profile="${character.id}" data-select-character="${character.id}" tabindex="0" role="button">
               <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
               <div class="character-card-body"><strong>${escapeHtml(character.name)}</strong><small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small><small>${escapeHtml(character.status)}</small></div>
             </article>
           `).join('') || '<div class="turn-event-item">当前筛选下暂无人物。</div>'}</div>
         </div>
-        ${renderCharacterDetail(selected)}
       `;
     }
 
@@ -6731,10 +6975,15 @@ const MAX_MAP_ZOOM = 4.2;
       const attitude = getNpcAttitudeLabel(character);
       refreshNpcPlan(character);
       const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
+      const battleTags = getCharacterBattleTags(character).map(item => `<span class="tag battle-tag">${escapeHtml(item)}</span>`).join('');
       const style = character.speechStyle || {};
       return `<div class="card">
-        <h2>${escapeHtml(character.name)}</h2>
+        <div class="character-profile-head">
+          <button class="ghost-btn" data-close-character-profile="1">返回名录</button>
+          <h2>${escapeHtml(character.name)}</h2>
+        </div>
         <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
+        ${battleTags ? `<div class="tag-row character-battle-tags">${battleTags}</div>` : ''}
         <p>${escapeHtml(character.summary)}</p>
         <div class="kv-grid">
           <div class="kv"><span>统率</span><strong>${character.stats.command}</strong></div>
@@ -6759,7 +7008,7 @@ const MAX_MAP_ZOOM = 4.2;
       </div>
       <div class="card"><h3>内心状态</h3>${renderNpcAgencyCard(character)}</div>
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
-      <div class="card"><h3>可解锁谋略</h3><p>${character.specialSchemes.join('、') || '尚未显露特殊谋略。'}</p></div>`;
+      <div class="card"><h3>可解锁谋略</h3>${renderCharacterSpecialSchemeList(character)}</div>`;
     }
 
     function renderNpcAgencyCard(character) {
@@ -6882,6 +7131,7 @@ const MAX_MAP_ZOOM = 4.2;
           return `<div class="campaign-item">
             <strong>${escapeHtml(city.name)}</strong>
             <div>驻军 ${fmt(total)}｜可调 ${fmt(available)}｜士气 ${city.morale}｜城防 ${city.defense}｜粮 ${fmt(city.food)}</div>
+            <p class="muted">${troopBreakdownText(city.garrison)}</p>
             <div class="button-grid" style="margin-top:4px">
               <button class="ghost-btn" data-set-source-city="${city.id}">设为出兵城</button>
             </div>
@@ -6898,6 +7148,9 @@ const MAX_MAP_ZOOM = 4.2;
         <p>对选中的己方城市执行军事整备命令，消耗 1 点军令点。</p>
         <div class="button-grid">
           <button data-military-order="drill" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>整军（士气 +5｜粮 -80）</button>
+          <button data-military-order="trainLand" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练陆兵</button>
+          <button data-military-order="trainCavalry" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练骑兵</button>
+          <button data-military-order="trainNavy" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练水兵</button>
           <button data-military-order="defense" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>加固防线（城防 +4｜府库 -80）</button>
           <button data-military-order="reserve" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>预备队（城防 +2 士气 +2）</button>
         </div>
@@ -6992,6 +7245,7 @@ const MAX_MAP_ZOOM = 4.2;
             <div class="kv"><span>税收贡献</span><strong id="taxIncome-${city.id}">${fmt(economy.taxIncome)} / 回合</strong></div>
             <div class="kv"><span>净粮</span><strong id="netFood-${city.id}">${economy.netFood >= 0 ? '+' : ''}${fmt(economy.netFood)}</strong></div>
           </div>
+          <p class="muted city-troop-breakdown">${troopBreakdownText(city.garrison)}</p>
           <div class="city-secondary-grid">
             <div class="kv"><span>粮食产能</span><strong id="foodProd-${city.id}">${fmt(economy.foodProduction)} / 回合</strong></div>
             <div class="kv"><span>粮食消耗</span><strong id="foodConsume-${city.id}">${fmt(economy.foodConsumption)} / 回合</strong></div>
@@ -7004,6 +7258,7 @@ const MAX_MAP_ZOOM = 4.2;
             ${metric('士气', city.morale)}
             ${metric('城防', city.defense)}
           </div>
+          ${renderCityStrategicEffects(city)}
           <p class="muted city-support-note">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
         </div>
         <div class="card">
@@ -7015,6 +7270,20 @@ const MAX_MAP_ZOOM = 4.2;
         </div>
         ${own ? renderCityAppointmentSummary(city) : ''}
         ${own ? renderOwnCityActions(city) : renderOtherCityActions(city, canAttack)}
+      `;
+    }
+
+    function renderCityStrategicEffects(city) {
+      const effects = getCityStrategicEffects(city);
+      if (!effects.tags.length) return '';
+      const tagHtml = effects.tags
+        .map(tag => `<span class="tag" title="${escapeHtml(tag.desc)}">${escapeHtml(tag.label)}</span>`)
+        .join('');
+      return `
+        <div class="city-strategy-effects">
+          <div class="tag-row">${tagHtml}</div>
+          <p class="muted">特产收益：农业 +${effects.agriculture}｜商业 +${effects.commerce}｜城防 +${effects.defense}｜战略 +${effects.strategic}｜陆兵 x${effects.training.land.toFixed(2)}｜骑兵 x${effects.training.cavalry.toFixed(2)}｜水兵 x${effects.training.navy.toFixed(2)}</p>
+        </div>
       `;
     }
 
@@ -7192,7 +7461,7 @@ const MAX_MAP_ZOOM = 4.2;
       const militaryOpts = [['none','不执行'],['recruit','自动征兵'],['train','自动练兵']];
       const civilOpts = [['relief','自动赈济'],['farming','自动屯田'],['defense','自动修城防'],['order','自动维护治安']];
       const policyOpts = [['none','不执行'],['taxLight','税率偏低'],['balanced','税粮平衡'],['grainHeavy','征粮偏高'],['publicFirst','民心优先']];
-      const prepOpts = [['drill','自动整军'],['defense','自动加固防线'],['reserve','自动部署预备队']];
+      const prepOpts = [['drill','自动整军'],['trainLand','自动练陆兵'],['trainCavalry','自动练骑兵'],['trainNavy','自动练水兵'],['defense','自动加固防线'],['reserve','自动部署预备队']];
 
       return `<div class="appointment-auto-controls">
         <h4>自动治理</h4>
@@ -7442,6 +7711,7 @@ const MAX_MAP_ZOOM = 4.2;
     function renderSchemePanel() {
       const city = gameState.cities[gameState.selectedCityId] || gameState.cities[gameState.player.startingCity || 'guiyang'];
       const canReach = city && canOperateAtCity(city.id);
+      const canTargetScheme = canReach && !isControlledBy(city.id, 'player');
       return `
         <div class="card">
           <h2>谋略不是小加成</h2>
@@ -7459,6 +7729,7 @@ const MAX_MAP_ZOOM = 4.2;
           ${metric('士族疑心', gameState.characters.jingnanGentry.suspicion)}
           ${metric('情报网络', gameState.characters.retinue.network)}
         </div>
+        ${renderUnlockedSpecialSchemePanel(city, canTargetScheme)}
       `;
     }
 
@@ -7653,6 +7924,9 @@ const MAX_MAP_ZOOM = 4.2;
       const labelMap = {
         recruit: '征兵',
         train: '练兵',
+        trainLand: '练陆兵',
+        trainCavalry: '练骑兵',
+        trainNavy: '练水兵',
         fortify: '修城防',
         tuntian: '屯田',
         relief: '赈济',
@@ -7720,7 +7994,7 @@ const MAX_MAP_ZOOM = 4.2;
       const city = gameState.cities[cityId];
       if (!city || !isControlledBy(cityId, 'player')) return toast('只能对自己控制的城池下达军事整备命令');
       if (!spendPoints('mil', 1)) return;
-      const labelMap = { drill: '整军', defense: '加固防线', reserve: '预备队' };
+      const labelMap = { drill: '整军', trainLand: '练陆兵', trainCavalry: '练骑兵', trainNavy: '练水兵', defense: '加固防线', reserve: '预备队' };
       gameState.orders.push({
         id: uid(),
         type: 'military',
@@ -7755,8 +8029,30 @@ const MAX_MAP_ZOOM = 4.2;
       render();
     }
 
-    function queueScheme(action, targetId) {
+    function queueScheme(action, targetId, options = {}) {
       const target = gameState.cities[targetId] || gameState.cities.yecheng;
+      if (target && target.id && isControlledBy(target.id, 'player')) {
+        return toast('谋略不能对自己控制的城池使用');
+      }
+      if (action === 'specialCharacterScheme') {
+        const character = gameState.characterRoster?.[options.characterId];
+        const scheme = String(options.scheme || '');
+        const state = specialSchemeUnlockState(character);
+        if (!character || !scheme || !uniqueTextList(character.specialSchemes || []).includes(scheme)) return toast('该特殊谋略暂不可用');
+        if (!state.unlocked) return toast(state.reason);
+        if (target && target.id && !canOperateAtCity(target.id)) return toast('距离太远，暂不能执行该人物谋略');
+        if (!spendPoint('scheme')) return;
+        gameState.orders.push({
+          id: uid(),
+          type: 'scheme',
+          point: 'scheme',
+          label: scheme + '：' + character.name,
+          payload: { action, targetId: target.id, characterId: character.id, scheme }
+        });
+        toast('人物特殊谋略已加入队列');
+        render();
+        return;
+      }
       if (target && target.id && !canOperateAtCity(target.id) && !['xuyou', 'caoPact', 'yuanRumor'].includes(action)) {
         return toast('距离太远，亲信和斥候暂时够不到 ' + target.name);
       }
@@ -7954,6 +8250,7 @@ const MAX_MAP_ZOOM = 4.2;
       const before = snapshotPlayerState();
       const reports = [];
       gameState.turnEvents = [];
+      processAppointmentAutoTasks(reports);
       processOrders(reports);
       unlockTabsByTutorialProgress();
       advanceCampaigns(reports);
@@ -7999,6 +8296,77 @@ const MAX_MAP_ZOOM = 4.2;
       });
     }
 
+    function processAppointmentAutoTasks(reports) {
+      normalizeAppointments(gameState);
+      const tasks = gameState.appointments?.autoTasks || {};
+      Object.entries(tasks).forEach(([cityId, task]) => {
+        if (task?.enabled !== true) return;
+        const city = gameState.cities?.[cityId];
+        if (!city || !isControlledBy(city.id, 'player')) return;
+        const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
+        if (!militaryOfficers.length) return;
+        const capacity = getCityMilitaryOfficerLimit(city);
+        let used = 0;
+        if (task.militaryMode && task.militaryMode !== 'none' && used < capacity) {
+          resolveCityOrder({ label: city.name + '：自动兵务', payload: { cityId, action: task.militaryMode } }, reports);
+          used += 1;
+        }
+        const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', MILITARY_PREP_MODE_LIST);
+        prepModes.slice(0, Math.max(0, capacity - used)).forEach(mode => {
+          if (resolveMilitaryOrder({ payload: { cityId, action: mode } }, reports)) used += 1;
+        });
+      });
+    }
+
+    function getSpecializedTrainingPlan(city, action) {
+      const config = SPECIAL_TRAINING_ACTIONS[action];
+      if (!city || !config) return null;
+      const effects = getCityStrategicEffects(city);
+      const multiplier = clamp(effects.training[config.effectKey] || 1, 0.55, 1.8);
+      const base = city.population * (city.recruitBase || 0.014) * config.baseRate * (1 + city.level * 0.06);
+      const amount = Math.max(40, Math.round(base * multiplier));
+      const foodCost = Math.max(45, Math.round(amount * config.food));
+      const moneyCost = Math.max(20, Math.round(amount * config.money));
+      const moraleGain = clamp(2.2 + city.level * 0.35 + (multiplier - 1) * 4, 2, 8);
+      return { ...config, amount, foodCost, moneyCost, moraleGain, multiplier, effects };
+    }
+
+    function resolveSpecializedTraining(city, action, reports, source = 'city') {
+      const plan = getSpecializedTrainingPlan(city, action);
+      if (!plan) return false;
+      const foodRatio = city.food >= plan.foodCost ? 1 : clamp(city.food / Math.max(1, plan.foodCost), 0.25, 1);
+      const moneyRatio = city.money >= plan.moneyCost ? 1 : clamp(city.money / Math.max(1, plan.moneyCost), 0.25, 1);
+      const resourceRatio = Math.min(foodRatio, moneyRatio);
+      const amount = Math.max(20, Math.round(plan.amount * resourceRatio));
+      const foodSpent = Math.min(city.food, Math.round(plan.foodCost * resourceRatio));
+      const moneySpent = Math.min(city.money, Math.round(plan.moneyCost * resourceRatio));
+      city.food = Math.max(0, city.food - foodSpent);
+      city.money = Math.max(0, city.money - moneySpent);
+      city.garrison[plan.troopKind] = Math.max(0, Number(city.garrison[plan.troopKind] || 0) + amount);
+      if (action === 'trainLand') city.garrison.archers = Math.max(0, Number(city.garrison.archers || 0) + Math.round(amount * 0.28));
+      city.morale = clamp(city.morale + plan.moraleGain * resourceRatio, 0, 100);
+      const tagText = plan.effects.tags.map(tag => tag.label).slice(0, 2).join('、') || '本地兵源';
+      const weakText = resourceRatio < 0.75 ? '（资源不足，训练缩水）' : '';
+      reports.push({
+        tone: resourceRatio < 0.75 ? 'warn' : 'good',
+        text: city.name + (source === 'auto' ? '自动' : '') + plan.label + '完成，新增' + plan.troopLabel + ' ' + fmt(amount) + (action === 'trainLand' ? '、弓手 ' + fmt(Math.round(amount * 0.28)) : '') + '，士气 +' + plan.moraleGain.toFixed(1) + '，消耗粮 ' + fmt(foodSpent) + '、府库 ' + fmt(moneySpent) + '。' + tagText + '加成 x' + plan.multiplier.toFixed(2) + weakText
+      });
+      return true;
+    }
+
+    function openTrainingChoice(cityId) {
+      const city = gameState.cities[cityId];
+      if (!city || !isControlledBy(cityId, 'player')) return toast('只能在自己控制的城池练兵');
+      gameState.activeModal = { type: 'trainingChoice', cityId };
+      renderModal();
+    }
+
+    function chooseTrainingOrder(cityId, action) {
+      if (!SPECIAL_TRAINING_ACTIONS[action]) return;
+      gameState.activeModal = null;
+      queueCityOrder(cityId, action);
+    }
+
     function resolveCityOrder(order, reports) {
       const city = gameState.cities[order.payload.cityId];
       const action = order.payload.action;
@@ -8032,6 +8400,8 @@ const MAX_MAP_ZOOM = 4.2;
         city.food = Math.max(0, city.food - foodCost);
         city.morale = clamp(city.morale + effect, 0, 100);
         reports.push({ tone: 'good', text: city.name + '练兵完成，士气 +' + Math.round(effect) + '，消耗粮草 ' + fmt(foodCost) + '。' });
+      } else if (SPECIAL_TRAINING_ACTIONS[action]) {
+        resolveSpecializedTraining(city, action, reports, 'city');
       } else if (action === 'fortify') {
         const cost = Math.round(130 + city.level * 90 + city.defense * 4);
         const labor = clamp((city.publicSupport + city.order) / 120, 0.45, 1.35);
@@ -8079,6 +8449,8 @@ const MAX_MAP_ZOOM = 4.2;
         city.morale = clamp(city.morale + 5, 0, 100);
         reports.push({ tone: 'good', text: city.name + '整军完成，士气 +5，消耗粮草 80。' });
         success = true;
+      } else if (SPECIAL_TRAINING_ACTIONS[action]) {
+        success = resolveSpecializedTraining(city, action, reports, 'auto');
       } else if (action === 'defense') {
         if (city.money < 80) {
           reports.push({ tone: 'bad', text: city.name + '府库不足，无法加固防线。' });
@@ -8118,10 +8490,10 @@ const MAX_MAP_ZOOM = 4.2;
 
     function moveTroops(from, to, amount) {
       const total = Math.max(1, realTroops(from));
-      ['infantry', 'cavalry', 'archers', 'siege'].forEach(kind => {
+      TROOP_KINDS.forEach(kind => {
         const moved = Math.min(from[kind], Math.round(amount * from[kind] / total));
         from[kind] -= moved;
-        to[kind] += moved;
+        to[kind] = Math.max(0, Number(to[kind] || 0) + moved);
       });
     }
 
@@ -8181,7 +8553,21 @@ const MAX_MAP_ZOOM = 4.2;
       const foodFactor = source.food > troops * 0.35 ? 1 : 0.78;
       const intelFactor = target.intel > 30 ? 1.08 : 1;
       const disruption = target.disrupted > 0 ? 1 + target.disrupted / 160 : 1;
-      const attack = troops * (source.morale / 72) * routeMods[draft.route] * tacticMods[draft.tactic] * objectiveMods[draft.objective] * foodFactor * intelFactor * disruption;
+      const sourceEffects = getCityStrategicEffects(source);
+      const sourceGarrison = source.garrison || {};
+      const garrisonTotal = Math.max(1, realTroops(sourceGarrison));
+      const cavalryShare = Number(sourceGarrison.cavalry || 0) / garrisonTotal;
+      const navyShare = Number(sourceGarrison.navy || 0) / garrisonTotal;
+      const compositionMod = clamp(
+        1
+          + (draft.route === 'river' ? navyShare * 0.32 : 0)
+          + (['raid', 'night'].includes(draft.route) ? cavalryShare * 0.22 : 0)
+          + ((draft.route === 'official' || draft.tactic === 'balanced') ? Math.min(0.06, Number(sourceGarrison.infantry || 0) / garrisonTotal * 0.08) : 0),
+        0.9,
+        1.22
+      );
+      const cityRouteMod = sourceEffects.battle[draft.route] || 1;
+      const attack = troops * (source.morale / 72) * routeMods[draft.route] * tacticMods[draft.tactic] * objectiveMods[draft.objective] * foodFactor * intelFactor * disruption * compositionMod * cityRouteMod;
       const defense = realTroops(target.garrison) * (0.65 + target.defense / 100) * (target.morale / 70) * (0.86 + target.publicSupport / 240) * getPublicSupportBattleModifier(target).defenseMultiplier;
       const ratio = attack / Math.max(1, defense);
       return {
@@ -8194,13 +8580,63 @@ const MAX_MAP_ZOOM = 4.2;
 
     function removeTroops(garrison, amount) {
       const total = Math.max(1, realTroops(garrison));
-      ['infantry', 'cavalry', 'archers', 'siege'].forEach(kind => {
+      TROOP_KINDS.forEach(kind => {
         const loss = Math.min(garrison[kind], Math.round(amount * garrison[kind] / total));
         garrison[kind] -= loss;
       });
     }
 
+    function resolveSpecialCharacterScheme(order, reports) {
+      const character = gameState.characterRoster?.[order.payload.characterId];
+      const city = gameState.cities[order.payload.targetId] || gameState.cities[gameState.player.startingCity || 'guiyang'];
+      const scheme = String(order.payload.scheme || '');
+      const state = specialSchemeUnlockState(character);
+      if (!character || !scheme || !state.unlocked) {
+        reports.push({ tone: 'warn', text: '人物特殊谋略条件已变化，本次未能执行。' });
+        return;
+      }
+      const r = gameState.characters.retinue;
+      const chance = clamp(
+        0.5
+        + Number(character.stats?.strategy || 50) / 260
+        + Number(character.trustPlayer || 0) / 320
+        + Number(character.respectPlayer || 0) / 360
+        + Number(r.network || 0) / 360
+        - Number(city.order || 50) / 520,
+        0.35,
+        0.92
+      );
+      const success = Math.random() < chance;
+      const text = [scheme, character.name, character.role, character.summary].join(' ');
+      if (/荐|识|评|献策|论英雄|密谈|策略/.test(text)) {
+        gameState.player.prestige = clamp(gameState.player.prestige + (success ? 5 : 2), 0, 100);
+        r.network = clamp(r.network + (success ? 8 : 3), 0, 100);
+        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，为你梳理人心与局势。声望 +' + (success ? 5 : 2) + '，情报网络 +' + (success ? 8 : 3) + '。' });
+      } else if (/粮|财|商|兵粮|助军|求援/.test(text)) {
+        const home = gameState.cities[gameState.player.startingCity || 'guiyang'];
+        home.food += success ? 820 : 320;
+        home.money += success ? 260 : 90;
+        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，为' + home.name + '筹得粮 ' + fmt(success ? 820 : 320) + '、府库 ' + fmt(success ? 260 : 90) + '。' });
+      } else if (/盟|外交|说服|奔走|结交|举贤/.test(text)) {
+        const fid = cityController(city.id);
+        if (!gameState.diplomacy[fid]) gameState.diplomacy[fid] = { relation: 30, pact: '未接触' };
+        gameState.diplomacy[fid].relation = clamp(gameState.diplomacy[fid].relation + (success ? 10 : 4), 0, 100);
+        gameState.player.legitimacy = clamp(gameState.player.legitimacy + (success ? 3 : 1), 0, 100);
+        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，外交回旋打开局面，关系 +' + (success ? 10 : 4) + '。' });
+      } else {
+        city.intel = clamp(city.intel + (success ? 22 : 8), 0, 100);
+        city.disrupted = clamp(city.disrupted + (success ? 18 : 6), 0, 100);
+        city.morale = clamp(city.morale - (success ? 8 : 2), 0, 100);
+        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，' + city.name + '被扰乱，情报 +' + (success ? 22 : 8) + '，混乱 +' + (success ? 18 : 6) + '。' });
+      }
+      addCharacterMemory(character, { summary: '执行特殊谋略「' + scheme + '」' + (success ? '奏效。' : '未尽全功。') });
+    }
+
     function resolveScheme(order, reports) {
+      if (order.payload.action === 'specialCharacterScheme') {
+        resolveSpecialCharacterScheme(order, reports);
+        return;
+      }
       if (gameState.currentAct === 1 && gameState.storyFlags.jingnanOpening) {
         resolveJingnanScheme(order, reports);
         return;
@@ -9693,7 +10129,12 @@ const MAX_MAP_ZOOM = 4.2;
 
       // 10. 清理 campaigns
       state.campaigns = (state.campaigns || []).filter(campaign => {
-        const ids = [campaign.source, campaign.target, ...(campaign.route || [])];
+        const routeIds = Array.isArray(campaign.route)
+          ? campaign.route
+          : Array.isArray(campaign.route?.path)
+            ? campaign.route.path
+            : [];
+        const ids = [campaign.source, campaign.target, ...routeIds];
         return !ids.some(isRemovedCityId);
       });
 
@@ -10185,7 +10626,7 @@ const MAX_MAP_ZOOM = 4.2;
         const militaryOfficers = getCityOfficials(cityId, 'militaryOfficerId');
         const policyOfficers = getCityOfficials(cityId, 'policyOfficerId');
         const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
-        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
+        const militaryPrepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', MILITARY_PREP_MODE_LIST);
         const executableCivilCount = Math.min(administrators.length, civilModes.length, getCityAdministratorLimit(city));
         const executableMilitaryPrepCount = Math.min(militaryOfficers.length, militaryPrepModes.length, getCityMilitaryOfficerLimit(city));
 
@@ -10251,6 +10692,11 @@ const MAX_MAP_ZOOM = 4.2;
           militaryPrepModes.forEach(mode => {
             if (mode === 'drill' && city.food < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
             if (mode === 'defense' && city.money < 80) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+            if (SPECIAL_TRAINING_ACTIONS[mode]) {
+              const plan = getSpecializedTrainingPlan(city, mode);
+              if (plan && city.food < plan.foodCost) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['粮草不足'] });
+              if (plan && city.money < plan.moneyCost) resourceWarnings.push({ cityId, cityName: city.name, mode, warnings: ['府库不足'] });
+            }
           });
         }
       });
@@ -10290,7 +10736,7 @@ const MAX_MAP_ZOOM = 4.2;
           const admins = getCityOfficials(city.id, 'administratorId');
           const officers = getCityOfficials(city.id, 'militaryOfficerId');
           const civilModes = getUniqueAutoTaskModes(task, 'civilModes', 'civilMode', ['relief', 'farming', 'defense', 'order']);
-          const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', ['drill', 'defense', 'reserve']);
+          const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', MILITARY_PREP_MODE_LIST);
           return {
             cityId: city.id,
             cityName: city.name,
@@ -10536,6 +10982,9 @@ const MAX_MAP_ZOOM = 4.2;
     function tryOpenTab(tabId) {
       if (isTabUnlocked(tabId)) {
         gameState.activePanel = tabId;
+        if (tabId === 'characters') {
+          gameState.characterProfileId = null;
+        }
         // 城政/军事首次打开时触发 cityMilitary 教学（但强制引导期间跳过）
         if ((tabId === 'city' || tabId === 'military') && !gameState.tutorial.guideSeen.cityMilitary && !gameState.tutorial.skipped && !isGuideActive()) {
           gameState.activeModal = { type: 'tutorialGuide', guideId: 'cityMilitary' };
@@ -11807,6 +12256,14 @@ const MAX_MAP_ZOOM = 4.2;
           closeActiveModal();
           return;
         }
+        const trainingChoice = event.target.closest('[data-training-choice]');
+        if (trainingChoice) {
+          chooseTrainingOrder(
+            trainingChoice.getAttribute('data-training-city'),
+            trainingChoice.getAttribute('data-training-choice')
+          );
+          return;
+        }
         const tutorialGuideChoice = event.target.closest('[data-tutorial-guide-choice]');
         if (tutorialGuideChoice) {
           const guideId = tutorialGuideChoice.getAttribute('data-tutorial-guide-choice');
@@ -12016,6 +12473,10 @@ const MAX_MAP_ZOOM = 4.2;
         const cityOrder = event.target.closest('[data-city-order]');
         if (cityOrder) {
           const orderType = cityOrder.getAttribute('data-city-order');
+          if (orderType === 'train') {
+            openTrainingChoice(cityOrder.getAttribute('data-city'));
+            return;
+          }
           if (checkForceAction('cityOrder', orderType)) return;
           queueCityOrder(cityOrder.getAttribute('data-city'), orderType);
           if (isGuideActive() && isForceAction('cityOrder', orderType)) {
@@ -12078,7 +12539,10 @@ const MAX_MAP_ZOOM = 4.2;
         if (scheme) {
           const actionType = scheme.getAttribute('data-scheme-action');
           if (checkForceAction('clickScheme', actionType)) return;
-          queueScheme(actionType, scheme.getAttribute('data-target'));
+          queueScheme(actionType, scheme.getAttribute('data-target'), {
+            characterId: scheme.getAttribute('data-scheme-character'),
+            scheme: scheme.getAttribute('data-special-scheme')
+          });
           if (isGuideActive() && isForceAction('clickScheme', actionType)) {
             advanceGuideStep();
           }

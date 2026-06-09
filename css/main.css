@@ -1004,6 +1004,30 @@
       font-weight: 800;
     }
 
+    .city-strategy-effects {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(220, 211, 174, 0.12);
+    }
+
+    .city-strategy-effects .muted,
+    .city-troop-breakdown,
+    .campaign-item .muted {
+      margin: 5px 0 0;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .character-battle-tags {
+      margin-top: 6px;
+    }
+
+    .battle-tag {
+      border-color: rgba(107, 166, 255, 0.32);
+      background: rgba(69, 110, 172, 0.18);
+      color: #d8e7ff;
+    }
+
     .metric {
       display: grid;
       grid-template-columns: 66px 1fr 38px;
@@ -4089,6 +4113,22 @@
       transform: translateY(-2px);
     }
 
+    .character-card:focus-visible {
+      outline: 2px solid rgba(255, 218, 118, 0.86);
+      outline-offset: 2px;
+    }
+
+    .character-profile-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .character-profile-head h2 {
+      margin: 0;
+    }
+
     .character-portrait {
       display: grid;
       min-height: 116px;
@@ -4174,6 +4214,44 @@
         radial-gradient(circle at 18% 0%, rgba(208, 190, 137, 0.11), transparent 34%);
       box-shadow: 0 28px 84px rgba(0, 0, 0, 0.74), inset 0 1px 0 rgba(236, 228, 190, 0.07);
       animation: modalIn 0.24s ease both;
+    }
+
+    .training-choice-modal {
+      justify-self: end;
+      width: min(420px, 100%);
+      margin-right: clamp(6px, 3vw, 42px);
+    }
+
+    .training-choice-grid {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .training-choice-btn {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      min-height: 48px;
+      padding: 10px 12px;
+      text-align: left;
+    }
+
+    .training-choice-btn strong {
+      font-size: 15px;
+      color: #f7e7ba;
+    }
+
+    .training-choice-btn span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 760px) {
+      .training-choice-modal {
+        justify-self: center;
+        margin-right: 0;
+      }
     }
 
     .game-modal-root.letter-open {
