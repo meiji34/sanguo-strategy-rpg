@@ -138,7 +138,12 @@ const MAX_MAP_ZOOM = 4.2;
         originFaction: data.originFaction || data.faction || 'local',
         possibleFactions: Array.isArray(data.possibleFactions) ? data.possibleFactions : [data.faction || 'local'],
         defectionTriggers: Array.isArray(data.defectionTriggers) ? data.defectionTriggers : [],
-        offMapLocation: data.offMapLocation || ''
+        offMapLocation: data.offMapLocation || '',
+        isFactionLord: data.isFactionLord === true,
+        lordOfFaction: data.lordOfFaction || '',
+        lordTitle: data.lordTitle || '',
+        solicitationState: data.solicitationState || '',
+        lordSolicitation: data.lordSolicitation || null
       };
     }
 
@@ -158,22 +163,120 @@ const MAX_MAP_ZOOM = 4.2;
       return character && !isInternalPlayerCharacterId(character.id);
     }
 
-    function isFactionLordCharacter(character) {
-      if (!character) return false;
-      const lordIds = new Set([
-        'caoCao',
-        'sunQuan',
-        'liuBei',
-        'yuanShao',
-        'liuZhang',
-        'zhangLu',
-        'maTeng',
-        'hanSui',
-        'gongsunZan',
-        'yuanShu'
-      ]);
-      const roleText = String(character.role || character.title || '');
-      return lordIds.has(character.id) || /诸侯|之主|军阀/.test(roleText);
+    const FACTION_LORD_META = {
+      liuBiao: { faction: 'liubiao', title: '荆州牧' },
+      caoCao: { faction: 'cao', title: '兖州牧' },
+      yuanShao: { faction: 'yuan', title: '河北之主' },
+      sunQuan: { faction: 'sun', title: '江东之主' },
+      liuBei: { faction: 'liu', title: '汉室宗亲' },
+      yuanShu: { faction: 'yuanshu', title: '仲家帝' },
+      liuZhang: { faction: 'liuzhang', title: '益州牧' },
+      zhangLu: { faction: 'zhanglu', title: '汉中太守' },
+      maTeng: { faction: 'mateng', title: '西凉军阀' },
+      gongsunZan: { faction: 'gongsun', title: '白马将军' }
+    };
+
+    const FACTION_LORD_IDS = new Set(Object.keys(FACTION_LORD_META));
+
+    function isFactionLordCharacter(characterOrId) {
+      const id = typeof characterOrId === 'string'
+        ? characterOrId
+        : characterOrId?.id;
+      const character = typeof characterOrId === 'string'
+        ? gameState?.characterRoster?.[id]
+        : characterOrId;
+      if (!id && !character) return false;
+      const roleText = String(character?.role || '');
+      const titleText = String(character?.title || character?.lordTitle || '');
+      return (
+        FACTION_LORD_IDS.has(id) ||
+        character?.isFactionLord === true ||
+        roleText === '主公' ||
+        titleText === '主公' ||
+        titleText === '州牧' ||
+        titleText === '诸侯' ||
+        /诸侯|之主|军阀|州牧|太守|仲家帝/.test(roleText + titleText)
+      );
+    }
+
+    function getFactionMilitaryPower(factionId) {
+      return Object.values(gameState.cities || {})
+        .filter(city => city && cityController(city.id) === factionId)
+        .reduce((sum, city) => sum + realTroops(city.garrison), 0);
+    }
+
+    function getFactionAveragePublicSupport(factionId) {
+      const cities = Object.values(gameState.cities || {})
+        .filter(city => city && cityController(city.id) === factionId);
+      if (!cities.length) return 0;
+      return cities.reduce((sum, city) => sum + Number(city.publicSupport || 0), 0) / cities.length;
+    }
+
+    function getPlayerMilitaryPower() {
+      return controlledCities().reduce((sum, city) => sum + realTroops(city.garrison), 0);
+    }
+
+    function getPlayerAveragePublicSupport() {
+      const cities = controlledCities();
+      if (!cities.length) return 0;
+      return cities.reduce((sum, city) => sum + Number(city.publicSupport || 0), 0) / cities.length;
+    }
+
+    function getLordSolicitationEligibility(character) {
+      if (!isFactionLordCharacter(character)) {
+        return { isLord: false, eligible: false, locked: false, reason: '不是势力主公' };
+      }
+      const factionId = character.lordOfFaction || FACTION_LORD_META[character.id]?.faction || character.faction;
+      const playerTroops = getPlayerMilitaryPower();
+      const targetTroops = getFactionMilitaryPower(factionId);
+      const playerPublic = getPlayerAveragePublicSupport();
+      const targetPublic = getFactionAveragePublicSupport(factionId);
+      const playerCityCount = controlledCities().length;
+      const targetCityCount = Object.values(gameState.cities || {})
+        .filter(city => city && cityController(city.id) === factionId).length;
+      const troopRatioRequired = targetCityCount <= 1 ? 1.15 : 1.35;
+      const troopOk = playerTroops >= Math.max(1500, targetTroops * troopRatioRequired);
+      const publicOk = playerPublic >= targetPublic + 12;
+      const cityOk = playerCityCount >= 2;
+
+      if (character.id === 'liuBiao' && !gameState.player?.independent) {
+        return {
+          isLord: true,
+          eligible: false,
+          locked: true,
+          reason: '你仍在刘表名义庇护之下，不可招揽主君。',
+          playerTroops,
+          targetTroops,
+          playerPublic,
+          targetPublic,
+          playerCityCount,
+          targetCityCount,
+          details: { troopOk, publicOk, cityOk, requiredTroopRatio: troopRatioRequired, requiredPublicLead: 12 }
+        };
+      }
+
+      const eligible = troopOk && publicOk && cityOk;
+      return {
+        isLord: true,
+        eligible,
+        locked: !eligible,
+        reason: eligible
+          ? '你已具备压倒性威望，可尝试招揽此方主公。'
+          : '兵力、民心或城池基础尚不足以招揽此方主公。',
+        details: {
+          troopOk,
+          publicOk,
+          cityOk,
+          requiredTroopRatio: troopRatioRequired,
+          requiredPublicLead: 12
+        },
+        playerTroops,
+        targetTroops,
+        playerPublic,
+        targetPublic,
+        playerCityCount,
+        targetCityCount
+      };
     }
 
     function normalizeAppointments(state) {
@@ -346,6 +449,7 @@ const MAX_MAP_ZOOM = 4.2;
       return character
         && isExternalCharacter(character)
         && character.status === 'recruited'
+        && !isFactionLordCharacter(character)
         && !['dead', 'captured'].includes(character.status);
     }
 
@@ -2472,6 +2576,14 @@ const MAX_MAP_ZOOM = 4.2;
       base.battleTags = Array.isArray(record.battleTags) && record.battleTags.length ? uniqueTextList(record.battleTags) : inferCharacterBattleTags(base);
       base.weaknesses = Array.isArray(record.weaknesses) ? record.weaknesses : [];
       base.currentPlan = record.currentPlan || personaOverride.currentPlan || '观望局势';
+      if (FACTION_LORD_IDS.has(base.id)) {
+        const lordMeta = FACTION_LORD_META[base.id] || {};
+        base.isFactionLord = true;
+        base.lordOfFaction = record.lordOfFaction || base.lordOfFaction || lordMeta.faction || base.faction;
+        base.lordTitle = record.lordTitle || base.lordTitle || lordMeta.title || base.title || base.role;
+        base.solicitationState = record.solicitationState || base.solicitationState || 'locked';
+        base.lordSolicitation = record.lordSolicitation || base.lordSolicitation || null;
+      }
       base.npcAgency = Object.assign({
         relationshipStance: 'neutral',
         currentDesire: '',
@@ -3433,7 +3545,9 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     async function generateNpcDialogue(context) {
-      const fallback = generateFallbackDialogue(context);
+      const fallback = context.conversationType === 'solicitLord'
+        ? generateLordSolicitationFallback(context)
+        : generateFallbackDialogue(context);
       try {
         if (window.USE_REMOTE_LLM && window.remoteLLMAdapter?.generateNpcDialogue) {
           const remote = await Promise.race([
@@ -3534,6 +3648,20 @@ const MAX_MAP_ZOOM = 4.2;
     function applyConversationResult(context, dialogue) {
       const npc = context.npc;
       const convType = context.conversationType;
+      if (convType === 'recruit' && isFactionLordCharacter(npc)) {
+        const action = CONVERSATION_ACTIONS[convType] || CONVERSATION_ACTIONS.talk;
+        addCharacterMemory(npc, {
+          turn: gameState.turn,
+          type: convType,
+          summary: npc.name + '是一方主公，不会以普通人才身份被招募。',
+          playerTone: action.label,
+          npcReaction: '拒绝普通招募',
+          planAfter: npc.currentPlan,
+          effects: {}
+        });
+        pushTurnEvent({ level: 'minor', tone: 'warn', text: npc.name + '是一方主公，不会以普通人才身份被招募。' });
+        return {};
+      }
       const action = CONVERSATION_ACTIONS[convType] || CONVERSATION_ACTIONS.talk;
       const effects = calculateConversationEffects(npc, convType, action);
       npc.trustPlayer = clamp(npc.trustPlayer + effects.trustPlayer, 0, 100);
@@ -3584,6 +3712,9 @@ const MAX_MAP_ZOOM = 4.2;
       }
       const npc = gameState.characterRoster[characterId];
       if (!npc || ['hidden', 'rumored', 'dead', 'captured'].includes(npc.status)) return toast('此人暂时无法接触');
+      if (conversationType === 'recruit' && isFactionLordCharacter(npc)) {
+        return toast('此人是一方主公，不能普通招募。需在实力压倒对方后尝试“招揽”。');
+      }
       if (!spendPoint('dip')) return;
       gameState.selectedCharacterId = characterId;
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: true };
@@ -3593,6 +3724,149 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.activeModal = { type: 'dialogue', characterId, conversationType, loading: false, dialogue, effects };
       saveToStorage(false);
       render();
+    }
+
+    function buildLordSolicitationContext(npc, eligibility) {
+      return {
+        conversationType: 'solicitLord',
+        mode: 'lordSolicitation',
+        instruction: '这是对一方主公的招揽，不是普通人才招募。目标拥有自己的势力、尊严、旧部和政治立场。请写出主公面对强势玩家时的试探、权衡、保留条件或归附姿态。',
+        npc: {
+          id: npc.id,
+          name: npc.name,
+          faction: npc.faction,
+          lordOfFaction: npc.lordOfFaction,
+          title: npc.lordTitle || npc.title,
+          personality: npc.personality,
+          values: npc.values,
+          speechStyle: npc.speechStyle
+        },
+        relationship: {
+          trust: npc.trustPlayer,
+          respect: npc.respectPlayer,
+          fear: npc.fearPlayer,
+          suspicion: npc.suspicionOfPlayer,
+          stance: npc.npcAgency?.relationshipStance || ''
+        },
+        powerComparison: {
+          playerTroops: eligibility.playerTroops,
+          targetTroops: eligibility.targetTroops,
+          playerPublic: eligibility.playerPublic,
+          targetPublic: eligibility.targetPublic,
+          playerCityCount: eligibility.playerCityCount,
+          targetCityCount: eligibility.targetCityCount
+        },
+        player: {
+          name: gameState.player?.name,
+          title: gameState.player?.title,
+          independent: !!gameState.player?.independent,
+          protection: gameState.player?.protection,
+          cityCount: controlledCities().length
+        },
+        recentEvents: (gameState.turnEvents || []).slice(-4).map(e => e.text),
+        recentMemory: (npc.memory || []).slice(0, 5)
+      };
+    }
+
+    function generateLordSolicitationFallback(context) {
+      const npc = context.npc;
+      const rel = context.relationship || {};
+      const cautious = Number(rel.suspicion || 0) > 60;
+      const fearful = Number(rel.fear || 0) > 65;
+      const respectful = Number(rel.respect || 0) > 65;
+      let text = '';
+      if (fearful) {
+        text = npc.name + '沉吟良久，道：“你兵威既盛，民心亦归，我若仍执一隅，恐误旧部与百姓。但归附之事，非一言可决。”';
+      } else if (respectful) {
+        text = npc.name + '拱手道：“阁下能以兵威定乱，又能得民心，此非寻常郡守可比。若要我等共奉大局，须先明旧部安置与名分。”';
+      } else if (cautious) {
+        text = npc.name + '缓缓说道：“你今日来谈招揽，所图不小。我虽见你势盛，却也要看你是否容得下旧臣、旧土与旧名。”';
+      } else {
+        text = npc.name + '说道：“天下无定主，强者未必能久，得民心者方可言大业。若你真能护我旧部百姓，我未必不可与你共议后事。”';
+      }
+      return {
+        npcText: text,
+        tone: fearful ? 'fearful' : cautious ? 'cautious' : 'measured',
+        emotionalShift: fearful ? '畏服权衡' : cautious ? '谨慎试探' : '审势而谈',
+        npcIntent: '权衡是否归附玩家主导秩序',
+        memorySummary: npc.name + '与玩家谈及主公招揽，重点在旧部、名分与归附条件。',
+        choices: [
+          { id: 'promiseAutonomy', label: '承诺保留旧部与名分' },
+          { id: 'demandSubmission', label: '要求其承认你的盟主地位' },
+          { id: 'offerProtection', label: '许诺保护其宗族与百姓' }
+        ]
+      };
+    }
+
+    async function startLordSolicitation(characterId) {
+      const npc = gameState.characterRoster?.[characterId];
+      if (!npc) return toast('人物不存在');
+      if (!isFactionLordCharacter(npc)) return toast('此人不是势力主公');
+      const eligibility = getLordSolicitationEligibility(npc);
+      if (!eligibility.eligible) return toast(eligibility.reason || '条件不足，无法招揽');
+      if (!spendPoint('dip')) return;
+      const context = buildLordSolicitationContext(npc, eligibility);
+      gameState.activeModal = { type: 'lordSolicitation', characterId: npc.id, loading: true, dialogue: generateLordSolicitationFallback(context), eligibility };
+      renderModal();
+      let dialogue;
+      try {
+        dialogue = await generateNpcDialogue(context);
+      } catch (err) {
+        console.error('主公招揽 AI 生成失败', err);
+        dialogue = generateLordSolicitationFallback(context);
+      }
+      gameState.activeModal = { type: 'lordSolicitation', characterId: npc.id, loading: false, dialogue: normalizeDialogueResult(dialogue, generateLordSolicitationFallback(context)), eligibility };
+      renderModal();
+    }
+
+    function resolveLordSolicitationChoice(characterId, choiceId) {
+      const npc = gameState.characterRoster?.[characterId];
+      if (!npc || !isFactionLordCharacter(npc)) return toast('主公招揽目标不存在');
+      const eligibility = getLordSolicitationEligibility(npc);
+      const choiceLabels = {
+        promiseAutonomy: '承诺保留旧部与名分',
+        demandSubmission: '要求其承认你的盟主地位',
+        offerProtection: '许诺保护其宗族与百姓'
+      };
+      if (!eligibility.eligible) {
+        npc.suspicionOfPlayer = clamp(Number(npc.suspicionOfPlayer || 0) + 5, 0, 100);
+        npc.npcAgency ||= {};
+        npc.npcAgency.grievance = { turn: gameState.turn, source: 'lordSolicitation', summary: '玩家实力不足仍试图招揽', resolved: false };
+        addCharacterMemory(npc, {
+          turn: gameState.turn,
+          type: 'lordSolicitation',
+          summary: '玩家实力不足仍试图招揽，' + npc.name + '心生戒备。',
+          text: '玩家实力不足仍试图招揽，' + npc.name + '心生戒备。'
+        });
+        gameState.activeModal = null;
+        saveToStorage(false);
+        render();
+        return toast('条件不足，招揽失败');
+      }
+
+      npc.lordSolicitation ||= {};
+      npc.lordSolicitation.status = 'aligned';
+      npc.lordSolicitation.turn = gameState.turn;
+      npc.lordSolicitation.choiceId = choiceId;
+      npc.solicitationState = 'aligned';
+      npc.npcAgency ||= {};
+      npc.npcAgency.relationshipStance = choiceId === 'demandSubmission' ? 'dependentLord' : 'subordinateAlly';
+      npc.attitudeToPlayer = clamp(Number(npc.attitudeToPlayer || 0) + 10, 0, 100);
+      npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) + (choiceId === 'demandSubmission' ? 4 : 8), 0, 100);
+      npc.respectPlayer = clamp(Number(npc.respectPlayer || 0) + (choiceId === 'demandSubmission' ? 8 : 5), 0, 100);
+      npc.fearPlayer = clamp(Number(npc.fearPlayer || 0) + 5, 0, 100);
+      addCharacterMemory(npc, {
+        turn: gameState.turn,
+        type: 'lordSolicitation',
+        summary: npc.name + '与玩家达成招揽约定，承认玩家主导地位，但保留旧部名分。',
+        text: npc.name + '与玩家达成招揽约定，承认玩家主导地位，但保留旧部名分。',
+        choice: choiceLabels[choiceId] || choiceId
+      });
+      pushTurnEvent({ level: 'important', tone: 'good', text: npc.name + '接受招揽，承认你的主导地位。' });
+      gameState.activeModal = null;
+      saveToStorage(false);
+      render();
+      toast('主公招揽达成');
     }
 
     function markLetterResolved(letter, choiceId) {
@@ -5330,6 +5604,10 @@ const MAX_MAP_ZOOM = 4.2;
         </div>`;
         return;
       }
+      if (modal.type === 'lordSolicitation') {
+        root.innerHTML = renderLordSolicitationModal(modal);
+        return;
+      }
       if (modal.type === 'letter') {
         const letter = gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
@@ -5447,6 +5725,30 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = renderAppointmentPickerModal(modal);
         return;
       }
+    }
+
+    function renderLordSolicitationModal(modal) {
+      const npc = gameState.characterRoster?.[modal.characterId];
+      if (!npc) return '';
+      const dialogue = modal.dialogue || {};
+      const choices = [
+        { id: 'promiseAutonomy', label: '承诺保留旧部与名分' },
+        { id: 'demandSubmission', label: '要求其承认你的盟主地位' },
+        { id: 'offerProtection', label: '许诺保护其宗族与百姓' }
+      ];
+      return `<div class="game-modal lord-solicitation-modal">
+        <div class="modal-head"><h2>${escapeHtml(npc.name)}｜主公招揽</h2><button class="ghost-btn" data-close-modal="1">关闭</button></div>
+        <div class="dialogue-layout">
+          <div class="dialogue-portrait">${escapeHtml(npc.portraitPlaceholder)}</div>
+          <div>
+            <div class="dialogue-text">${modal.loading ? '对方正在权衡旧部、名分与大势……' : escapeHtml(dialogue.npcText || '')}</div>
+            <div class="tag-row"><span class="tag">${escapeHtml(npc.lordTitle || npc.title || npc.role)}</span><span class="tag">这不是普通招募</span><span class="tag">归附谈判</span></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          ${modal.loading ? '' : choices.map(choice => `<button data-lord-solicitation-choice="${choice.id}">${escapeHtml(choice.label)}</button>`).join('')}
+        </div>
+      </div>`;
     }
 
     function renderTrainingChoiceModal(modal) {
@@ -6919,7 +7221,7 @@ const MAX_MAP_ZOOM = 4.2;
     function visibleCharacters() {
       return Object.values(gameState.characterRoster || {}).filter(character =>
         isExternalCharacter(character) &&
-        character.status !== 'hidden' &&
+        (character.status !== 'hidden' || isFactionLordCharacter(character)) &&
         character.status !== 'dead'
       );
     }
@@ -6938,7 +7240,7 @@ const MAX_MAP_ZOOM = 4.2;
       const filter = gameState.characterFilter || 'all';
       const characters = visibleCharacters().filter(character => characterMatchesFilter(character, filter));
       const profile = gameState.characterRoster?.[gameState.characterProfileId];
-      if (profile && !isInternalPlayerCharacterId(profile.id) && profile.status !== 'hidden' && profile.status !== 'dead') {
+      if (profile && !isInternalPlayerCharacterId(profile.id) && (profile.status !== 'hidden' || isFactionLordCharacter(profile)) && profile.status !== 'dead') {
         gameState.selectedCharacterId = profile.id;
         return renderCharacterDetail(profile);
       }
@@ -6959,24 +7261,49 @@ const MAX_MAP_ZOOM = 4.2;
           <h2>人物名录</h2>
           <p>眼下只展开桂阳与荆州人物圈。远方名士会随着侦察、来信和重大事件逐步进入视野。</p>
           <div class="character-toolbar">${filters.map(([id, label]) => `<button class="ghost-btn ${filter === id ? 'active' : ''}" data-character-filter="${id}">${label}</button>`).join('')}</div>
-          <div class="character-grid">${characters.map(character => `
-            <article class="character-card ${selected?.id === character.id ? 'selected' : ''}" data-open-character-profile="${character.id}" data-select-character="${character.id}" tabindex="0" role="button">
-              <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
-              <div class="character-card-body"><strong>${escapeHtml(character.name)}</strong><small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small><small>${escapeHtml(character.status)}</small></div>
-            </article>
-          `).join('') || '<div class="turn-event-item">当前筛选下暂无人物。</div>'}</div>
+          <div class="character-grid">${characters.map(character => renderCharacterCard(character, selected)).join('') || '<div class="turn-event-item">当前筛选下暂无人物。</div>'}</div>
         </div>
+      `;
+    }
+
+    function renderCharacterCard(character, selected) {
+      const isLord = isFactionLordCharacter(character);
+      const lordEligibility = isLord ? getLordSolicitationEligibility(character) : null;
+      const lordState = isLord ? (lordEligibility.eligible ? '主公｜可招揽' : '主公｜未可招揽') : '';
+      const classes = [
+        'character-card',
+        selected?.id === character.id ? 'selected' : '',
+        isLord ? 'lord-card' : '',
+        isLord && !lordEligibility.eligible ? 'lord-locked' : ''
+      ].filter(Boolean).join(' ');
+      return `
+        <article class="${classes}" data-open-character-profile="${character.id}" data-select-character="${character.id}" tabindex="0" role="button">
+          <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
+          <div class="character-card-body">
+            <strong>${escapeHtml(character.name)}</strong>
+            <small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small>
+            <small>${escapeHtml(lordState || character.status)}</small>
+          </div>
+        </article>
       `;
     }
 
     function renderCharacterDetail(character) {
       if (!character) return '';
       const canTalk = !['hidden', 'rumored', 'dead', 'captured'].includes(character.status);
+      const isLord = isFactionLordCharacter(character);
       const attitude = getNpcAttitudeLabel(character);
       refreshNpcPlan(character);
       const valueTags = uniqueTextList(character.values || []).map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
       const battleTags = getCharacterBattleTags(character).map(item => `<span class="tag battle-tag">${escapeHtml(item)}</span>`).join('');
       const style = character.speechStyle || {};
+      const conversationButtons = Object.entries(CONVERSATION_ACTIONS)
+        .filter(([id]) => !(isLord && id === 'recruit'))
+        .map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`)
+        .join('');
+      const investigateButton = character.status === 'rumored'
+        ? `<button data-investigate-character="${character.id}">调查传闻</button>`
+        : '';
       return `<div class="card">
         <div class="character-profile-head">
           <button class="ghost-btn" data-close-character-profile="1">返回名录</button>
@@ -6996,9 +7323,11 @@ const MAX_MAP_ZOOM = 4.2;
           <div class="kv"><span>畏惧</span><strong>${character.fearPlayer}</strong></div>
         </div>
         <div class="button-grid">
-          ${Object.entries(CONVERSATION_ACTIONS).map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`).join('')}
+          ${investigateButton}
+          ${conversationButtons}
         </div>
       </div>
+      ${renderLordSolicitationCard(character)}
       <div class="card">
         <h3>目标与自我判断</h3>
         <p><strong>长期目标：</strong>${escapeHtml(character.longTermGoal || '尚未显露。')}</p>
@@ -7009,6 +7338,36 @@ const MAX_MAP_ZOOM = 4.2;
       <div class="card"><h3>内心状态</h3>${renderNpcAgencyCard(character)}</div>
       <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
       <div class="card"><h3>可解锁谋略</h3>${renderCharacterSpecialSchemeList(character)}</div>`;
+    }
+
+    function renderLordSolicitationCard(character) {
+      if (!isFactionLordCharacter(character)) return '';
+      const info = getLordSolicitationEligibility(character);
+      if (!info.eligible) {
+        return `
+          <div class="card lord-solicit-card locked">
+            <h3>主公招揽</h3>
+            <p class="muted">此人是一方主公，不可普通招募。</p>
+            <p>${escapeHtml(info.reason)}</p>
+            <div class="kv"><span>我方兵力</span><strong>${fmt(info.playerTroops || 0)}</strong></div>
+            <div class="kv"><span>对方兵力</span><strong>${fmt(info.targetTroops || 0)}</strong></div>
+            <div class="kv"><span>我方平均民心</span><strong>${Math.round(info.playerPublic || 0)}</strong></div>
+            <div class="kv"><span>对方平均民心</span><strong>${Math.round(info.targetPublic || 0)}</strong></div>
+            <button disabled>条件不足，无法招揽</button>
+          </div>
+        `;
+      }
+      return `
+        <div class="card lord-solicit-card">
+          <h3>主公招揽</h3>
+          <p>你已具备压倒性威望，可尝试以盟主之势招揽 ${escapeHtml(character.name)}。</p>
+          <div class="kv"><span>我方兵力</span><strong>${fmt(info.playerTroops || 0)}</strong></div>
+          <div class="kv"><span>对方兵力</span><strong>${fmt(info.targetTroops || 0)}</strong></div>
+          <div class="kv"><span>我方平均民心</span><strong>${Math.round(info.playerPublic || 0)}</strong></div>
+          <div class="kv"><span>对方平均民心</span><strong>${Math.round(info.targetPublic || 0)}</strong></div>
+          <button data-solicit-lord="${character.id}">招揽此方主公</button>
+        </div>
+      `;
     }
 
     function renderNpcAgencyCard(character) {
@@ -7404,11 +7763,79 @@ const MAX_MAP_ZOOM = 4.2;
 
     function renderCityAppointmentManagerList() {
       const cities = controlledCities();
+      const selectedCity = getSelectedAppointmentQuickCity(cities);
 
       return `
         <div class="card">
           <h3>城市任命</h3>
-          ${cities.length ? cities.map(city => renderCityAppointmentManager(city)).join('') : '<p class="muted">当前没有玩家控制城池。</p>'}
+          ${cities.length ? `
+            ${renderAppointmentCityQuickPicker(cities, selectedCity)}
+            ${renderCityAppointmentManager(selectedCity)}
+          ` : '<p class="muted">当前没有玩家控制城池。</p>'}
+        </div>
+      `;
+    }
+
+    function getSelectedAppointmentQuickCity(cities = controlledCities()) {
+      const selectedId = gameState.appointmentQuickCityId || gameState.selectedCityId;
+      const selected = cities.find(city => city.id === selectedId);
+      const fallback = cities[0] || null;
+      if (fallback && (!selected || gameState.appointmentQuickCityId !== selected.id)) {
+        gameState.appointmentQuickCityId = (selected || fallback).id;
+      }
+      return selected || fallback;
+    }
+
+    function autoTaskModeLabel(mode) {
+      const labels = {
+        none: '不执行',
+        recruit: '征兵',
+        train: '练兵',
+        relief: '赈济',
+        farming: '屯田',
+        defense: '防务',
+        order: '治安',
+        taxLight: '低税',
+        balanced: '均衡',
+        grainHeavy: '重粮',
+        publicFirst: '民心',
+        drill: '整军',
+        trainLand: '陆兵',
+        trainCavalry: '骑兵',
+        trainNavy: '水兵',
+        reserve: '预备'
+      };
+      return labels[mode] || mode;
+    }
+
+    function summarizeAutoTask(task) {
+      if (!task?.enabled) return '自动化关闭';
+      const civilModes = Array.isArray(task.civilModes) ? task.civilModes : [];
+      const prepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes : [];
+      const parts = [
+        task.militaryMode && task.militaryMode !== 'none' ? autoTaskModeLabel(task.militaryMode) : '',
+        civilModes.slice(0, 2).map(autoTaskModeLabel).join('、'),
+        task.policyMode && task.policyMode !== 'none' ? autoTaskModeLabel(task.policyMode) : '',
+        prepModes.slice(0, 2).map(autoTaskModeLabel).join('、')
+      ].filter(Boolean);
+      return parts.length ? parts.join('｜') : '已开启，待配置';
+    }
+
+    function renderAppointmentCityQuickPicker(cities, selectedCity) {
+      normalizeAppointments(gameState);
+      return `
+        <div class="appointment-city-picker">
+          <span class="appointment-city-picker-label">任命城市</span>
+          ${cities.map(city => {
+            const task = gameState.appointments.autoTasks?.[city.id] || {};
+            const isSelected = selectedCity?.id === city.id;
+            return `
+              <button class="appointment-city-chip ${isSelected ? 'selected' : ''}" data-select-appointment-city="${city.id}" data-help="${escapeHtml('点击切换到' + city.name + '的自动化任命部署')}">
+                <span class="appointment-city-chip-name">${escapeHtml(city.name)}</span>
+                <span class="appointment-city-chip-status ${task.enabled ? 'enabled' : ''}">${task.enabled ? '自动' : '手动'}</span>
+              </button>
+            `;
+          }).join('')}
         </div>
       `;
     }
@@ -7434,7 +7861,10 @@ const MAX_MAP_ZOOM = 4.2;
 
       return `
         <div class="appointment-city-block">
-          <h4>${escapeHtml(city.name)}</h4>
+          <div class="appointment-city-heading">
+            <h4>${escapeHtml(city.name)}</h4>
+            <span>${escapeHtml(summarizeAutoTask(gameState.appointments.autoTasks?.[city.id] || {}))}</span>
+          </div>
           <div class="kv"><span>主政官</span><strong>${adminIds.length}/${getCityAdministratorLimit(city)}</strong></div>
           <div class="kv"><span>军事官</span><strong>${militaryIds.length}/${getCityMilitaryOfficerLimit(city)}</strong></div>
           <div class="kv"><span>政策官</span><strong>${policyId ? officialName(policyId) : '未任命'}</strong></div>
@@ -9990,16 +10420,23 @@ const MAX_MAP_ZOOM = 4.2;
       const npc = context.npc || {};
       return {
         conversationType: context.conversationType,
+        mode: context.mode,
+        instruction: context.instruction,
         player: {
           name: context.player?.name,
           identity: context.player?.identity,
+          title: context.player?.title,
           ambition: context.player?.ambition,
-          protection: context.player?.protection
+          protection: context.player?.protection,
+          independent: context.player?.independent,
+          cityCount: context.player?.cityCount
         },
         npc: {
           id: npc.id,
           name: npc.name,
           faction: npc.faction,
+          lordOfFaction: npc.lordOfFaction,
+          title: npc.title,
           status: npc.status,
           currentPlan: npc.currentPlan,
           trustPlayer: npc.trustPlayer,
@@ -10011,8 +10448,11 @@ const MAX_MAP_ZOOM = 4.2;
           stats: npc.stats,
           npcAgency: npc.npcAgency
         },
+        relationship: context.relationship,
+        powerComparison: context.powerComparison,
         gameState: { turn: context.gameState?.turn },
         recentMemory: Array.isArray(context.recentMemory) ? context.recentMemory.slice(0, 6) : [],
+        recentEvents: Array.isArray(context.recentEvents) ? context.recentEvents.slice(0, 4) : [],
         persona: context.persona,
         strategicContext: context.strategicContext,
         availableIntentions: context.availableIntentions
@@ -10248,6 +10688,37 @@ const MAX_MAP_ZOOM = 4.2;
     window.checkNewBorderFactions = checkNewBorderFactions;
     window.checkIntelligenceNetworkUnlocks = checkIntelligenceNetworkUnlocks;
     window.getCurrentBorderFactions = getCurrentBorderFactions;
+
+    function validateLordSolicitationSystem() {
+      const rows = Object.values(gameState.characterRoster || {})
+        .filter(c => isFactionLordCharacter(c))
+        .map(c => {
+          const eligibility = getLordSolicitationEligibility(c);
+          return {
+            id: c.id,
+            name: c.name,
+            faction: c.faction,
+            lordOfFaction: c.lordOfFaction,
+            status: c.status,
+            isFactionLord: isFactionLordCharacter(c),
+            solicitationState: c.solicitationState,
+            lordSolicitation: c.lordSolicitation || null,
+            eligible: eligibility.eligible,
+            locked: eligibility.locked,
+            reason: eligibility.reason,
+            playerTroops: eligibility.playerTroops,
+            targetTroops: eligibility.targetTroops,
+            playerPublic: eligibility.playerPublic,
+            targetPublic: eligibility.targetPublic,
+            details: eligibility.details
+          };
+        });
+      console.table(rows);
+      return rows;
+    }
+
+    window.validateLordSolicitationSystem = validateLordSolicitationSystem;
+    window.startLordSolicitation = startLordSolicitation;
 
     function validateHistoricalCharacters() {
       const roster = gameState.characterRoster || {};
@@ -12007,6 +12478,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function handleHelpHover(event) {
+      if (!(event.target instanceof Element)) return;
       const target = event.target.closest('[data-help], [data-help-key]');
       if (!target) {
         hideTooltip();
@@ -12378,6 +12850,24 @@ const MAX_MAP_ZOOM = 4.2;
           renderRightPanel();
           return;
         }
+        const investigateBtn = event.target.closest('[data-investigate-character]');
+        if (investigateBtn) {
+          investigateCharacter(investigateBtn.getAttribute('data-investigate-character'));
+          return;
+        }
+        const solicitLordBtn = event.target.closest('[data-solicit-lord]');
+        if (solicitLordBtn) {
+          startLordSolicitation(solicitLordBtn.getAttribute('data-solicit-lord'));
+          return;
+        }
+        const lordChoiceBtn = event.target.closest('[data-lord-solicitation-choice]');
+        if (lordChoiceBtn) {
+          resolveLordSolicitationChoice(
+            gameState.activeModal?.characterId,
+            lordChoiceBtn.getAttribute('data-lord-solicitation-choice')
+          );
+          return;
+        }
         const conversation = event.target.closest('[data-conversation]');
         if (conversation) {
           const convType = conversation.getAttribute('data-conversation');
@@ -12565,6 +13055,16 @@ const MAX_MAP_ZOOM = 4.2;
           queueInner(actionType);
           if (isGuideActive() && isForceAction('clickInner', actionType)) {
             advanceGuideStep();
+          }
+          return;
+        }
+        const appointmentCity = event.target.closest('[data-select-appointment-city]');
+        if (appointmentCity) {
+          const cityId = appointmentCity.getAttribute('data-select-appointment-city');
+          if (gameState.cities?.[cityId] && isControlledBy(cityId, 'player')) {
+            gameState.appointmentQuickCityId = cityId;
+            gameState.selectedCityId = cityId;
+            render();
           }
           return;
         }
@@ -12775,6 +13275,21 @@ const MAX_MAP_ZOOM = 4.2;
             normalizeMilitaryPlannerSelection();
           }
           renderRightPanel();
+        }
+        const autoTaskField = event.target.closest('[data-auto-task-field]');
+        if (autoTaskField) {
+          const field = autoTaskField.getAttribute('data-auto-task-field');
+          const value = autoTaskField.type === 'checkbox' ? autoTaskField.checked : autoTaskField.value;
+          setCityAutoTask(autoTaskField.getAttribute('data-auto-task-city'), field, value);
+          return;
+        }
+        const autoModeToggle = event.target.closest('[data-toggle-auto-mode]');
+        if (autoModeToggle) {
+          toggleCityAutoTaskMode(
+            autoModeToggle.getAttribute('data-auto-task-city'),
+            autoModeToggle.getAttribute('data-toggle-auto-mode'),
+            autoModeToggle.getAttribute('data-auto-mode')
+          );
         }
       });
 

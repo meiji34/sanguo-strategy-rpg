@@ -529,6 +529,7 @@ function summarizeSave(saveData) {
 
 async function generateDialogueWithDeepSeek(userId, context) {
   const promptContext = compactDialogueContext(context);
+  const isLordSolicitation = promptContext.conversationType === 'solicitLord';
   const payload = {
     model: config.deepseekModel,
     messages: [
@@ -539,7 +540,14 @@ async function generateDialogueWithDeepSeek(userId, context) {
           'Return strict json only.',
           'Do not decide game mechanics, stats, recruitment success, trades, battles, or state changes.',
           'Only write text fields that the game can display.',
-          'JSON shape: {"npcText":"...","npcIntent":"...","emotionalShift":"...","memorySummary":"...","suggestedPlayerChoices":["..."]}'
+          'JSON shape: {"npcText":"...","npcIntent":"...","emotionalShift":"...","memorySummary":"...","suggestedPlayerChoices":["..."]}',
+          isLordSolicitation ? [
+            'This is lord solicitation, not ordinary recruitment.',
+            'The target is a faction lord with dignity, retainers, territory, and political standing.',
+            'Write negotiation about alignment, submission, accepting player-led order, retaining old troops/title/clan, or acknowledging the player as hegemon.',
+            'Do not write ordinary employment, job-seeking, or "I will serve as your officer" language.',
+            'Use ideas like 归附, 共奉大义, 奉你为盟主, 愿以州郡相托, 保留旧部.'
+          ].join(' ') : ''
         ].join(' ')
       },
       {
@@ -641,16 +649,23 @@ function compactDialogueContext(context) {
   const npc = context?.npc || {};
   return {
     conversationType: safeString(context?.conversationType, 40),
+    mode: safeString(context?.mode, 40),
+    instruction: safeString(context?.instruction, 500),
     player: {
       name: safeString(context?.player?.name, 40),
       identity: safeString(context?.player?.identity, 40),
+      title: safeString(context?.player?.title, 60),
       ambition: context?.player?.ambition,
-      protection: context?.player?.protection
+      protection: context?.player?.protection,
+      independent: !!context?.player?.independent,
+      cityCount: context?.player?.cityCount
     },
     npc: {
       id: safeString(npc.id, 40),
       name: safeString(npc.name, 40),
       faction: safeString(npc.faction, 40),
+      lordOfFaction: safeString(npc.lordOfFaction, 40),
+      title: safeString(npc.title, 80),
       status: safeString(npc.status, 40),
       currentPlan: safeString(npc.currentPlan, 200),
       trustPlayer: npc.trustPlayer,
@@ -662,8 +677,11 @@ function compactDialogueContext(context) {
       stats: npc.stats,
       agency: npc.npcAgency
     },
+    relationship: context?.relationship || null,
+    powerComparison: context?.powerComparison || null,
     turn: context?.gameState?.turn,
     recentMemory: Array.isArray(context?.recentMemory) ? context.recentMemory.slice(0, 6) : [],
+    recentEvents: Array.isArray(context?.recentEvents) ? context.recentEvents.slice(0, 4).map(item => safeString(item, 160)) : [],
     persona: safeString(context?.persona, 800),
     strategicContext: safeString(context?.strategicContext, 800),
     availableIntentions: Array.isArray(context?.availableIntentions) ? context.availableIntentions.slice(0, 12) : []
