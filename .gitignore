@@ -1,0 +1,12 @@
+Update/
+origin/
+.env
+node_modules/
+.claude/
+/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+npm-debug.log*
+*.log
+server-start.*.log

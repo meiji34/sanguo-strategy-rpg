@@ -1,0 +1,14 @@
+{
+  "name": "sanguo-strategy-rpg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings server/index.mjs",
+    "dev": "node --no-warnings --watch server/index.mjs",
+    "check": "node --check server/index.mjs"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

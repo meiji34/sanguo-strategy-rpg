@@ -1258,7 +1258,7 @@ const MAX_MAP_ZOOM = 4.2;
       chiefClerk: characterBlueprint('chiefClerk', '主簿', { faction: 'player', role: '亲信', type: '政务', status: 'recruited', rarity: '良才', summary: '熟悉文书、士族与府衙脉络。', stats: { command: 34, strategy: 57, politics: 72, charm: 58, loyalty: 74, ambition: 24 }, passiveBonuses: ['整顿治安效果提高'] }),
       quartermaster: characterBlueprint('quartermaster', '粮官', { faction: 'player', role: '亲信', type: '政务', status: 'recruited', rarity: '普通', summary: '掌管军粮和屯田账册。', stats: { command: 30, strategy: 46, politics: 66, charm: 40, loyalty: 70, ambition: 18 }, passiveBonuses: ['行军补给损耗降低'] }),
       scoutChief: characterBlueprint('scoutChief', '斥候头目', { faction: 'player', role: '亲信', type: '谋士', status: 'recruited', rarity: '良才', summary: '负责打探豪强往来与道路虚实。', stats: { command: 48, strategy: 68, politics: 38, charm: 46, loyalty: 71, ambition: 26 }, passiveBonuses: ['截击风险降低'] }),
-      liuBiao: characterBlueprint('liuBiao', '刘表', { faction: 'liubiao', location: 'xiangyang', role: '荆州牧', title: '荆州牧', type: '政务', status: 'contactable', rarity: '传奇', summary: '坐镇襄阳，给予你立足荆南的庇护。', stats: { command: 64, strategy: 72, politics: 84, charm: 80, loyalty: 58, ambition: 62 }, specialSchemes: ['刘表密谈', '请求兵粮'] }),
+      liuBiao: characterBlueprint('liuBiao', '刘表', { faction: 'liubiao', location: 'xiangyang', role: '荆州牧', title: '荆州牧', type: '政务', status: 'contactable', rarity: '传奇', summary: '坐镇襄阳，给予你立足荆南的庇护。', portraitUrl: './assets/characters/liu-biao.png', stats: { command: 64, strategy: 72, politics: 84, charm: 80, loyalty: 58, ambition: 62 }, specialSchemes: ['刘表密谈', '请求兵粮'] }),
       caiMao: characterBlueprint('caiMao', '蔡瑁', { faction: 'liubiao', location: 'xiangyang', role: '荆州士族', type: '武将', status: 'discovered', rarity: '名将', summary: '荆州军政要员，对桂阳的新变化保持警惕。', stats: { command: 72, strategy: 58, politics: 64, charm: 48, loyalty: 56, ambition: 66 } }),
       kuaiYue: characterBlueprint('kuaiYue', '蒯越', { faction: 'liubiao', location: 'xiangyang', role: '荆州谋臣', type: '谋士', status: 'contactable', rarity: '名将', summary: '识人审势，习惯先观察再下注。', stats: { command: 42, strategy: 86, politics: 80, charm: 68, loyalty: 62, ambition: 48 }, specialSchemes: ['谋士献策', '煮酒论英雄'] }),
       huangZu: characterBlueprint('huangZu', '黄祖', { faction: 'liubiao', location: 'jiangxia', role: '江夏守将', type: '武将', status: 'discovered', rarity: '名将', summary: '久镇江夏，重视水路和守备。', stats: { command: 76, strategy: 56, politics: 42, charm: 44, loyalty: 66, ambition: 40 } }),
@@ -2641,10 +2641,22 @@ const MAX_MAP_ZOOM = 4.2;
       return roster;
     }
 
+    function mergeCharacterRosterWithBlueprints(savedRoster, seed) {
+      const initialRoster = createCharacterRoster(seed);
+      const mergedRoster = { ...initialRoster };
+      Object.entries(savedRoster || {}).forEach(([id, record]) => {
+        mergedRoster[id] = {
+          ...(initialRoster[id] || {}),
+          ...(record || {}),
+          id
+        };
+      });
+      return mergedRoster;
+    }
+
     function ensureCharacterSystemState(state) {
       state.randomTalentSeed ||= Math.floor(Date.now() % 2147483647) || 190;
-      const initialRoster = createCharacterRoster(state.randomTalentSeed);
-      state.characterRoster = Object.assign(initialRoster, state.characterRoster || {});
+      state.characterRoster = mergeCharacterRosterWithBlueprints(state.characterRoster, state.randomTalentSeed);
       Object.entries(state.characterRoster).forEach(([id, record]) => {
         state.characterRoster[id] = normalizeCharacterRecord(Object.assign({}, record, { id }));
       });
@@ -6434,6 +6446,8 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function resetRuntimeForNewGame() {
+      clearGuideHighlights();
+      removeGuideOverlay();
       gameState = createInitialState();
       characterDraft = { name: '', identity: 'commandant' };
       characterCreationStep = 'arrival';
@@ -6480,6 +6494,9 @@ const MAX_MAP_ZOOM = 4.2;
       stopIntroVideo();
       stopOpeningTransition();
       stopOfficeHandoffTransition();
+      clearGuideHighlights();
+      removeGuideOverlay();
+      if (gameState.tutorial) gameState.tutorial.forceAction = null;
       launchScreen = 'menu';
       render();
     }
@@ -6676,10 +6693,10 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="card">
           <h3>本回合行动点</h3>
           <div class="ap-grid">
-            ${apBox('政务', ap.gov)}
-            ${apBox('军令', ap.mil)}
+            ${apBox('政务', ap.gov, 'data-ap="gov"')}
+            ${apBox('军令', ap.mil, 'data-ap="mil"')}
             ${apBox('谋略', ap.scheme)}
-            ${apBox('外交', ap.dip)}
+            ${apBox('外交', ap.dip, 'data-ap="dip"')}
             ${apBox('亲信', ap.inner)}
           </div>
         </div>
@@ -6810,8 +6827,8 @@ const MAX_MAP_ZOOM = 4.2;
       return `<div class="metric"><span>${label}</span><div class="meter"><i style="--value:${clamp(value, 0, 100)}%"></i></div><strong>${Math.round(value)}</strong></div>`;
     }
 
-    function apBox(label, value) {
-      return `<div class="ap"><strong>${value}</strong><span>${label}</span></div>`;
+    function apBox(label, value, attr) {
+      return `<div class="ap"${attr ? ' ' + attr : ''}><strong>${value}</strong><span>${label}</span></div>`;
     }
 
     function renderMap() {
@@ -7278,7 +7295,7 @@ const MAX_MAP_ZOOM = 4.2;
       ].filter(Boolean).join(' ');
       return `
         <article class="${classes}" data-open-character-profile="${character.id}" data-select-character="${character.id}" tabindex="0" role="button">
-          <div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>
+          ${renderCharacterPortrait(character)}
           <div class="character-card-body">
             <strong>${escapeHtml(character.name)}</strong>
             <small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small>
@@ -7286,6 +7303,17 @@ const MAX_MAP_ZOOM = 4.2;
           </div>
         </article>
       `;
+    }
+
+    function renderCharacterPortrait(character) {
+      if (character.portraitUrl) {
+        return `
+          <div class="character-portrait has-image">
+            <img src="${escapeHtml(character.portraitUrl)}" alt="${escapeHtml(character.name)}画像" loading="lazy">
+          </div>
+        `;
+      }
+      return `<div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>`;
     }
 
     function renderCharacterDetail(character) {
@@ -7447,7 +7475,7 @@ const MAX_MAP_ZOOM = 4.2;
       const targetId = getMilitaryPlannerTargetId(sourceId, targets);
       const targetData = targets.find(t => t.city.id === targetId);
       const sourceCities = controlledCities().filter(c => realTroops(c.garrison) > 100);
-      return `<div class="card">
+      return `<div class="card" data-military-section="attackPlanner">
         <h3>部署进攻</h3>
         <p>选择出兵城与目标城，先生成作战草案，再进入详细部署。</p>
         <div class="form-row"><span>出兵城</span><select data-military-planner-field="sourceId">
@@ -9773,6 +9801,14 @@ const MAX_MAP_ZOOM = 4.2;
       normalizeMapView();
     }
 
+    function focusMapOnCity(cityId) {
+      const center = getRegion(cityId)?.center || gameState.cities[cityId];
+      if (center) {
+        setMapFocusOn(center.x, center.y, 2.9);
+        render();
+      }
+    }
+
     function clientToSvgPoint(clientX, clientY) {
       const svg = document.getElementById('mapStage');
       if (svg.createSVGPoint && svg.getScreenCTM()) {
@@ -11739,7 +11775,16 @@ const MAX_MAP_ZOOM = 4.2;
         const overlay = document.createElement('div');
         overlay.className = 'tutorial-overlay';
         overlay.id = 'tutorialOverlay';
-        overlay.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); });
+        overlay.addEventListener('click', e => {
+          e.stopPropagation();
+          e.preventDefault();
+          // 信息展示步骤（无 forceAction）：点击遮罩即可推进
+          if (isGuideActive() && !gameState.tutorial.forceAction) {
+            clearGuideHighlights();
+            removeGuideOverlay();
+            advanceGuideStep();
+          }
+        });
         document.body.appendChild(overlay);
       }
     }
@@ -11808,30 +11853,48 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function highlightGuideSvgElement(selector, tooltipText, tooltipPosition) {
-      const el = document.querySelector(selector);
+      // Use getElementById for SVG parent to avoid querying HTML elements with same attributes
+      let el = null;
+      const idMatch = selector.match(/^#(\w+)\s+(.+)$/);
+      if (idMatch) {
+        const parent = document.getElementById(idMatch[1]);
+        if (parent) el = parent.querySelector(idMatch[2]);
+      }
+      if (!el) el = document.querySelector(selector);
       if (!el) return;
-      el.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
+      // If the element is a <g> group, highlight the main visual child (circle) instead
+      let highlightEl = el;
+      if (el.tagName.toLowerCase() === 'g') {
+        const core = el.querySelector('circle.city-core');
+        if (core) highlightEl = core;
+      }
+      highlightEl.classList.add('tutorial-highlight', 'tutorial-overlay-cutout');
       gameState.tutorial.highlightedElements.push(selector);
 
       // SVG elements can't break through the HTML overlay via z-index,
       // so create a floating clickable proxy div positioned over the SVG element.
-      const rect = el.getBoundingClientRect();
+      const rect = highlightEl.getBoundingClientRect();
       const proxy = document.createElement('div');
       proxy.className = 'tutorial-svg-proxy';
       proxy.id = 'tutorialSvgProxy';
       proxy.style.cssText = `position:fixed;z-index:9001;cursor:pointer;
-        left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;`;
-      // Extract cityId from the SVG element's data-select-city attribute
-      const cityId = el.getAttribute('data-select-city');
+        left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;
+        border-radius:50%;`;
+      // Extract cityId from the element or its parent group
+      const cityId = el.getAttribute('data-select-city') || el.closest('[data-select-city]')?.getAttribute('data-select-city');
       // Forward clicks on the proxy to the actual game logic
       proxy.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
-        if (cityId && isGuideActive()) {
+        const hasForce = gameState.tutorial && gameState.tutorial.forceAction;
+        if (cityId && (isGuideActive() || hasForce)) {
           if (checkForceAction('clickCity', cityId)) return;
           selectCity(cityId, 'city');
           if (isForceAction('clickCity', cityId)) {
             gameState.activePanel = 'city';
+            clearGuideHighlights();
+            removeGuideOverlay();
+            gameState.tutorial.forceAction = null;
             advanceGuideStep();
           }
         }
@@ -11992,14 +12055,22 @@ const MAX_MAP_ZOOM = 4.2;
       switch (step) {
         case 0: // 高亮桂阳城
           setForceAction('clickCity', 'guiyang');
-          highlightGuideSvgElement('[data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
-          break;
+          focusMapOnCity('guiyang');
+          setTimeout(() => {
+            highlightGuideSvgElement('#cityLayer [data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'top');
+          }, 200);
+          return;
         case 1: // 高亮征兵按钮
           gameState.activePanel = 'city';
           setForceAction('cityOrder', 'recruit');
           highlightGuideElement('[data-city-order="recruit"]', '点击征兵扩充兵力。税率/征粮可通过滑块调整', 'left');
           break;
-        case 2: // 切到军事面板
+        case 2: // 高亮政务点，说明城政消耗规则
+          gameState.activePanel = 'city';
+          setForceAction('clickAp');
+          highlightGuideElement('[data-ap="gov"]', '每个城政命令会消耗一个政务点数', 'left');
+          break;
+        case 3: // 切到军事面板
           gameState.activePanel = 'military';
           render();
           setTimeout(() => {
@@ -12007,11 +12078,15 @@ const MAX_MAP_ZOOM = 4.2;
             highlightGuideElement('[data-tab="military"]', '切换到军事面板，训练郡兵');
           }, 100);
           return; // skip default flow
-        case 3: // 高亮整军按钮
+        case 4: // 高亮整军按钮
           setForceAction('militaryOrder', 'drill');
           highlightGuideElement('[data-military-order="drill"]', '整军提升士气，悬停可查看代价和收益', 'left');
           break;
-        case 4: // 高亮结束回合
+        case 5: // 高亮军令点，说明军事消耗规则
+          setForceAction('clickAp');
+          highlightGuideElement('[data-ap="mil"]', '每个军事整备命令消耗一个军令点数', 'left');
+          break;
+        case 6: // 高亮结束回合
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合，结算本回合命令', 'left');
           break;
@@ -12025,23 +12100,43 @@ const MAX_MAP_ZOOM = 4.2;
     function setupPhase2() {
       const step = getGuideStepIndex(2);
       switch (step) {
-        case 0: // 军事面板 + 详细部署提示
+        case 0: // 高亮部署进攻卡片
           gameState.activePanel = 'military';
           render();
           setTimeout(() => {
-            setForceAction('clickTab', 'military');
-            highlightGuideElement('[data-tab="military"]', '保持军事面板，悬停可查看出兵路线、战术方案和作战目标的代价和收益');
+            highlightGuideElement('[data-military-section="attackPlanner"]', '可以设置出兵城和目标城', 'left');
           }, 100);
           return;
-        case 1: // 刘表tab
+        case 1: // 强制点击进入详细部署
+          setForceAction('startAttackPlan');
+          highlightGuideElement('[data-start-attack-plan="1"]', '点击进入详细部署', 'left');
+          break;
+        case 2: // 高亮详细部署面板（信息展示）
+          highlightGuideElement('.card:has([data-draft-field="tactic"])', '可以设置参战兵力、出兵路线、战术方案和作战目标', 'left');
+          break;
+        case 3: // 强制点击加入本回合军令
+          setForceAction('queueBattle');
+          highlightGuideElement('[data-queue-battle="1"]', '点击加入本回合军令', 'left');
+          break;
+        case 4: // 高亮军令点，说明军事部署消耗
+          setForceAction('clickAp');
+          highlightGuideElement('[data-ap="mil"]', '一次军事部署消耗两个军令点数', 'left');
+          break;
+        case 5: // 刘表tab
           setForceAction('clickTab', 'liubiao');
           highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令', 'top');
           break;
-        case 2: // 刘表庇护HUD
-          setForceAction('clickHudItem', 'protectionHelp');
-          highlightGuideElement('[data-help-key="protectionHelp"]', '点击查看刘表庇护的具体效果', 'left');
+        case 6: // 上报桂阳局势
+          setForceAction('liubiaoAction', 'report');
+          highlightGuideElement('[data-liubiao-action="report"]', '可以查看详情', 'left');
           break;
-        case 3: // 结束回合
+        case 7: // 高亮外交点（信息展示）
+          highlightGuideElement('[data-ap="dip"]', '每个选项消耗1个外交点数', 'left');
+          break;
+        case 8: // 刘表庇护HUD（信息展示）
+          highlightGuideElement('[data-help-key="protectionHelp"]', '可以悬浮查看', 'left');
+          break;
+        case 9: // 结束回合
           setForceAction('endTurn', 'endTurn');
           highlightGuideElement('[data-end-turn="1"]', '点击结束回合以推进时间', 'left');
           break;
@@ -12132,7 +12227,7 @@ const MAX_MAP_ZOOM = 4.2;
       switch (step) {
         case 0: // 高亮豫章城
           setForceAction('clickCity', 'yuzhang');
-          highlightGuideSvgElement('[data-select-city="yuzhang"]', '豫章是孙氏在荆南的门户', 'top');
+          highlightGuideSvgElement('#cityLayer [data-select-city="yuzhang"]', '豫章是孙氏在荆南的门户', 'top');
           break;
         case 1: // 谋略tab
           setForceAction('clickTab', 'scheme');
@@ -12742,13 +12837,20 @@ const MAX_MAP_ZOOM = 4.2;
           const action = tutorialGuideChoice.getAttribute('data-guide-action');
           if (action === 'accept') {
             if (guideId === 'introStart') {
-              // 聚焦桂阳 + 高亮 + 打开城政 + 追踪 inspectGuiyang
-              const center = getRegion('guiyang')?.center || gameState.cities.guiyang;
-              setMapFocusOn(center.x, center.y, 2.55);
+              // 关闭弹窗，聚焦桂阳，高亮地图桂阳区域
+              markGuideSeen('introStart');
+              setTrackedTask('inspectGuiyang');
+              gameState.activeModal = null;
               gameState.selectedCityId = 'guiyang';
               gameState.activePanel = 'city';
+              render();
+              setTimeout(() => {
+                setForceAction('clickCity', 'guiyang');
+                highlightGuideSvgElement('#cityLayer [data-select-city="guiyang"]', '请点击桂阳城，查看人口、驻军与粮食概况', 'right');
+              }, 200);
+            } else {
+              advanceTutorialAfterGuide(guideId);
             }
-            advanceTutorialAfterGuide(guideId);
           }
           return;
         }
@@ -12909,6 +13011,14 @@ const MAX_MAP_ZOOM = 4.2;
             return;
           }
         }
+        const apTarget = event.target.closest('[data-ap]');
+        if (apTarget && isGuideActive() && isForceAction('clickAp')) {
+          clearGuideHighlights();
+          removeGuideOverlay();
+          gameState.tutorial.forceAction = null;
+          advanceGuideStep();
+          return;
+        }
         const cityTarget = event.target.closest('[data-select-city]');
         if (cityTarget) {
           const id = cityTarget.getAttribute('data-select-city');
@@ -12988,7 +13098,14 @@ const MAX_MAP_ZOOM = 4.2;
         if (startAttackPlan) {
           const planner = gameState.militaryPlanner || {};
           if (planner.targetId) {
+            const shouldAdvance = isGuideActive() && isForceAction('startAttackPlan');
             openBattlePlanner(planner.targetId, planner.sourceId, planner.route);
+            if (shouldAdvance) {
+              gameState.tutorial.forceAction = null;
+              clearGuideHighlights();
+              removeGuideOverlay();
+              setTimeout(() => advanceGuideStep(), 60);
+            }
           }
           return;
         }
@@ -13013,6 +13130,12 @@ const MAX_MAP_ZOOM = 4.2;
         }
         if (event.target.closest('[data-queue-battle]')) {
           queueBattle();
+          if (isGuideActive() && isForceAction('queueBattle')) {
+            gameState.tutorial.forceAction = null;
+            clearGuideHighlights();
+            removeGuideOverlay();
+            setTimeout(() => advanceGuideStep(), 60);
+          }
           return;
         }
         if (event.target.closest('[data-cancel-draft]')) {
@@ -13112,7 +13235,14 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const liubiao = event.target.closest('[data-liubiao-action]');
         if (liubiao) {
-          performLiuBiaoAction(liubiao.getAttribute('data-liubiao-action'));
+          const action = liubiao.getAttribute('data-liubiao-action');
+          performLiuBiaoAction(action);
+          if (isGuideActive() && isForceAction('liubiaoAction', action)) {
+            gameState.tutorial.forceAction = null;
+            clearGuideHighlights();
+            removeGuideOverlay();
+            advanceGuideStep();
+          }
           return;
         }
         const defense = event.target.closest('[data-defense-choice]');
