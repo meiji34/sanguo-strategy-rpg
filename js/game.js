@@ -2815,6 +2815,9 @@ const MAX_MAP_ZOOM = 4.2;
         characterDiscovery: {},
         selectedCharacterId: 'liuBiao',
         characterProfileId: null,
+        securityOverview: null,
+        securityOverviewLoadedAt: 0,
+        securityOverviewError: '',
         characterFilter: 'all',
         conversations: [],
         npcInitiativeState: { lastTurnByNpc: {}, recent: [] },
@@ -2893,7 +2896,7 @@ const MAX_MAP_ZOOM = 4.2;
             { id: 'unlockScheme', label: '解锁谋略', completed: false, description: '条件：亲信情报网络 ≥ 30 后，谋略 tab 将解锁。', nextHint: '解锁后先刺探邻城，再考虑进攻。' },
             { id: 'unlockDiplomacy', label: '解锁外交', completed: false, description: '条件：声望 ≥ 10 且刘表庇护 ≥ 60 后，外交 tab 将解锁。', nextHint: '解锁后可结盟、借道、示好或求援。' }
           ],
-          unlockedTabs: ['city', 'military'],
+          unlockedTabs: ['city', 'military', 'security'],
           trackedTaskId: null,
           guideQueue: [],
           guidePhase: 0,
@@ -10756,6 +10759,12 @@ const MAX_MAP_ZOOM = 4.2;
         panel.innerHTML = renderDefensePanel();
         return;
       }
+      if (gameState.activePanel === 'security') {
+        rightTitle.textContent = '天机司';
+        rightTag.textContent = gameState.securityOverview?.riskLevel || '安全中枢';
+        panel.innerHTML = renderSecurityPanel();
+        return;
+      }
       if (gameState.activePanel === 'scheme') {
         rightTitle.textContent = '谋略府';
         rightTag.textContent = '改变战局';
@@ -10816,6 +10825,100 @@ const MAX_MAP_ZOOM = 4.2;
       rightTitle.textContent = cityReachDistance(fallback.id) > 2 ? '远方情报' : '城池详情';
       rightTag.textContent = fallback.name;
       panel.innerHTML = renderCityPanel(fallback);
+    }
+
+    function renderSecurityPanel() {
+      const overview = gameState.securityOverview;
+      const stale = !overview || Date.now() - Number(gameState.securityOverviewLoadedAt || 0) > 60000;
+      if (stale && !gameState.securityOverviewLoading) {
+        refreshSecurityOverview(false);
+      }
+      const riskLevel = overview?.riskLevel || 'unknown';
+      const riskLabel = {
+        low: '低风险',
+        medium: '中风险',
+        high: '高风险',
+        critical: '紧急',
+        unknown: '待同步'
+      }[riskLevel] || riskLevel;
+      const score = Number(overview?.riskScore || 0);
+      const modules = Array.isArray(overview?.modules) ? overview.modules : [];
+      const events = Array.isArray(overview?.recentEvents) ? overview.recentEvents : [];
+      const ai = overview?.counters?.aiRequests || {};
+      const securityCounts = overview?.counters?.securityEvents || {};
+      return `
+        <div class="card security-card">
+          <div class="security-head">
+            <div>
+              <h2>天机司安全中枢</h2>
+              <p>覆盖玩家身份、AI Agent、云端存档和异常行为识别。</p>
+            </div>
+            <button class="ghost-btn" data-refresh-security="1">${gameState.securityOverviewLoading ? '同步中' : '刷新'}</button>
+          </div>
+          ${gameState.securityOverviewError ? `<div class="turn-event-item bad">同步失败：${escapeHtml(gameState.securityOverviewError)}</div>` : ''}
+          <div class="security-score ${escapeHtml(riskLevel)}">
+            <span>风险等级</span>
+            <strong>${escapeHtml(riskLabel)}</strong>
+            <small>${score} / 100｜近 ${overview?.windowHours || 24} 小时</small>
+          </div>
+          <div class="kv-grid">
+            <div class="kv"><span>AI 请求成功</span><strong>${Number(ai.ok || 0)}</strong></div>
+            <div class="kv"><span>AI 请求异常</span><strong>${Number(ai.error || 0)}</strong></div>
+            <div class="kv"><span>高危告警</span><strong>${Number(securityCounts.high || 0) + Number(securityCounts.critical || 0)}</strong></div>
+            <div class="kv"><span>中低告警</span><strong>${Number(securityCounts.medium || 0) + Number(securityCounts.low || 0)}</strong></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>防护模块</h3>
+          <div class="security-module-grid">
+            ${modules.map(module => `
+              <div class="security-module">
+                <strong>${escapeHtml(module.name)}</strong>
+                <span>${escapeHtml(module.status || 'active')}</span>
+                <small>${escapeHtml(module.summary || '')}</small>
+              </div>
+            `).join('') || '<div class="memory-item">正在等待后端安全中枢回报。</div>'}
+          </div>
+        </div>
+        <div class="card">
+          <h3>最近告警</h3>
+          ${events.map(event => `
+            <div class="security-event ${escapeHtml(event.severity)}">
+              <strong>${escapeHtml(securityEventTitle(event))}</strong>
+              <small>${escapeHtml(formatSecurityTime(event.createdAt))}｜${escapeHtml(event.route || 'system')}</small>
+              <p>${escapeHtml(securityEventDetail(event))}</p>
+            </div>
+          `).join('') || '<div class="memory-item">暂无安全告警。当前局势平稳。</div>'}
+        </div>
+      `;
+    }
+
+    function securityEventTitle(event) {
+      const severity = { low: '低', medium: '中', high: '高', critical: '危' }[event.severity] || event.severity;
+      const category = {
+        ai_agent: 'AI Agent',
+        save_integrity: '存档校验',
+        rate_limit: '频率控制',
+        system: '系统'
+      }[event.category] || event.category;
+      return '[' + severity + '] ' + category + '：' + (event.action || 'event');
+    }
+
+    function securityEventDetail(event) {
+      const detail = event.detail || {};
+      if (Array.isArray(detail.findings) && detail.findings.length) {
+        return detail.findings.map(item => item.action).join('、');
+      }
+      if (detail.message) return detail.message;
+      const keys = Object.keys(detail).slice(0, 4);
+      return keys.length ? keys.map(key => key + '=' + JSON.stringify(detail[key])).join('；') : '已记录并纳入风险评分。';
+    }
+
+    function formatSecurityTime(value) {
+      if (!value) return '未知时间';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
     }
 
     function visibleCharacters() {
@@ -14475,6 +14578,27 @@ const MAX_MAP_ZOOM = 4.2;
       return loadFromStorage(show);
     }
 
+    async function refreshSecurityOverview(showToastOnSuccess = true) {
+      if (gameState.securityOverviewLoading) return gameState.securityOverview;
+      gameState.securityOverviewLoading = true;
+      gameState.securityOverviewError = '';
+      try {
+        const overview = await backendFetch('/api/security/overview');
+        gameState.securityOverview = overview;
+        gameState.securityOverviewLoadedAt = Date.now();
+        if (showToastOnSuccess) toast('天机司已同步安全态势');
+        return overview;
+      } catch (error) {
+        console.warn('Security overview failed:', error);
+        gameState.securityOverviewError = error.message || 'UNKNOWN_ERROR';
+        if (showToastOnSuccess) toast('天机司同步失败');
+        return null;
+      } finally {
+        gameState.securityOverviewLoading = false;
+        if (gameState.activePanel === 'security') renderRightPanel();
+      }
+    }
+
     function compactRemoteDialogueContext(context) {
       const npc = context.npc || {};
       return {
@@ -15375,7 +15499,7 @@ const MAX_MAP_ZOOM = 4.2;
             if (!existingIds.has(task.id)) loaded.tutorial.tasks.push(task);
           });
         }
-        if (!Array.isArray(loaded.tutorial.unlockedTabs)) {
+      if (!Array.isArray(loaded.tutorial.unlockedTabs)) {
           loaded.tutorial.unlockedTabs = structuredClone(fresh.tutorial.unlockedTabs);
         }
         if (loaded.tutorial.trackedTaskId === undefined) loaded.tutorial.trackedTaskId = null;
@@ -15384,6 +15508,9 @@ const MAX_MAP_ZOOM = 4.2;
       }
       if (loaded.tutorial.unlockedTabs.includes('characters') && !loaded.tutorial.unlockedTabs.includes('appointments')) {
         loaded.tutorial.unlockedTabs.push('appointments');
+      }
+      if (!loaded.tutorial.unlockedTabs.includes('security')) {
+        loaded.tutorial.unlockedTabs.push('security');
       }
       let normalized = Object.assign(fresh, loaded, {
         factions: FACTIONS,
@@ -17301,6 +17428,10 @@ const MAX_MAP_ZOOM = 4.2;
         const map = event.target.closest('[data-map]');
         if (map) {
           focusMap(map.getAttribute('data-map'));
+          return;
+        }
+        if (event.target.closest('[data-refresh-security]')) {
+          refreshSecurityOverview(true);
           return;
         }
         const tab = event.target.closest('[data-tab]');

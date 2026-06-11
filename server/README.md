@@ -22,7 +22,10 @@ dependencies to install for the first backend prototype.
 - `GET /api/saves/:slot`
 - `PUT /api/saves/:slot`
 - `DELETE /api/saves/:slot`
+- `GET /api/security/overview`
 - `POST /api/ai/chat`
 - `POST /api/ai/dialogue`
+- `POST /api/ai/content`
 
 All save and AI endpoints use `Authorization: Bearer <token>`.
+Security overview also requires `Authorization: Bearer <token>`.

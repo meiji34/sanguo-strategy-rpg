@@ -21,7 +21,10 @@ const config = {
   deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
   deepseekThinking: process.env.DEEPSEEK_THINKING || 'disabled',
   deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 12000),
-  maxBodyBytes: Number(process.env.MAX_BODY_BYTES || 12 * 1024 * 1024)
+  maxBodyBytes: Number(process.env.MAX_BODY_BYTES || 12 * 1024 * 1024),
+  authRateLimit: Number(process.env.AUTH_RATE_LIMIT || 10),
+  aiRateLimit: Number(process.env.AI_RATE_LIMIT || 30),
+  saveRateLimit: Number(process.env.SAVE_RATE_LIMIT || 40)
 };
 
 mkdirSync(path.dirname(config.databasePath), { recursive: true });
@@ -77,6 +80,19 @@ db.exec(`
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS security_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    severity TEXT NOT NULL,
+    category TEXT NOT NULL,
+    action TEXT NOT NULL,
+    route TEXT,
+    ip_hash TEXT,
+    detail_json TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
 `);
 
 const statements = {
@@ -108,12 +124,38 @@ const statements = {
   logAiRequest: db.prepare(`
     INSERT INTO ai_requests (user_id, kind, model, status, latency_ms, request_json, response_json, error, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  logSecurityEvent: db.prepare(`
+    INSERT INTO security_events (user_id, severity, category, action, route, ip_hash, detail_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  listSecurityEvents: db.prepare(`
+    SELECT id, severity, category, action, route, detail_json, created_at
+    FROM security_events
+    WHERE user_id = ? OR user_id IS NULL
+    ORDER BY id DESC
+    LIMIT ?
+  `),
+  countSecurityEventsSince: db.prepare(`
+    SELECT severity, COUNT(*) AS count
+    FROM security_events
+    WHERE (user_id = ? OR user_id IS NULL) AND created_at >= ?
+    GROUP BY severity
+  `),
+  countAiRequestsSince: db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM ai_requests
+    WHERE user_id = ? AND created_at >= ?
+    GROUP BY status
   `)
 };
+
+const rateBuckets = new Map();
 
 const server = createServer(async (request, response) => {
   try {
     setCorsHeaders(response);
+    setSecurityHeaders(response);
     if (request.method === 'OPTIONS') {
       response.writeHead(204);
       response.end();
@@ -143,6 +185,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (route === '/api/auth/guest' && request.method === 'POST') {
+      if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
       const deviceId = cleanTokenPart(body.deviceId || randomBytes(12).toString('hex'));
       const username = `guest:${deviceId}`;
@@ -158,6 +201,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (route === '/api/auth/register' && request.method === 'POST') {
+      if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
       const username = cleanUsername(body.username);
       const password = String(body.password || '');
@@ -178,6 +222,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (route === '/api/auth/login' && request.method === 'POST') {
+      if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
       const username = cleanUsername(body.username);
       const password = String(body.password || '');
@@ -194,6 +239,13 @@ const server = createServer(async (request, response) => {
       const auth = authenticate(request);
       if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
       sendJson(response, 200, { user: publicUser(auth.user) });
+      return;
+    }
+
+    if (route === '/api/security/overview' && request.method === 'GET') {
+      const auth = authenticate(request);
+      if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
+      sendJson(response, 200, buildSecurityOverview(auth.user.id));
       return;
     }
 
@@ -234,9 +286,36 @@ const server = createServer(async (request, response) => {
       }
 
       if (request.method === 'PUT') {
+        if (!checkRateLimit(request, response, `save:${auth.user.id}`, config.saveRateLimit, 60_000, 'save_rate_limit', route, auth.user.id)) return;
         const body = await readJsonBody(request);
         if (!body.saveData || typeof body.saveData !== 'object') {
           return sendJson(response, 400, { error: 'SAVE_DATA_REQUIRED' });
+        }
+        const previous = statements.getSave.get(auth.user.id, slot);
+        const validation = validateSaveData(body.saveData, previous ? parseJsonOrNull(previous.save_json) : null);
+        if (validation.events.length) {
+          validation.events.forEach(event => logSecurityEvent({
+            request,
+            userId: auth.user.id,
+            severity: event.severity,
+            category: 'save_integrity',
+            action: event.action,
+            route,
+            detail: event.detail
+          }));
+        }
+        if (validation.blocked) {
+          return sendJson(response, 400, {
+            error: 'SAVE_SECURITY_VALIDATION_FAILED',
+            security: {
+              blocked: true,
+              findings: validation.events.map(event => ({
+                severity: event.severity,
+                action: event.action,
+                detail: event.detail
+              }))
+            }
+          });
         }
         const now = nowIso();
         const name = safeString(body.name, 80) || 'Default Save';
@@ -259,9 +338,18 @@ const server = createServer(async (request, response) => {
     if (route === '/api/ai/chat' && request.method === 'POST') {
       const auth = authenticate(request);
       if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
+      if (!checkRateLimit(request, response, `ai:${auth.user.id}`, config.aiRateLimit, 60_000, 'ai_rate_limit', route, auth.user.id)) return;
       const body = await readJsonBody(request);
       if (!Array.isArray(body.messages)) {
         return sendJson(response, 400, { error: 'MESSAGES_REQUIRED' });
+      }
+      const safety = inspectAiPayload(body);
+      if (safety.blocked) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_blocked', route, detail: safety });
+        return sendJson(response, 400, { error: 'AI_SECURITY_BLOCKED', security: safety });
+      }
+      if (safety.riskScore > 0) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_flagged', route, detail: safety });
       }
       const payload = {
         model: safeString(body.model, 80) || config.deepseekModel,
@@ -281,7 +369,16 @@ const server = createServer(async (request, response) => {
     if (route === '/api/ai/dialogue' && request.method === 'POST') {
       const auth = authenticate(request);
       if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
+      if (!checkRateLimit(request, response, `ai:${auth.user.id}`, config.aiRateLimit, 60_000, 'ai_rate_limit', route, auth.user.id)) return;
       const body = await readJsonBody(request);
+      const safety = inspectAiPayload(body);
+      if (safety.blocked) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_blocked', route, detail: safety });
+        return sendJson(response, 400, { error: 'AI_SECURITY_BLOCKED', security: safety });
+      }
+      if (safety.riskScore > 0) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_flagged', route, detail: safety });
+      }
       const dialogue = await generateDialogueWithDeepSeek(auth.user.id, body);
       sendJson(response, 200, { dialogue });
       return;
@@ -290,7 +387,16 @@ const server = createServer(async (request, response) => {
     if (route === '/api/ai/content' && request.method === 'POST') {
       const auth = authenticate(request);
       if (!auth) return sendJson(response, 401, { error: 'UNAUTHORIZED' });
+      if (!checkRateLimit(request, response, `ai:${auth.user.id}`, config.aiRateLimit, 60_000, 'ai_rate_limit', route, auth.user.id)) return;
       const body = await readJsonBody(request);
+      const safety = inspectAiPayload(body);
+      if (safety.blocked) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_blocked', route, detail: safety });
+        return sendJson(response, 400, { error: 'AI_SECURITY_BLOCKED', security: safety });
+      }
+      if (safety.riskScore > 0) {
+        logSecurityEvent({ request, userId: auth.user.id, severity: safety.severity, category: 'ai_agent', action: 'prompt_flagged', route, detail: safety });
+      }
       const text = await generateContentWithDeepSeek(auth.user.id, body.context);
       sendJson(response, 200, { text });
       return;
@@ -330,6 +436,12 @@ function setCorsHeaders(response) {
   response.setHeader('Access-Control-Allow-Origin', config.corsOrigin);
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+function setSecurityHeaders(response) {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 }
 
 function serveIndex(response) {
@@ -391,6 +503,247 @@ function sendJson(response, status, payload) {
     'Content-Length': Buffer.byteLength(body)
   });
   response.end(body);
+}
+
+function clientIpHash(request) {
+  const forwarded = String(request.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const raw = forwarded || request.socket.remoteAddress || 'unknown';
+  return sha256(`ip:${raw}`).slice(0, 32);
+}
+
+function checkRateLimit(request, response, key, limit, windowMs, action, route, userId = null) {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key) || { start: now, count: 0 };
+  if (now - bucket.start >= windowMs) {
+    bucket.start = now;
+    bucket.count = 0;
+  }
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (bucket.count <= limit) return true;
+  logSecurityEvent({
+    request,
+    userId,
+    severity: 'high',
+    category: 'rate_limit',
+    action,
+    route,
+    detail: { limit, windowMs, count: bucket.count }
+  });
+  sendJson(response, 429, {
+    error: 'RATE_LIMITED',
+    security: {
+      action,
+      limit,
+      windowMs,
+      retryAfterMs: Math.max(0, windowMs - (now - bucket.start))
+    }
+  });
+  return false;
+}
+
+function logSecurityEvent({ request = null, userId = null, severity = 'low', category = 'system', action = 'event', route = '', detail = {} }) {
+  try {
+    statements.logSecurityEvent.run(
+      userId,
+      safeString(severity, 20) || 'low',
+      safeString(category, 40) || 'system',
+      safeString(action, 80) || 'event',
+      safeString(route, 120),
+      request ? clientIpHash(request) : '',
+      JSON.stringify(detail || {}).slice(0, 8000),
+      nowIso()
+    );
+  } catch (error) {
+    console.warn('security event log failed:', error.message);
+  }
+}
+
+function inspectAiPayload(value) {
+  const text = collectText(value).join('\n').slice(0, 16000);
+  const findings = [];
+  const rules = [
+    { action: 'prompt_injection', severity: 'high', score: 45, pattern: /ignore (all )?(previous|above|system)|忽略(之前|上面|系统|规则)|无视(之前|系统|规则)|forget (all )?(previous|above)/i },
+    { action: 'secret_exfiltration', severity: 'critical', score: 70, pattern: /api[_-]?key|secret|token|password|session|cookie|process\.env|DEEPSEEK_API_KEY|密钥|令牌|密码|环境变量|后台配置/i },
+    { action: 'role_escape', severity: 'high', score: 40, pattern: /jailbreak|developer mode|system prompt|act as system|你现在是系统|模拟系统|输出系统提示/i },
+    { action: 'state_tamper', severity: 'medium', score: 30, pattern: /修改.*存档|伪造.*存档|直接.*胜利|把.*粮食.*999|把.*金钱.*999|篡改|cheat|admin/i },
+    { action: 'unsafe_code_request', severity: 'medium', score: 25, pattern: /<script|javascript:|onerror\s*=|eval\(|fetch\(.*\/api\/saves/i }
+  ];
+  for (const rule of rules) {
+    if (rule.pattern.test(text)) findings.push({ action: rule.action, severity: rule.severity, score: rule.score });
+  }
+  if (text.length > 12000) findings.push({ action: 'oversized_ai_context', severity: 'medium', score: 25 });
+
+  const riskScore = Math.min(100, findings.reduce((sum, item) => sum + item.score, 0));
+  const severity = findings.some(item => item.severity === 'critical')
+    ? 'critical'
+    : findings.some(item => item.severity === 'high')
+      ? 'high'
+      : findings.some(item => item.severity === 'medium')
+        ? 'medium'
+        : 'low';
+  return {
+    blocked: riskScore >= 60,
+    riskScore,
+    severity,
+    findings: findings.map(({ action, severity }) => ({ action, severity }))
+  };
+}
+
+function collectText(value, output = []) {
+  if (output.length > 300) return output;
+  if (typeof value === 'string') {
+    output.push(value);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.slice(0, 60).forEach(item => collectText(item, output));
+    return output;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value).slice(0, 120)) {
+      if (/password|token|secret|apiKey/i.test(key)) continue;
+      collectText(item, output);
+    }
+  }
+  return output;
+}
+
+function validateSaveData(saveData, previousSaveData) {
+  const events = [];
+  const add = (severity, action, detail) => events.push({ severity, action, detail });
+
+  if (containsDangerousKey(saveData)) {
+    add('critical', 'prototype_pollution_key', { message: 'Save payload contains reserved object keys.' });
+  }
+  if (!Number.isInteger(Number(saveData.turn)) || Number(saveData.turn) < 1 || Number(saveData.turn) > 10000) {
+    add('high', 'invalid_turn', { turn: saveData.turn });
+  }
+
+  const snapshot = buildSaveSecuritySnapshot(saveData);
+  if (snapshot.invalidNumberCount > 0) {
+    add('critical', 'non_finite_number', { invalidNumberCount: snapshot.invalidNumberCount });
+  }
+  if (snapshot.money > 5_000_000 || snapshot.food > 20_000_000 || snapshot.totalTroops > 2_000_000) {
+    add('critical', 'resource_ceiling_exceeded', {
+      money: snapshot.money,
+      food: snapshot.food,
+      totalTroops: snapshot.totalTroops
+    });
+  }
+  if (snapshot.cityCount > 180 || snapshot.characterCount > 260) {
+    add('high', 'entity_count_anomaly', {
+      cityCount: snapshot.cityCount,
+      characterCount: snapshot.characterCount
+    });
+  }
+
+  if (previousSaveData) {
+    const previous = buildSaveSecuritySnapshot(previousSaveData);
+    const turnDelta = Math.max(1, snapshot.turn - previous.turn);
+    const moneyDelta = snapshot.money - previous.money;
+    const foodDelta = snapshot.food - previous.food;
+    const troopDelta = snapshot.totalTroops - previous.totalTroops;
+    if (moneyDelta > 600_000 * turnDelta) add('medium', 'money_jump', { previous: previous.money, current: snapshot.money, turnDelta });
+    if (foodDelta > 1_500_000 * turnDelta) add('medium', 'food_jump', { previous: previous.food, current: snapshot.food, turnDelta });
+    if (troopDelta > 120_000 * turnDelta) add('high', 'troop_jump', { previous: previous.totalTroops, current: snapshot.totalTroops, turnDelta });
+    if (snapshot.turn + 3 < previous.turn) add('medium', 'turn_rollback', { previous: previous.turn, current: snapshot.turn });
+  }
+
+  return {
+    blocked: events.some(event => event.severity === 'critical'),
+    events
+  };
+}
+
+function containsDangerousKey(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 10) return false;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') return true;
+    if (containsDangerousKey(item, depth + 1)) return true;
+  }
+  return false;
+}
+
+function buildSaveSecuritySnapshot(saveData) {
+  const numbers = [];
+  collectNumbers(saveData, numbers);
+  const invalidNumberCount = numbers.filter(value => !Number.isFinite(value)).length;
+  const cities = saveData?.cities && typeof saveData.cities === 'object' ? Object.values(saveData.cities) : [];
+  const money = Number(saveData?.player?.money || 0) + cities.reduce((sum, city) => sum + Number(city?.money || 0), 0);
+  const food = Number(saveData?.player?.food || 0) + cities.reduce((sum, city) => sum + Number(city?.food || 0), 0);
+  const totalTroops = cities.reduce((sum, city) => sum + troopTotal(city?.garrison), 0)
+    + (Array.isArray(saveData?.campaigns) ? saveData.campaigns.reduce((sum, campaign) => sum + troopTotal(campaign?.army), 0) : 0);
+  return {
+    turn: Number(saveData?.turn || 0),
+    money,
+    food,
+    totalTroops,
+    cityCount: cities.length,
+    characterCount: saveData?.characterRoster && typeof saveData.characterRoster === 'object' ? Object.keys(saveData.characterRoster).length : 0,
+    invalidNumberCount
+  };
+}
+
+function collectNumbers(value, output, depth = 0) {
+  if (depth > 12 || output.length > 5000) return;
+  if (typeof value === 'number') {
+    output.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectNumbers(item, output, depth + 1));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(item => collectNumbers(item, output, depth + 1));
+  }
+}
+
+function troopTotal(army) {
+  if (!army || typeof army !== 'object') return 0;
+  return ['infantry', 'archers', 'cavalry', 'navy', 'siege'].reduce((sum, key) => sum + Math.max(0, Number(army[key] || 0)), 0);
+}
+
+function buildSecurityOverview(userId) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const severityRows = statements.countSecurityEventsSince.all(userId, since);
+  const aiRows = statements.countAiRequestsSince.all(userId, since);
+  const severityCounts = Object.fromEntries(severityRows.map(row => [row.severity, row.count]));
+  const aiCounts = Object.fromEntries(aiRows.map(row => [row.status, row.count]));
+  const events = statements.listSecurityEvents.all(userId, 12).map(row => ({
+    id: row.id,
+    severity: row.severity,
+    category: row.category,
+    action: row.action,
+    route: row.route,
+    detail: parseJsonOrNull(row.detail_json) || {},
+    createdAt: row.created_at
+  }));
+  const riskScore = Math.min(100,
+    Number(severityCounts.critical || 0) * 35 +
+    Number(severityCounts.high || 0) * 20 +
+    Number(severityCounts.medium || 0) * 10 +
+    Number(severityCounts.low || 0) * 3
+  );
+  return {
+    enabled: true,
+    title: '天机司安全中枢',
+    riskScore,
+    riskLevel: riskScore >= 70 ? 'critical' : riskScore >= 40 ? 'high' : riskScore >= 15 ? 'medium' : 'low',
+    windowHours: 24,
+    counters: {
+      securityEvents: severityCounts,
+      aiRequests: aiCounts
+    },
+    modules: [
+      { id: 'auth', name: '玩家身份鉴权', status: 'active', summary: 'Bearer session、密码哈希、登录限流' },
+      { id: 'aiAgent', name: 'Agent 行为安全', status: 'active', summary: '提示词注入、密钥窃取、越权改档检测' },
+      { id: 'saveIntegrity', name: '数据交互校验', status: 'active', summary: '云端存档结构、资源上限和异常跃迁检测' },
+      { id: 'ioa', name: '异常行为识别', status: 'active', summary: 'AI、登录、存档频率与风险事件汇总' }
+    ],
+    recentEvents: events
+  };
 }
 
 async function readJsonBody(request) {
