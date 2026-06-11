@@ -625,12 +625,87 @@ const MAX_MAP_ZOOM = 4.2;
       return { unlocked: true, req, reason: '已解锁' };
     }
 
+    function stableSchemeHash(text) {
+      let hash = 2166136261;
+      for (const ch of String(text || '')) {
+        hash ^= ch.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function getCharacterSpecialSchemes(character) {
+      const schemes = uniqueTextList(character?.specialSchemes || []);
+      if (schemes.length) return schemes;
+      if (!character || !isExternalCharacter(character)) return [];
+      const suffix = character.type === '武将' ? '军略' : character.type === '医者' ? '医策' : character.type === '名士' ? '清议' : character.type === '政务' ? '政略' : '奇策';
+      return [character.name + suffix];
+    }
+
+    function inferSpecialSchemeArchetype(character, scheme) {
+      const text = [character?.name, character?.role, character?.type, character?.summary, scheme, ...(character?.values || [])].filter(Boolean).join('、');
+      const stats = character?.stats || {};
+      if (/医|药|麻沸|五禽|救/.test(text)) return 'heal';
+      if (/商|财|粮|兵粮|助军|求援|倾财/.test(text)) return 'logistics';
+      if (/荐|识|评|月旦|水镜|举贤|人才|诸葛|卧龙|凤雏/.test(text)) return 'talent';
+      if (/外交|说服|奔走|结盟|密谈|号令|谏|忠谏/.test(text)) return 'diplomacy';
+      if (/士族|豪强|治|安民|郡吏|屯田|法度|政/.test(text) || character?.type === '政务') return 'govern';
+      if (/守|坚|防|固|护主|不退|孤城/.test(text)) return 'defense';
+      if (/骑|奔袭|冲锋|长驱|白马|突阵|奇袭|夜袭|破阵|先登|万人敌|怒吼|威震/.test(text) || Number(stats.command || 0) >= 82) return 'assault';
+      if (/谋|计|火|伏|断|扰|间|乱|奇|遁甲|空城/.test(text) || Number(stats.strategy || 0) >= 78) return 'scheme';
+      if (character?.type === '武将') return 'command';
+      return 'influence';
+    }
+
+    function specialSchemeProfile(character, scheme) {
+      const hash = stableSchemeHash((character?.id || character?.name || '') + ':' + scheme);
+      const archetype = inferSpecialSchemeArchetype(character, scheme);
+      const variants = {
+        assault: ['破阵', '夺气', '突进', '震慑'],
+        command: ['整军', '压阵', '号令', '持重'],
+        defense: ['固守', '护援', '拒敌', '收拢'],
+        scheme: ['扰乱', '识破', '断谋', '设伏'],
+        logistics: ['筹粮', '输财', '补给', '商路'],
+        diplomacy: ['说项', '缓敌', '结好', '正名'],
+        govern: ['安民', '清议', '整饬', '稳乡'],
+        talent: ['荐才', '识人', '扬名', '引线'],
+        heal: ['疗伤', '复军', '避损', '安营'],
+        influence: ['造势', '观望', '牵线', '试探']
+      };
+      const variantList = variants[archetype] || variants.influence;
+      const variant = variantList[hash % variantList.length];
+      const scale = 1 + ((hash >>> 3) % 5) * 0.08;
+      const risk = ['低', '中', '高'][(hash >>> 8) % 3];
+      const cooldown = 3 + ((hash >>> 11) % 3);
+      return { archetype, variant, scale, risk, cooldown, hash };
+    }
+
+    function specialSchemePreview(character, scheme) {
+      const profile = specialSchemeProfile(character, scheme);
+      const intro = {
+        assault: '制造战场突破，压低敌军士气或守备。',
+        command: '改善己方军令、士气与后续战役稳定性。',
+        defense: '用于守城、救援或降低战役损耗。',
+        scheme: '刺探、扰乱或破坏目标城的作战准备。',
+        logistics: '补充粮草府库，支撑远征和围城。',
+        diplomacy: '改善关系、降低敌意或提升名义正当性。',
+        govern: '稳定地方、降低疑心，改善民心治安。',
+        talent: '提高声望与情报，推动人才和线索出现。',
+        heal: '恢复士气与伤兵，减少战后损耗。',
+        influence: '制造地方影响，为后续交涉或谋略铺路。'
+      }[profile.archetype] || '根据人物特长改变当前局势。';
+      return character.name + '｜' + scheme + '<br>' +
+        '<span style="color:var(--good)">效果：' + intro + '</span><br>' +
+        '<span style="color:var(--warn)">风格：' + profile.variant + '｜风险：' + profile.risk + '｜冷却参考：' + profile.cooldown + ' 回合</span><br>' +
+        '消耗 1 谋略点。成功率受人物属性、信任、尊重、情报网络和目标治安影响。';
+    }
+
     function characterSpecialSchemeEntries(options = {}) {
       const includeLocked = !!options.includeLocked;
       return Object.values(gameState.characterRoster || {})
-        .filter(character => character && Array.isArray(character.specialSchemes) && character.specialSchemes.length)
+        .filter(character => character && getCharacterSpecialSchemes(character).length)
         .filter(character => includeLocked || specialSchemeUnlockState(character).unlocked)
-        .flatMap(character => uniqueTextList(character.specialSchemes).map((scheme, index) => ({
+        .flatMap(character => getCharacterSpecialSchemes(character).map((scheme, index) => ({
           character,
           scheme,
           index,
@@ -639,7 +714,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function renderCharacterSpecialSchemeList(character) {
-      const schemes = uniqueTextList(character?.specialSchemes || []);
+      const schemes = getCharacterSpecialSchemes(character);
       if (!schemes.length) return '<p>尚未显露特殊谋略。</p>';
       const state = specialSchemeUnlockState(character);
       return `
@@ -647,7 +722,7 @@ const MAX_MAP_ZOOM = 4.2;
           ${schemes.map(scheme => `
             <div class="turn-event-item">
               <strong>${escapeHtml(scheme)}</strong>
-              <p class="muted">${state.unlocked ? '已解锁：可在谋略页下令使用。' : state.reason + '｜当前信任 ' + Number(character.trustPlayer || 0) + '/' + state.req.trust + '，尊重 ' + Number(character.respectPlayer || 0) + '/' + state.req.respect}</p>
+              <p class="muted">${state.unlocked ? specialSchemePreview(character, scheme) : state.reason + '｜当前信任 ' + Number(character.trustPlayer || 0) + '/' + state.req.trust + '，尊重 ' + Number(character.respectPlayer || 0) + '/' + state.req.respect}</p>
             </div>
           `).join('')}
         </div>
@@ -663,7 +738,7 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="card">
           <h3>人物特殊谋略</h3>
           <div class="button-grid">
-            ${entries.map(entry => `<button data-scheme-action="specialCharacterScheme" data-target="${city.id}" data-scheme-character="${entry.character.id}" data-special-scheme="${escapeHtml(entry.scheme)}" ${canReach ? '' : 'disabled'} data-help="${escapeHtml(entry.character.name + '提供的特殊谋略：' + entry.scheme + '<br>消耗 1 谋略点。效果受人物谋略、信任、尊重和当前情报网络影响。')}">${escapeHtml(entry.scheme)}｜${escapeHtml(entry.character.name)}</button>`).join('')}
+            ${entries.map(entry => `<button data-scheme-action="specialCharacterScheme" data-target="${city.id}" data-scheme-character="${entry.character.id}" data-special-scheme="${escapeHtml(entry.scheme)}" ${canReach ? '' : 'disabled'} data-help="${escapeHtml(specialSchemePreview(entry.character, entry.scheme))}">${escapeHtml(entry.scheme)}｜${escapeHtml(entry.character.name)}</button>`).join('')}
           </div>
         </div>
       `;
@@ -4744,6 +4819,25 @@ const MAX_MAP_ZOOM = 4.2;
         addTroops(target.garrison, campaign.army);
         reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: '战报：' + target.name + '陷落，旗帜已经更换。' });
         if (oldController === 'player' && campaign.faction !== 'player') playCityLostEffect(target.id);
+      } else if (win) {
+        addTroops(gameState.cities[campaign.source].garrison, campaign.army);
+        if (campaign.objective === 'contain') {
+          target.disrupted = clamp((target.disrupted || 0) + 18, 0, 100);
+          target.morale = clamp(target.morale - 8, 0, 100);
+          reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: '战报：' + target.name + '被成功牵制，守军调动受阻，士气继续下滑。' });
+        } else if (campaign.objective === 'exhaust') {
+          const extraLoss = Math.max(60, Math.round(realTroops(target.garrison) * 0.16));
+          removeTroops(target.garrison, extraLoss);
+          target.defense = clamp(target.defense - 8, 0, 100);
+          reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: '战报：' + target.name + '守军被大量消耗，城防也遭到破坏。' });
+        } else if (campaign.objective === 'supply') {
+          target.food = Math.max(0, target.food - Math.max(260, Math.round(target.food * 0.24)));
+          target.disrupted = clamp((target.disrupted || 0) + 24, 0, 100);
+          target.morale = clamp(target.morale - 6, 0, 100);
+          reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: '战报：' + target.name + '粮道被切断，城中粮草与军心同时受挫。' });
+        } else {
+          reports.push({ tone: campaign.faction === 'player' ? 'good' : 'bad', text: '战报：' + target.name + '城外战斗得胜，攻方按既定目标收兵。' });
+        }
       } else {
         addTroops(gameState.cities[campaign.source].garrison, campaign.army);
         reports.push({ tone: campaign.faction === 'player' ? 'warn' : 'good', text: '战报：' + target.name + '守住城池，攻方收兵。' });
@@ -5705,6 +5799,10 @@ const MAX_MAP_ZOOM = 4.2;
         root.querySelectorAll?.('.delta-item').forEach((item, index) => {
           setTimeout(() => animateDeltaItem(item, item.classList.contains('bad') ? 'bad' : 'good'), index * 60);
         });
+        return;
+      }
+      if (modal.type === 'portraitView') {
+        root.innerHTML = renderPortraitViewModal(gameState.characterRoster?.[modal.characterId]);
         return;
       }
       if (modal.type === 'dialogue') {
@@ -6749,11 +6847,11 @@ const MAX_MAP_ZOOM = 4.2;
         ['当前目标', gameState.currentGoal],
         ['粮草', fmt(totals.food)],
         ['府库', fmt(totals.money)],
-        ['刘表庇护', gameState.player.protection + ' / 100'],
-        ['士族疑心', gameState.characters.jingnanGentry.suspicion + ' / 100']
+        ['刘表庇护', gameState.player.protection + ' / 100', 'protectionHelp'],
+        ['士族疑心', gameState.characters.jingnanGentry.suspicion + ' / 100', 'gentrySuspicionHelp']
       ];
       document.getElementById('hud').innerHTML = items.map(item => `
-        <div class="hud-item"><span>${item[0]}</span><strong>${item[1]}</strong></div>
+        <div class="hud-item"${item[2] ? ' data-help-key="' + item[2] + '"' : ''}><span>${item[0]}</span><strong>${item[1]}</strong></div>
       `).join('');
     }
 
@@ -6924,8 +7022,15 @@ const MAX_MAP_ZOOM = 4.2;
       return result.slice(0, 2);
     }
 
+    function metricHelpKey(label) {
+      if (label === '刘表庇护') return 'protectionHelp';
+      if (label === '士族疑心') return 'gentrySuspicionHelp';
+      return '';
+    }
+
     function metric(label, value) {
-      return `<div class="metric"><span>${label}</span><div class="meter"><i style="--value:${clamp(value, 0, 100)}%"></i></div><strong>${Math.round(value)}</strong></div>`;
+      const helpKey = metricHelpKey(label);
+      return `<div class="metric"${helpKey ? ' data-help-key="' + helpKey + '"' : ''}><span>${label}</span><div class="meter"><i style="--value:${clamp(value, 0, 100)}%"></i></div><strong>${Math.round(value)}</strong></div>`;
     }
 
     function apBox(label, value, attr) {
@@ -7396,7 +7501,7 @@ const MAX_MAP_ZOOM = 4.2;
       ].filter(Boolean).join(' ');
       return `
         <article class="${classes}" data-open-character-profile="${character.id}" data-select-character="${character.id}" tabindex="0" role="button">
-          ${renderCharacterPortrait(character)}
+          ${renderCharacterPortrait(character, 'card')}
           <div class="character-card-body">
             <strong>${escapeHtml(character.name)}</strong>
             <small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small>
@@ -7406,15 +7511,60 @@ const MAX_MAP_ZOOM = 4.2;
       `;
     }
 
-    function renderCharacterPortrait(character) {
+    function renderCharacterPortrait(character, context = 'card') {
+      const interactive = context === 'detail';
+      const label = '查看画像';
+      const baseClass = `character-portrait${character.portraitUrl ? ' has-image' : ''}${interactive ? ' portrait-interactive' : ''}`;
+      const attrs = interactive
+        ? `class="${baseClass}" data-open-character-portrait="${escapeHtml(character.id)}" aria-label="查看${escapeHtml(character.name)}画像" type="button"`
+        : `class="${baseClass}" aria-hidden="true"`;
       if (character.portraitUrl) {
+        const img = `<img src="${escapeHtml(character.portraitUrl)}" alt="${escapeHtml(character.name)}画像" loading="lazy" onerror="this.closest('.character-portrait')?.classList.add('image-error')">`;
+        if (!interactive) {
+          return `<div ${attrs}>${img}</div>`;
+        }
         return `
-          <div class="character-portrait has-image">
-            <img src="${escapeHtml(character.portraitUrl)}" alt="${escapeHtml(character.name)}画像" loading="lazy">
-          </div>
+          <button ${attrs}>
+            ${img}
+            <span class="portrait-open-label">${label}</span>
+          </button>
         `;
       }
-      return `<div class="character-portrait">${escapeHtml(character.portraitPlaceholder)}</div>`;
+      if (!interactive) return `<div ${attrs}><span>${escapeHtml(character.portraitPlaceholder)}</span></div>`;
+      return `<button ${attrs}><span>${escapeHtml(character.portraitPlaceholder)}</span><span class="portrait-open-label">${label}</span></button>`;
+    }
+
+    function renderPortraitViewModal(character) {
+      if (!character) return '<div class="game-modal"><div class="modal-head"><h2>画像</h2><button class="ghost-btn" data-close-modal="1">关闭</button></div><p class="muted">人物不存在。</p></div>';
+      const hasImage = !!character.portraitUrl;
+      return `
+        <div class="game-modal portrait-view-modal">
+          <div class="modal-head">
+            <div>
+              <h2>${escapeHtml(character.name)}｜画像</h2>
+              <span class="tag">${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.role)}｜${escapeHtml(character.rarity)}</span>
+            </div>
+            <button class="ghost-btn" data-close-modal="1">关闭</button>
+          </div>
+          <div class="portrait-view-layout">
+            <div class="portrait-view-stage ${hasImage ? '' : 'portrait-empty'}">
+              ${hasImage
+                ? `<img src="${escapeHtml(character.portraitUrl)}" alt="${escapeHtml(character.name)}画像" onerror="this.remove(); this.closest('.portrait-view-stage')?.classList.add('portrait-empty'); this.closest('.portrait-view-stage')?.insertAdjacentHTML('beforeend', '<div>${escapeHtml(character.portraitPlaceholder || character.name.slice(-2))}</div>');">`
+                : `<div>${escapeHtml(character.portraitPlaceholder || character.name.slice(-2))}</div>`}
+            </div>
+            <aside class="portrait-view-info">
+              <h3>${escapeHtml(character.name)}</h3>
+              <p>${escapeHtml(character.summary || '暂无人物小传。')}</p>
+              <div class="kv-grid">
+                <div class="kv"><span>统率</span><strong>${character.stats.command}</strong></div>
+                <div class="kv"><span>谋略</span><strong>${character.stats.strategy}</strong></div>
+                <div class="kv"><span>政务</span><strong>${character.stats.politics}</strong></div>
+                <div class="kv"><span>魅力</span><strong>${character.stats.charm}</strong></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      `;
     }
 
     function renderCharacterDetail(character) {
@@ -7437,6 +7587,9 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="character-profile-head">
           <button class="ghost-btn" data-close-character-profile="1">返回名录</button>
           <h2>${escapeHtml(character.name)}</h2>
+        </div>
+        <div class="character-detail-portrait">
+          ${renderCharacterPortrait(character, 'detail')}
         </div>
         <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
         ${battleTags ? `<div class="tag-row character-battle-tags">${battleTags}</div>` : ''}
@@ -8192,6 +8345,145 @@ const MAX_MAP_ZOOM = 4.2;
       return flags.length ? flags.join('，') + '。' : '局势平稳，可按长期目标安排。';
     }
 
+    function battleRouteHelp(route) {
+      const table = {
+        official: {
+          title: '正面官道',
+          role: '稳定推进，适合兵力占优或需要公开施压。',
+          help: '路线最容易理解，步兵收益稳定，也更容易被诸侯察觉。',
+          risk: '缺少奇袭收益，强城会把战斗拖入硬碰硬。'
+        },
+        river: {
+          title: '沿河推进',
+          role: '更快抵达，适合有水军或沿江沿河目标。',
+          help: 'ETA 略短，水军占比越高，战力收益越明显。',
+          risk: '水军不足时收益有限，遇到高城防仍要准备围城。'
+        },
+        raid: {
+          title: '绕路奇袭',
+          role: '用机动换突破，适合骑兵较多、想抢时间差。',
+          help: '骑兵占比高时战力更好，地图上也会呈现奇袭路线。',
+          risk: '行军更慢，粮草和途中风险更容易放大。'
+        },
+        night: {
+          title: '夜袭',
+          role: '追求突然性，适合打低士气或已被谋略扰乱的目标。',
+          help: '骑兵有额外发挥空间，适合配合刺探、断粮、内应。',
+          risk: '若敌城兵力和城防仍强，失败损失会很难看。'
+        },
+        cut: {
+          title: '断粮道',
+          role: '不急着破城，先压低敌方粮草和守军状态。',
+          help: '适合和“切断粮道”目标搭配，为下一轮主攻铺路。',
+          risk: '正面战力较低，不能指望一次就拿下坚城。'
+        }
+      };
+      return table[route] || table.official;
+    }
+
+    function battleTacticHelp(tactic) {
+      const table = {
+        balanced: {
+          title: '稳扎稳打',
+          role: '默认可靠方案，适合情报不足或兵种均衡。',
+          help: '步兵收益稳定，风险和收益都居中。',
+          risk: '缺少爆发，面对时间压力时可能不够锋利。'
+        },
+        assault: {
+          title: '强攻夺城',
+          role: '提高进攻强度，适合兵力、士气明显占优。',
+          help: '预估战力更高，适合配合“夺城”。',
+          risk: '失败时损失更重，不适合粮草紧张或敌城防高。'
+        },
+        siege: {
+          title: '围城断粮',
+          role: '把战斗拖进消耗，适合敌方粮草或民心较弱。',
+          help: '更重视围困与后勤，适合削弱强城。',
+          risk: '短期战力略低，会占用战役槽和粮草更久。'
+        },
+        feint: {
+          title: '佯攻诱敌',
+          role: '用较小代价制造压力，适合牵制或诱出守军。',
+          help: '预估战力略有提升，适合不想立刻吞城的打法。',
+          risk: '若目标是硬夺城，效果不如强攻直接。'
+        },
+        reserve: {
+          title: '保留预备队',
+          role: '减少冒险，适合守住退路或兵力并不宽裕。',
+          help: '更像保守打法，给后续调兵和防守留余地。',
+          risk: '进攻压迫力偏低，难以快速解决战斗。'
+        }
+      };
+      return table[tactic] || table.balanced;
+    }
+
+    function battleObjectiveHelp(objective) {
+      const table = {
+        capture: {
+          title: '夺城',
+          role: '胜利后直接改变实际控制权。',
+          help: '获得城池、声望和战略位置，是扩张路线的核心目标。',
+          risk: '会提高外部警惕，且失败会损兵折将。'
+        },
+        contain: {
+          title: '牵制',
+          role: '胜利后压低敌方士气并制造混乱。',
+          help: '适合拖住强敌、保护侧翼，或为外交和调兵争取时间。',
+          risk: '不拿城，需要后续行动承接。'
+        },
+        exhaust: {
+          title: '消耗守军',
+          role: '胜利后额外削减守军与城防。',
+          help: '适合先打一轮削弱坚城，再派主力夺城。',
+          risk: '收益偏军事，不会立刻取得地盘。'
+        },
+        supply: {
+          title: '切断粮道',
+          role: '胜利后削减敌城粮草、士气并提高混乱。',
+          help: '适合配合断粮道路线和围城断粮战术。',
+          risk: '正面胜率较低，需要情报和后续围困。'
+        }
+      };
+      return table[objective] || table.capture;
+    }
+
+    function renderBattleChoiceHelp(draft, source, target, route, eta) {
+      const routeHelp = battleRouteHelp(draft.route);
+      const tacticHelp = battleTacticHelp(draft.tactic);
+      const objectiveHelp = battleObjectiveHelp(draft.objective);
+      const power = estimateBattlePower(draft, source, target);
+      const notes = [];
+      if (draft.route === 'river') notes.push('水军越多，沿河推进越划算。');
+      if (['raid', 'night'].includes(draft.route)) notes.push('骑兵越多，奇袭和夜袭越有价值。');
+      if (draft.objective !== 'capture') notes.push('当前目标不夺城，胜利后主要削弱敌城，为下一步铺路。');
+      if (!route) notes.push('当前路线不可达，请改选路线或出兵城。');
+      else if (Number.isFinite(eta) && eta >= 4) notes.push('行军较久，注意粮草和战役槽占用。');
+      if (target.defense >= 60 && draft.tactic === 'assault') notes.push('敌城防偏高，强攻风险较大。');
+      return `
+        <div class="battle-choice-help">
+          <div>
+            <strong>路线：${routeHelp.title}</strong>
+            <span>${routeHelp.role}</span>
+            <small>${routeHelp.help}</small>
+            <em>${routeHelp.risk}</em>
+          </div>
+          <div>
+            <strong>战术：${tacticHelp.title}</strong>
+            <span>${tacticHelp.role}</span>
+            <small>${tacticHelp.help}</small>
+            <em>${tacticHelp.risk}</em>
+          </div>
+          <div>
+            <strong>目标：${objectiveHelp.title}</strong>
+            <span>${objectiveHelp.role}</span>
+            <small>${objectiveHelp.help}</small>
+            <em>${objectiveHelp.risk}</em>
+          </div>
+          <p>当前判断：${power.label}。${notes.join('') || '这个组合比较均衡，可按当前战略目标执行。'}</p>
+        </div>
+      `;
+    }
+
     function renderBattlePlanner() {
       const draft = gameState.draftBattle;
       const source = gameState.cities[draft.source];
@@ -8204,26 +8496,27 @@ const MAX_MAP_ZOOM = 4.2;
           <h2>${source.name} → ${target.name}</h2>
           <p>路线：${route ? route.path.map(regionName).join(' → ') : '无可用路线'}。预计行军 ${Number.isFinite(eta) ? eta : '-'} 回合，抵达后至少围城 2 回合。</p>
           <div class="form-row"><span>参战兵力</span><input data-draft-input="troops" type="number" min="100" max="${max}" step="100" value="${draft.troops}"></div>
-          <div class="form-row"><span>出兵路线</span><select data-draft-field="route">
+          <div class="form-row" data-help="${battleRouteHelp(draft.route).help}"><span>出兵路线</span><select data-draft-field="route">
             ${selectOption('official', '正面官道', draft.route)}
             ${selectOption('river', '沿河推进', draft.route)}
             ${selectOption('raid', '绕路奇袭', draft.route)}
             ${selectOption('night', '夜袭', draft.route)}
             ${selectOption('cut', '断粮道', draft.route)}
           </select></div>
-          <div class="form-row"><span>战术方案</span><select data-draft-field="tactic">
+          <div class="form-row" data-help="${battleTacticHelp(draft.tactic).help}"><span>战术方案</span><select data-draft-field="tactic">
             ${selectOption('balanced', '稳扎稳打', draft.tactic)}
             ${selectOption('assault', '强攻夺城', draft.tactic)}
             ${selectOption('siege', '围城断粮', draft.tactic)}
             ${selectOption('feint', '佯攻诱敌', draft.tactic)}
             ${selectOption('reserve', '保留预备队', draft.tactic)}
           </select></div>
-          <div class="form-row"><span>作战目标</span><select data-draft-field="objective">
+          <div class="form-row" data-help="${battleObjectiveHelp(draft.objective).help}"><span>作战目标</span><select data-draft-field="objective">
             ${selectOption('capture', '夺城', draft.objective)}
             ${selectOption('contain', '牵制', draft.objective)}
             ${selectOption('exhaust', '消耗守军', draft.objective)}
             ${selectOption('supply', '切断粮道', draft.objective)}
           </select></div>
+          ${renderBattleChoiceHelp(draft, source, target, route, eta)}
           <div class="kv-grid">
             <div class="kv"><span>敌守军</span><strong>${fmt(realTroops(target.garrison))}</strong></div>
             <div class="kv"><span>城防</span><strong>${target.defense}</strong></div>
@@ -8597,7 +8890,7 @@ const MAX_MAP_ZOOM = 4.2;
         const character = gameState.characterRoster?.[options.characterId];
         const scheme = String(options.scheme || '');
         const state = specialSchemeUnlockState(character);
-        if (!character || !scheme || !uniqueTextList(character.specialSchemes || []).includes(scheme)) return toast('该特殊谋略暂不可用');
+        if (!character || !scheme || !getCharacterSpecialSchemes(character).includes(scheme)) return toast('该特殊谋略暂不可用');
         if (!state.unlocked) return toast(state.reason);
         if (target && target.id && !canOperateAtCity(target.id)) return toast('距离太远，暂不能执行该人物谋略');
         if (!spendPoint('scheme')) return;
@@ -9150,11 +9443,15 @@ const MAX_MAP_ZOOM = 4.2;
       const city = gameState.cities[order.payload.targetId] || gameState.cities[gameState.player.startingCity || 'guiyang'];
       const scheme = String(order.payload.scheme || '');
       const state = specialSchemeUnlockState(character);
-      if (!character || !scheme || !state.unlocked) {
+      if (!character || !scheme || !state.unlocked || !getCharacterSpecialSchemes(character).includes(scheme)) {
         reports.push({ tone: 'warn', text: '人物特殊谋略条件已变化，本次未能执行。' });
         return;
       }
       const r = gameState.characters.retinue;
+      const profile = specialSchemeProfile(character, scheme);
+      const stats = character.stats || {};
+      const home = gameState.cities[gameState.player.startingCity || 'guiyang'];
+      const fid = cityController(city.id);
       const chance = clamp(
         0.5
         + Number(character.stats?.strategy || 50) / 260
@@ -9166,28 +9463,95 @@ const MAX_MAP_ZOOM = 4.2;
         0.92
       );
       const success = Math.random() < chance;
-      const text = [scheme, character.name, character.role, character.summary].join(' ');
-      if (/荐|识|评|献策|论英雄|密谈|策略/.test(text)) {
-        gameState.player.prestige = clamp(gameState.player.prestige + (success ? 5 : 2), 0, 100);
-        r.network = clamp(r.network + (success ? 8 : 3), 0, 100);
-        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，为你梳理人心与局势。声望 +' + (success ? 5 : 2) + '，情报网络 +' + (success ? 8 : 3) + '。' });
-      } else if (/粮|财|商|兵粮|助军|求援/.test(text)) {
-        const home = gameState.cities[gameState.player.startingCity || 'guiyang'];
-        home.food += success ? 820 : 320;
-        home.money += success ? 260 : 90;
-        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，为' + home.name + '筹得粮 ' + fmt(success ? 820 : 320) + '、府库 ' + fmt(success ? 260 : 90) + '。' });
-      } else if (/盟|外交|说服|奔走|结交|举贤/.test(text)) {
-        const fid = cityController(city.id);
+      const force = (success ? 1 : 0.45) * profile.scale;
+      const commandPower = Math.max(1, Math.round((Number(stats.command || 50) - 42) / 5 * force));
+      const strategyPower = Math.max(1, Math.round((Number(stats.strategy || 50) - 42) / 5 * force));
+      const politicsPower = Math.max(1, Math.round((Number(stats.politics || 50) - 42) / 5 * force));
+      const charmPower = Math.max(1, Math.round((Number(stats.charm || 50) - 42) / 5 * force));
+      const activeTargetCampaign = (gameState.campaigns || []).find(campaign => campaign.faction === 'player' && campaign.target === city.id && !['complete', 'cancelled', 'retreated'].includes(campaign.status));
+      const activeHomeCampaign = (gameState.campaigns || []).find(campaign => campaign.faction === 'player' && !['complete', 'cancelled', 'retreated'].includes(campaign.status));
+      let detail = '';
+
+      if (profile.archetype === 'assault') {
+        const moraleDrop = clamp(5 + commandPower + (profile.variant === '震慑' ? 4 : 0), 3, 22);
+        const defenseDrop = profile.variant === '破阵' ? clamp(3 + Math.round(commandPower / 2), 2, 12) : 0;
+        city.morale = clamp(city.morale - moraleDrop, 0, 100);
+        city.disrupted = clamp((city.disrupted || 0) + clamp(8 + commandPower, 4, 28), 0, 100);
+        if (defenseDrop) city.defense = clamp(city.defense - defenseDrop, 0, 100);
+        detail = city.name + '士气 -' + moraleDrop + (defenseDrop ? '，城防 -' + defenseDrop : '') + '，混乱上升。';
+      } else if (profile.archetype === 'command') {
+        const moraleGain = clamp(3 + commandPower, 2, 16);
+        home.morale = clamp(home.morale + moraleGain, 0, 100);
+        if (activeHomeCampaign) {
+          activeHomeCampaign.supply = Math.max(0, Number(activeHomeCampaign.supply || 0) + (success ? 2 : 1));
+          activeHomeCampaign.commanderActionCooldown = Math.max(0, Number(activeHomeCampaign.commanderActionCooldown || 0) - 1);
+        }
+        detail = home.name + '军心 +' + moraleGain + (activeHomeCampaign ? '，进行中战役补给 +' + (success ? 2 : 1) : '') + '。';
+      } else if (profile.archetype === 'defense') {
+        const defenseGain = clamp(3 + commandPower, 2, 14);
+        home.defense = clamp(home.defense + defenseGain, 0, 100);
+        home.reserveReady = true;
+        if (activeTargetCampaign && activeTargetCampaign.status === 'siege') activeTargetCampaign.siegeRemaining = Math.max(1, Number(activeTargetCampaign.siegeRemaining || 2) - 1);
+        detail = home.name + '城防 +' + defenseGain + '，预备队进入戒备' + (activeTargetCampaign?.status === 'siege' ? '，围城压力被削弱' : '') + '。';
+      } else if (profile.archetype === 'scheme') {
+        const intelGain = clamp(10 + strategyPower * 2, 8, 42);
+        const disruptGain = clamp(8 + strategyPower + (profile.variant === '设伏' ? 6 : 0), 4, 36);
+        city.intel = clamp(city.intel + intelGain, 0, 100);
+        city.disrupted = clamp((city.disrupted || 0) + disruptGain, 0, 100);
+        city.morale = clamp(city.morale - clamp(2 + Math.round(strategyPower / 2), 1, 14), 0, 100);
+        detail = city.name + '情报 +' + intelGain + '，混乱 +' + disruptGain + '，士气受挫。';
+      } else if (profile.archetype === 'logistics') {
+        const foodGain = Math.round((success ? 520 : 220) * profile.scale + politicsPower * 38);
+        const moneyGain = Math.round((success ? 160 : 60) * profile.scale + charmPower * 16);
+        home.food += foodGain;
+        home.money += moneyGain;
+        if (activeHomeCampaign && profile.variant === '补给') activeHomeCampaign.supply = Math.max(0, Number(activeHomeCampaign.supply || 0) + 2);
+        detail = home.name + '粮草 +' + fmt(foodGain) + '，府库 +' + fmt(moneyGain) + (activeHomeCampaign && profile.variant === '补给' ? '，战役补给 +2' : '') + '。';
+      } else if (profile.archetype === 'diplomacy') {
         if (!gameState.diplomacy[fid]) gameState.diplomacy[fid] = { relation: 30, pact: '未接触' };
-        gameState.diplomacy[fid].relation = clamp(gameState.diplomacy[fid].relation + (success ? 10 : 4), 0, 100);
-        gameState.player.legitimacy = clamp(gameState.player.legitimacy + (success ? 3 : 1), 0, 100);
-        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，外交回旋打开局面，关系 +' + (success ? 10 : 4) + '。' });
+        const relationGain = clamp(4 + charmPower + (profile.variant === '缓敌' ? 3 : 0), 2, 18);
+        gameState.diplomacy[fid].relation = clamp(gameState.diplomacy[fid].relation + relationGain, 0, 100);
+        gameState.player.legitimacy = clamp(gameState.player.legitimacy + (success ? 2 : 1), 0, 100);
+        if (profile.variant === '正名') gameState.player.prestige = clamp(gameState.player.prestige + (success ? 3 : 1), 0, 100);
+        detail = factionName(fid) + '关系 +' + relationGain + '，合法性提升。';
+      } else if (profile.archetype === 'govern') {
+        const supportGain = clamp(2 + politicsPower, 1, 13);
+        const orderGain = clamp(2 + Math.round(politicsPower / 2), 1, 10);
+        home.publicSupport = clamp(home.publicSupport + supportGain, 0, 100);
+        home.order = clamp(home.order + orderGain, 0, 100);
+        gameState.characters.jingnanGentry.suspicion = clamp(gameState.characters.jingnanGentry.suspicion - (success ? 4 : 1), 0, 100);
+        detail = home.name + '民心 +' + supportGain + '，治安 +' + orderGain + '，士族疑心下降。';
+      } else if (profile.archetype === 'talent') {
+        const prestigeGain = clamp(2 + charmPower, 1, 12);
+        const networkGain = clamp(4 + strategyPower, 2, 20);
+        gameState.player.prestige = clamp(gameState.player.prestige + prestigeGain, 0, 100);
+        r.network = clamp(r.network + networkGain, 0, 100);
+        gameState.characters.jingnanGentry.trust = clamp(gameState.characters.jingnanGentry.trust + (success ? 3 : 1), 0, 100);
+        detail = '声望 +' + prestigeGain + '，情报网络 +' + networkGain + '，荆南士族更愿意牵线。';
+      } else if (profile.archetype === 'heal') {
+        const moraleGain = clamp(2 + charmPower, 1, 12);
+        const recovered = Math.round((success ? 90 : 35) * profile.scale + charmPower * 10);
+        home.morale = clamp(home.morale + moraleGain, 0, 100);
+        home.garrison.infantry = Math.max(0, Number(home.garrison.infantry || 0) + recovered);
+        if (activeHomeCampaign) activeHomeCampaign.supply = Math.max(0, Number(activeHomeCampaign.supply || 0) + 1);
+        detail = home.name + '士气 +' + moraleGain + '，伤兵归队 ' + fmt(recovered) + '。';
       } else {
-        city.intel = clamp(city.intel + (success ? 22 : 8), 0, 100);
-        city.disrupted = clamp(city.disrupted + (success ? 18 : 6), 0, 100);
-        city.morale = clamp(city.morale - (success ? 8 : 2), 0, 100);
-        reports.push({ tone: success ? 'good' : 'warn', text: character.name + '施展「' + scheme + '」，' + city.name + '被扰乱，情报 +' + (success ? 22 : 8) + '，混乱 +' + (success ? 18 : 6) + '。' });
+        const prestigeGain = clamp(1 + charmPower, 1, 10);
+        const disruptGain = clamp(4 + strategyPower, 2, 20);
+        gameState.player.prestige = clamp(gameState.player.prestige + prestigeGain, 0, 100);
+        city.disrupted = clamp((city.disrupted || 0) + disruptGain, 0, 100);
+        detail = '声望 +' + prestigeGain + '，' + city.name + '局势被牵动，混乱 +' + disruptGain + '。';
       }
+
+      if (!success && profile.risk === '高') {
+        city.intel = clamp(city.intel + 3, 0, 100);
+        gameState.characters.retinue.network = clamp(gameState.characters.retinue.network + 1, 0, 100);
+      }
+
+      reports.push({
+        tone: success ? 'good' : 'warn',
+        text: character.name + '施展「' + scheme + '」' + (success ? '奏效' : '未尽全功') + '（' + profile.variant + '）：' + detail
+      });
       addCharacterMemory(character, { summary: '执行特殊谋略「' + scheme + '」' + (success ? '奏效。' : '未尽全功。') });
     }
 
@@ -12637,6 +13001,8 @@ const MAX_MAP_ZOOM = 4.2;
 
     // ===================== 长悬停 tooltip =====================
     const HELP_TEXT = {
+      protectionHelp: '<strong>刘表庇护</strong><br>代表刘表名义上给予你的背书与保护。<br><span style="color:var(--good)">数值越高，外部势力越不敢轻易攻击、离间或试探桂阳；外交也更容易解锁。</span><br><span style="color:var(--bad)">擅自扩张、越权外交、隐瞒军备或荆南士族疑心过高，都会消耗这份庇护。</span>',
+      gentrySuspicionHelp: '<strong>士族疑心</strong><br>代表荆南士族对你是否守礼、守信、能安民的怀疑程度。<br><span style="color:var(--good)">疑心越低，士族更愿意荐才、维持清议支持，地方局势更稳。</span><br><span style="color:var(--bad)">疑心过高会带来流言、观望与掣肘，并可能拖累刘表庇护。</span>',
       'cityOrder:recruit': '<strong>征兵</strong><br><span style="color:var(--good)">好处：快速增加兵力，补充守军和可调兵力。</span><br><span style="color:var(--bad)">代价：可能降低民心，并增加粮食压力。</span><br>消耗 1 政务点',
       'cityOrder:train': '<strong>练兵</strong><br><span style="color:var(--good)">好处：提升军队战斗力，为后续调兵和进攻做准备。</span><br><span style="color:var(--bad)">代价：消耗粮食和府库，短期不能直接扩张。</span><br>消耗 1 政务点',
       'cityOrder:fortify': '<strong>修城防</strong><br><span style="color:var(--good)">好处：提高防守能力，敌军来攻时更稳。</span><br><span style="color:var(--bad)">代价：消耗府库和劳力。</span><br>消耗 1 政务点',
@@ -12922,6 +13288,16 @@ const MAX_MAP_ZOOM = 4.2;
         }
         if (event.target.closest('[data-close-modal]')) {
           closeActiveModal();
+          return;
+        }
+        if (event.target.id === 'gameModalRoot' && gameState.activeModal?.type === 'portraitView') {
+          closeActiveModal();
+          return;
+        }
+        const openPortrait = event.target.closest('[data-open-character-portrait]');
+        if (openPortrait) {
+          gameState.activeModal = { type: 'portraitView', characterId: openPortrait.getAttribute('data-open-character-portrait') };
+          renderModal();
           return;
         }
         const trainingChoice = event.target.closest('[data-training-choice]');
@@ -13415,6 +13791,11 @@ const MAX_MAP_ZOOM = 4.2;
       }
 
       document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && gameState.activeModal?.type === 'portraitView') {
+          event.preventDefault();
+          closeActiveModal();
+          return;
+        }
         if (event.altKey && event.key.toLowerCase() === 'm') {
           event.preventDefault();
           toggleCalibrationMode();
@@ -13609,7 +13990,7 @@ const MAX_MAP_ZOOM = 4.2;
     // 长悬停 tooltip 事件
     document.addEventListener('mouseover', event => { handleHelpHover(event); });
     document.addEventListener('mouseleave', event => {
-      if (!event.target.closest('[data-help], [data-help-key]')) hideTooltip();
+      if (!(event.target instanceof Element) || !event.target.closest('[data-help], [data-help-key]')) hideTooltip();
     }, true);
     document.addEventListener('click', () => { hideTooltip(); });
     document.addEventListener('scroll', () => { hideTooltip(); }, true);

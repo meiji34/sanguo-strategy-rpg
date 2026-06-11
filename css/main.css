@@ -1508,6 +1508,51 @@
       background: linear-gradient(90deg, rgba(111, 143, 99, 0.76), rgba(214, 196, 127, 0.78));
     }
 
+    .battle-choice-help {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .battle-choice-help > div {
+      border: 1px solid rgba(213, 178, 98, 0.22);
+      background: rgba(16, 10, 6, 0.42);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .battle-choice-help strong,
+    .battle-choice-help span,
+    .battle-choice-help small,
+    .battle-choice-help em {
+      display: block;
+    }
+
+    .battle-choice-help strong {
+      color: rgba(240, 214, 138, 0.96);
+      font-size: 12px;
+    }
+
+    .battle-choice-help span {
+      color: rgba(238, 226, 188, 0.88);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .battle-choice-help small,
+    .battle-choice-help em,
+    .battle-choice-help p {
+      color: rgba(216, 207, 170, 0.66);
+      font-size: 11px;
+      line-height: 1.55;
+      margin: 4px 0 0;
+      font-style: normal;
+    }
+
+    .battle-choice-help em {
+      color: rgba(236, 151, 120, 0.84);
+    }
+
     .ap-grid {
       gap: 5px;
     }
@@ -4241,29 +4286,107 @@
 
     .character-portrait {
       display: grid;
-      min-height: 116px;
+      min-height: 108px;
       place-items: center;
+      position: relative;
+      width: 100%;
       border-bottom: 1px solid rgba(255, 230, 160, 0.14);
+      border-left: 0;
+      border-right: 0;
+      border-top: 0;
       color: rgba(255, 233, 174, 0.74);
       background:
         linear-gradient(145deg, rgba(78, 99, 85, 0.42), rgba(42, 27, 18, 0.72)),
         repeating-linear-gradient(45deg, rgba(255,255,255,.04) 0 2px, transparent 2px 9px);
       font-size: 30px;
       font-weight: 900;
+      padding: 0;
+      appearance: none;
+      text-align: center;
+      font-family: inherit;
     }
 
     .character-portrait.has-image {
-      min-height: 128px;
+      min-height: 118px;
       overflow: hidden;
-      background: rgba(22, 20, 17, 0.82);
+      background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.42)),
+        rgba(22, 20, 17, 0.82);
     }
 
     .character-portrait.has-image img {
       display: block;
       width: 100%;
-      height: 128px;
+      height: 118px;
       object-fit: cover;
-      object-position: center 30%;
+      object-position: center 26%;
+      filter: saturate(0.92) contrast(1.04);
+      transform: scale(1.02);
+      transition: transform 0.18s ease, filter 0.18s ease;
+    }
+
+    .character-card:hover .character-portrait.has-image img,
+    .character-card.selected .character-portrait.has-image img {
+      filter: saturate(1.02) contrast(1.07);
+      transform: scale(1.06);
+    }
+
+    .character-portrait::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 42%;
+      pointer-events: none;
+      background: linear-gradient(180deg, transparent, rgba(9, 6, 3, 0.68));
+    }
+
+    .character-portrait.image-error img {
+      display: none;
+    }
+
+    .character-portrait.portrait-interactive {
+      cursor: zoom-in;
+    }
+
+    .portrait-open-label {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      border: 1px solid rgba(255, 230, 160, 0.34);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: rgba(255, 236, 178, 0.92);
+      background: rgba(13, 9, 5, 0.72);
+      font-size: 11px;
+      font-weight: 700;
+      opacity: 0;
+      transform: translateY(3px);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+    }
+
+    .character-portrait:hover .portrait-open-label,
+    .character-portrait:focus-visible .portrait-open-label {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .character-detail-portrait {
+      margin: 0 0 12px;
+    }
+
+    .character-detail-portrait .character-portrait {
+      min-height: 220px;
+      border: 1px solid rgba(255, 230, 160, 0.16);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .character-detail-portrait .character-portrait.has-image img {
+      height: 260px;
+      object-fit: contain;
+      transform: none;
+      filter: none;
+      background: rgba(15, 12, 9, 0.9);
     }
 
     .character-card-body {
@@ -4338,6 +4461,72 @@
         radial-gradient(circle at 18% 0%, rgba(208, 190, 137, 0.11), transparent 34%);
       box-shadow: 0 28px 84px rgba(0, 0, 0, 0.74), inset 0 1px 0 rgba(236, 228, 190, 0.07);
       animation: modalIn 0.24s ease both;
+    }
+
+    .portrait-view-modal {
+      width: min(1080px, 100%);
+    }
+
+    .portrait-view-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .portrait-view-stage {
+      display: grid;
+      place-items: center;
+      min-height: min(70vh, 680px);
+      border: 1px solid rgba(255, 230, 160, 0.18);
+      border-radius: 8px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 26%, rgba(212, 184, 115, 0.12), transparent 34%),
+        rgba(8, 8, 7, 0.84);
+    }
+
+    .portrait-view-stage img {
+      display: block;
+      width: 100%;
+      height: min(70vh, 680px);
+      object-fit: contain;
+    }
+
+    .portrait-view-stage.portrait-empty div {
+      display: grid;
+      place-items: center;
+      width: 180px;
+      height: 180px;
+      border: 1px solid rgba(255, 230, 160, 0.24);
+      border-radius: 50%;
+      color: rgba(255, 233, 174, 0.8);
+      background: rgba(255, 240, 190, 0.05);
+      font-size: 44px;
+      font-weight: 900;
+    }
+
+    .portrait-view-info {
+      border: 1px solid rgba(255, 230, 160, 0.14);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(255, 240, 190, 0.04);
+    }
+
+    .portrait-view-info h3 {
+      margin-top: 0;
+    }
+
+    @media (max-width: 760px) {
+      .portrait-view-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .portrait-view-stage,
+      .portrait-view-stage img {
+        min-height: 58vh;
+        height: 58vh;
+      }
     }
 
     .training-choice-modal {
@@ -5160,4 +5349,8 @@
     }
     .help-tooltip.show {
       opacity: 1;
+    }
+    [data-help-key],
+    [data-help] {
+      cursor: help;
     }
