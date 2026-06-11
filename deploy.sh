@@ -36,6 +36,7 @@ require_path "index.html"
 require_path "css"
 require_path "js"
 require_path "assets"
+require_path "影像素材"
 require_path "server/index.mjs"
 
 log "Pulling latest code from GitHub"
@@ -43,11 +44,12 @@ git pull --ff-only
 
 log "Syncing frontend static files to: $FRONTEND_DIR"
 mkdir -p "$FRONTEND_DIR"
-rm -rf "$FRONTEND_DIR/css" "$FRONTEND_DIR/js" "$FRONTEND_DIR/assets"
+rm -rf "$FRONTEND_DIR/css" "$FRONTEND_DIR/js" "$FRONTEND_DIR/assets" "$FRONTEND_DIR/影像素材"
 cp index.html "$FRONTEND_DIR/"
 cp -R css "$FRONTEND_DIR/"
 cp -R js "$FRONTEND_DIR/"
 cp -R assets "$FRONTEND_DIR/"
+cp -R "影像素材" "$FRONTEND_DIR/"
 
 log "Restarting backend with PM2"
 if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then

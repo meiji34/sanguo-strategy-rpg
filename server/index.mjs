@@ -345,7 +345,7 @@ function serveIndex(response) {
 
 function serveStaticAsset(route, response) {
   const [, publicDir] = route.split('/');
-  if (!['assets', 'css', 'js'].includes(publicDir)) return false;
+  if (!['assets', 'css', 'js', '影像素材'].includes(publicDir)) return false;
 
   const staticRoot = path.join(rootDir, publicDir);
   const filePath = path.resolve(rootDir, ...route.split('/').filter(Boolean));
@@ -374,7 +374,11 @@ function contentTypeFor(filePath) {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml',
-    '.webp': 'image/webp'
+    '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.ttf': 'font/ttf',
+    '.txt': 'text/plain; charset=utf-8',
+    '.md': 'text/markdown; charset=utf-8'
   };
   return contentTypes[extension] || 'application/octet-stream';
 }
