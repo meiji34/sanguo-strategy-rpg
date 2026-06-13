@@ -4411,8 +4411,13 @@
       border: 1px solid rgba(255, 230, 160, 0.16);
       border-radius: 6px;
       padding: 9px;
-      background: rgba(255, 240, 190, 0.035);
+      background: rgba(18, 24, 21, 0.76);
+      color: #f4ead2;
       line-height: 1.5;
+    }
+
+    .campaign-item strong {
+      color: #fff3c8;
     }
 
     .campaign-progress {
@@ -4831,31 +4836,35 @@
     }
 
     .campaign-stats span {
-      border: 1px solid rgba(123, 88, 46, 0.18);
+      border: 1px solid rgba(123, 88, 46, 0.28);
       border-radius: 3px;
       padding: 5px 7px;
-      background: rgba(255, 244, 204, 0.28);
-      color: #4d3824;
+      background: rgba(255, 248, 226, 0.92);
+      color: #2f241a;
       white-space: nowrap;
+      font-weight: 800;
     }
 
     .campaign-delta-panel {
       margin-top: 8px;
-      border-left: 3px solid rgba(174, 59, 42, 0.55);
+      border: 1px solid rgba(174, 59, 42, 0.34);
+      border-left: 3px solid rgba(174, 59, 42, 0.72);
+      border-radius: 4px;
       padding: 7px 9px;
-      background: rgba(174, 59, 42, 0.08);
+      background: rgba(255, 242, 224, 0.94);
     }
 
     .campaign-delta-panel strong {
       display: block;
       margin-bottom: 4px;
-      color: #6b2a1e;
+      color: #4d1f17;
       font-size: 0.86rem;
     }
 
     .campaign-delta-stats span {
-      background: rgba(174, 59, 42, 0.1);
-      color: #6a2b20;
+      border-color: rgba(174, 59, 42, 0.28);
+      background: rgba(255, 235, 222, 0.98);
+      color: #5b2118;
     }
 
     .campaign-retreat-card {
