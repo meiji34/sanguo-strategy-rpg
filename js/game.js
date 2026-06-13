@@ -2834,6 +2834,8 @@ const MAX_MAP_ZOOM = 4.2;
         turnSummaries: [],
         activeModal: null,
         visualEffects: [],
+        gameMode: 'sandbox',
+        plotLineStates: {},
         mapState: { zoom: 1, panX: 0, panY: 0 },
         storyFlags: {
           introSeen: false,
@@ -3337,6 +3339,7 @@ const MAX_MAP_ZOOM = 4.2;
     let gameState = ensureCharacterSystemState(loadedGameState || createInitialState());
     let characterDraft = { name: gameState.player.name || '', identity: gameState.player.identity || 'commandant' };
     let launchScreen = 'auth';
+    let selectedNewGameMode = 'sandbox';
     let authMode = 'login';
     let authUser = null;
     let characterCreationStep = 'arrival';
@@ -3468,6 +3471,40 @@ const MAX_MAP_ZOOM = 4.2;
     function troopBreakdownText(t) {
       const g = normalizeTroopSet(t || {});
       return '步 ' + fmt(g.infantry) + '｜骑 ' + fmt(g.cavalry) + '｜弓 ' + fmt(g.archers) + '｜水 ' + fmt(g.navy) + '｜器 ' + fmt(g.siege);
+    }
+
+    function characterStatusName(status) {
+      const table = {
+        hidden: '未现身',
+        rumored: '传闻中',
+        discovered: '已探知',
+        contactable: '可接触',
+        recruited: '已招募',
+        dead: '已故',
+        captured: '被俘'
+      };
+      return table[status] || status || '未知';
+    }
+
+    function campaignStatusName(status) {
+      const table = {
+        marching: '行军中',
+        siege: '围城中',
+        complete: '已结束',
+        cancelled: '已取消',
+        retreated: '已撤退',
+        destroyed: '全军覆没'
+      };
+      return table[status] || status || '未知';
+    }
+
+    function plotStatusName(status) {
+      const table = {
+        inactive: '未开启',
+        active: '进行中',
+        completed: '已完结'
+      };
+      return table[status] || status || '未知';
     }
 
     function cityController(cityOrId) {
@@ -3846,11 +3883,260 @@ const MAX_MAP_ZOOM = 4.2;
       general_request: { id: 'general_request', title: '将军请战', level: 'important', participant: 'wenPin', onceOnly: false, minTurn: 5, cooldown: 5, description: '文聘认为荆南守备仍有可补之处，请你关注军备。' }
     };
 
+    const PLOT_LINE_BLUEPRINTS = {
+      liu_biao: {
+        id: 'liu_biao',
+        title: '刘表线',
+        openingGoal: '剧情目标：稳住桂阳，等待襄阳后续来信。',
+        completedGoal: '刘表线已完结：进入自由游玩，按系统推荐目标推进。',
+        nodes: [
+          { id: 'lb_1_1', stage: 1, title: '密令入匣', minTurn: 1, senderId: 'liuBiao', body: '刘表密令入匣，桂阳名义上仍属荆州，实权却已交到你手中。先稳住治安、粮草与军心，襄阳会继续观察。', goal: '剧情目标：稳定桂阳，治安、粮草、守军缺一不可。', auto: true },
+          { id: 'lb_1_2', stage: 1, title: '襄阳来信', minTurn: 5, senderId: 'liuBiao', body: '襄阳问桂阳近日安抚成效。刘表并未催逼扩张，只要你能让地方不乱，这份庇护便仍然有效。', goal: '剧情目标：维持刘表庇护，继续安抚桂阳。' },
+          { id: 'lb_1_3', stage: 1, title: '蒯越巡视', minTurn: 12, senderId: 'kuaiYue', body: '蒯越奉命巡视桂阳。他看重的不是豪言，而是治安与守军是否足以压住地方。', goal: '剧情目标：向荆州证明桂阳已经可以自守。', condition: () => {
+            const guiyang = gameState.cities.guiyang;
+            return Number(guiyang?.order || 0) >= 60 || realTroops(guiyang?.garrison) >= 500;
+          } },
+          { id: 'lb_2_1', stage: 2, title: '调令风波', minTurn: 10, senderId: 'liuBiao', body: '你已不止据有桂阳一城，襄阳旧吏开始议论调令边界。有人说你奉命镇守，有人说你正在坐大。', goal: '剧情目标：处理扩张后的名义归属，避免刘表庇护骤降。', condition: () => controlledCities().length >= 2 },
+          { id: 'lb_2_2', stage: 2, title: '蔡瑁挑拨', minTurn: 10, senderId: 'caiMao', body: '蔡瑁在襄阳席间暗示：桂阳声望日盛，若无约束，迟早不听州府。此话传到你耳中，分量不轻。', goal: '剧情目标：控制声望带来的猜疑，稳住襄阳关系。', condition: () => Number(gameState.player.prestige || 0) >= 20 && Number(gameState.player.protection || 0) >= 50, onTrigger: state => {
+            gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) + 8, 0, 100);
+            state.variables.caiMaoHostility = gameState.characters.caiMao.suspicion;
+          } },
+          { id: 'lb_2_3', stage: 2, title: '江夏求援', minTurn: 10, senderId: 'huangZu', body: '江夏水路不宁，黄祖遣人求援。若你出面，能得荆州军心；若你袖手，也会被看作只顾自家。', goal: '剧情目标：决定是否借江夏求援提升荆州影响。', condition: state => Number(gameState.player.protection || 0) >= 40 && (hasPlotNode(state, 'lb_2_1') || hasPlotNode(state, 'lb_2_2')) },
+          { id: 'lb_3_1', stage: 3, title: '襄阳召见', minTurn: 20, senderId: 'liuBiao', body: '襄阳召你入见。你控制的城池、声望或庇护变化，已经让刘表无法继续只把桂阳当作边郡事务。', goal: '剧情目标：准备面对荆州核心权力的询问。', condition: () => controlledCities().length >= 4 || Number(gameState.player.prestige || 0) >= 45 || Number(gameState.player.protection || 0) <= 40 },
+          { id: 'lb_3_2', stage: 3, title: '二子之争', minTurn: 20, senderId: 'liuQi', body: '刘琦与刘琮之争渐明。刘琦求外援，蔡氏推刘琮，荆州不再只是刘表一人的荆州。', goal: '剧情目标：判断是否介入刘表二子之争。', condition: state => hasPlotNode(state, 'lb_3_1') || gameState.turn >= 28 },
+          { id: 'lb_3_3', stage: 3, title: '蔡氏阴谋', minTurn: 20, senderId: 'caiMao', body: '蔡氏势力开始暗中排布人事。你若支持刘琦，蔡瑁必然视你为碍眼之人。', goal: '剧情目标：应对蔡氏敌意，稳住荆州内局。', condition: state => Number(gameState.characters.caiMao?.suspicion || 0) >= 40 || state.variables.supportedLiuQi },
+          { id: 'lb_3_4', stage: 3, title: '蒯越站队', minTurn: 20, senderId: 'kuaiYue', body: '蒯越终于表态：荆州要活下去，不能只看宗亲名分，也不能任蔡氏一家遮天。', goal: '剧情目标：争取荆州士族中的中间派。', condition: state => hasPlotNode(state, 'lb_3_3') && turnsSincePlotNode(state, 'lb_3_3') >= 3 },
+          { id: 'lb_4_1', stage: 4, title: '刘表病危', minTurn: 65, senderId: 'liuBiao', body: '襄阳传来密报：刘表病势沉重。荆州的秩序开始从中枢松动，所有人都在等最后一口气。', goal: '剧情目标：准备刘表身后荆州的权力交接。' },
+          { id: 'lb_4_2', stage: 4, title: '最后书信', minTurn: 50, senderId: 'liuBiao', body: '刘表最后一封书信抵达桂阳。他没有明说继承，只问你：荆州若乱，你会守礼、守民，还是取势？', goal: '剧情目标：等待荆州易主，并准备最终选择。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 8 },
+          { id: 'lb_4_3', stage: 4, title: '荆州易主', minTurn: 50, senderId: 'liuBiao', body: '刘表已逝，襄阳城中诸派争声四起。你必须决定：扶刘琦、承认刘琮，或趁乱自立。', goal: '剧情目标：选择刘表线结局方向。', condition: state => hasPlotNode(state, 'lb_4_2') && turnsSincePlotNode(state, 'lb_4_2') >= 3, choices: [
+            { id: 'supportLiuQi', label: '扶刘琦守荆州' },
+            { id: 'recognizeLiuCong', label: '承认刘琮继位' },
+            { id: 'standIndependent', label: '趁乱自立' }
+          ] },
+          { id: 'lb_5_branch', stage: 5, title: '分支结局', minTurn: 50, senderId: 'kuaiYue', body: '荆州诸人已经看清你的选择。刘表线进入余响，新的天下线可以从此处接续。', goal: '剧情目标：等待襄阳夜雨，为刘表线收束。', condition: state => !!state.variables.liuBiaoEnding },
+          { id: 'lb_5_rain', stage: 5, title: '襄阳夜雨', minTurn: 50, senderId: 'liuBiao', body: '襄阳夜雨落在旧州府瓦上。刘表一线到此完结，荆州仍在，棋局却已不再由他落子。', goal: '刘表线已完结：进入自由游玩，按系统推荐目标推进。', condition: state => hasPlotNode(state, 'lb_5_branch') && turnsSincePlotNode(state, 'lb_5_branch') >= 5, final: true }
+        ]
+      }
+    };
+
     function pushTurnEvent(event) {
       const item = Object.assign({ id: uid(), turn: gameState.turn, level: 'minor', tone: 'warn', text: '' }, event);
       gameState.turnEvents.push(item);
       if (item.level !== 'minor') addNews(item.tone, item.text);
       return item;
+    }
+
+    function createPlotLineState(lineId) {
+      const blueprint = PLOT_LINE_BLUEPRINTS[lineId] || {};
+      return {
+        id: lineId,
+        status: 'inactive',
+        stage: 0,
+        startedTurn: null,
+        completedTurn: null,
+        currentNodeId: '',
+        triggeredNodes: {},
+        variables: {},
+        currentGoal: blueprint.openingGoal || ''
+      };
+    }
+
+    function ensurePlotLineState(lineId) {
+      gameState.plotLineStates ||= {};
+      gameState.plotLineStates[lineId] ||= createPlotLineState(lineId);
+      const state = gameState.plotLineStates[lineId];
+      state.id ||= lineId;
+      state.status ||= 'inactive';
+      state.stage ||= 0;
+      state.triggeredNodes ||= {};
+      state.variables ||= {};
+      state.currentGoal ||= PLOT_LINE_BLUEPRINTS[lineId]?.openingGoal || '';
+      return state;
+    }
+
+    function ensurePlotLineStateFor(targetState, lineId) {
+      if (!targetState) return null;
+      targetState.plotLineStates ||= {};
+      targetState.plotLineStates[lineId] ||= createPlotLineState(lineId);
+      const state = targetState.plotLineStates[lineId];
+      state.id ||= lineId;
+      state.status ||= 'inactive';
+      state.stage ||= 0;
+      state.triggeredNodes ||= {};
+      state.variables ||= {};
+      state.currentGoal ||= PLOT_LINE_BLUEPRINTS[lineId]?.openingGoal || '';
+      return state;
+    }
+
+    function isStoryMode() {
+      return gameState.gameMode === 'story';
+    }
+
+    function hasPlotNode(state, nodeId) {
+      return !!state?.triggeredNodes?.[nodeId];
+    }
+
+    function turnsSincePlotNode(state, nodeId) {
+      const turn = Number(state?.triggeredNodes?.[nodeId]?.turn || 0);
+      if (!turn) return 999;
+      return Math.max(0, gameState.turn - turn);
+    }
+
+    function activatePlotLine(lineId) {
+      const state = ensurePlotLineState(lineId);
+      if (state.status === 'completed') return state;
+      if (state.status === 'inactive') {
+        state.status = 'active';
+        state.startedTurn = gameState.turn;
+        state.currentGoal = PLOT_LINE_BLUEPRINTS[lineId]?.openingGoal || state.currentGoal;
+      }
+      return state;
+    }
+
+    function initializePlotLinesForMode(mode) {
+      gameState.gameMode = mode === 'story' ? 'story' : 'sandbox';
+      gameState.plotLineStates ||= {};
+      if (isStoryMode()) {
+        activatePlotLine('liu_biao');
+      }
+    }
+
+    function getActivePlotGoal() {
+      if (!isStoryMode()) return '';
+      const active = Object.values(gameState.plotLineStates || {})
+        .filter(state => state && state.status === 'active' && state.currentGoal);
+      if (!active.length) return '';
+      active.sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0));
+      return active[0].currentGoal;
+    }
+
+    function getSystemRecommendedGoal() {
+      const cities = controlledCities();
+      const totals = cityTotals();
+      const urgent = (gameState.urgentMatters || []).filter(item => !item.resolved);
+      if (urgent.length) return '系统推荐：先处理紧急事务，避免城池或战役失控。';
+      if (!cities.length) return '系统推荐：夺回一座可治理城池，恢复基本盘。';
+      const weakOrder = cities.find(city => Number(city.order || 0) < 45);
+      if (weakOrder) return '系统推荐：整顿' + weakOrder.name + '治安，防止民变和征兵效率下降。';
+      const weakSupport = cities.find(city => Number(city.publicSupport || 0) < 45);
+      if (weakSupport) return '系统推荐：安抚' + weakSupport.name + '民心，稳定税粮与地方响应。';
+      if (totals.food < Math.max(2400, totals.troops * 1.2)) return '系统推荐：优先屯田备粮，避免战役补给吃紧。';
+      if (activeCampaignSlotCount() > 0) return '系统推荐：关注进行中战役的兵力、粮草与目标城状态。';
+      if (cities.length < 3) return '系统推荐：巩固周边，选择一座邻近弱城作为下一步目标。';
+      return '系统推荐：发展内政、补充驻军，并寻找合适的外交或进攻窗口。';
+    }
+
+    function getDisplayedCurrentGoal() {
+      return getActivePlotGoal() || getSystemRecommendedGoal();
+    }
+
+    function getCurrentGoalHelpText() {
+      const plotGoal = getActivePlotGoal();
+      const displayedGoal = getDisplayedCurrentGoal();
+      if (plotGoal) {
+        const active = Object.values(gameState.plotLineStates || {})
+          .filter(state => state && state.status === 'active' && state.currentGoal)
+          .sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0))[0];
+        const lineName = PLOT_LINE_BLUEPRINTS[active?.id]?.title || '剧情线';
+        const node = (PLOT_LINE_BLUEPRINTS[active?.id]?.nodes || []).find(item => item.id === active?.currentNodeId);
+        return '<strong>当前目标</strong><br>' +
+          '这是剧情模式下的阶段任务，来自：' + escapeHtml(lineName) + '。<br>' +
+          '<span style="color:var(--good)">现在要做：</span>' + escapeHtml(displayedGoal.replace(/^剧情目标：/, '')) + '<br>' +
+          (node ? '<span style="color:var(--muted)">当前节点：</span>' + escapeHtml(node.title) + '｜阶段 ' + Number(node.stage || active.stage || 0) + '<br>' : '') +
+          '<span style="color:var(--bad)">说明：</span>剧情目标只提示方向，不会锁死你的操作；刘表线完结后会自动切回系统推荐目标。';
+      }
+      return '<strong>当前目标</strong><br>' +
+        '这是系统根据当前局势自动给出的建议，用来帮你判断下一步优先级。<br>' +
+        '<span style="color:var(--good)">现在要做：</span>' + escapeHtml(displayedGoal.replace(/^系统推荐：/, '')) + '<br>' +
+        '<span style="color:var(--bad)">说明：</span>它不是强制任务。你可以自由内政、外交或出兵；当紧急事务、城池状态、粮草、战役或扩张条件变化时，这里会自动更新。';
+    }
+
+    function triggerPlotNode(lineId, node, state, reports = []) {
+      if (!node || hasPlotNode(state, node.id)) return false;
+      state.triggeredNodes[node.id] = { turn: gameState.turn, title: node.title, stage: node.stage };
+      state.stage = Math.max(Number(state.stage || 0), Number(node.stage || 0));
+      state.currentNodeId = node.id;
+      state.currentGoal = node.goal || state.currentGoal;
+      if (node.onTrigger) node.onTrigger(state);
+
+      const title = PLOT_LINE_BLUEPRINTS[lineId]?.title || '剧情线';
+      const text = title + '｜' + node.title + '：' + (node.body || '');
+      reports.push({ tone: node.final ? 'good' : 'warn', level: 'important', text });
+
+      createLetter({
+        senderId: node.senderId || 'liuBiao',
+        title: node.title,
+        body: node.body || node.title,
+        critical: true,
+        kind: 'plotEvent',
+        meta: { lineId, nodeId: node.id },
+        choices: node.choices || [{ id: 'ack', label: node.final ? '听雨收卷' : '知晓' }]
+      });
+      return true;
+    }
+
+    function completePlotLine(lineId, state, reports = []) {
+      state.status = 'completed';
+      state.completedTurn = gameState.turn;
+      state.currentGoal = PLOT_LINE_BLUEPRINTS[lineId]?.completedGoal || '';
+      if (lineId === 'liu_biao') {
+        state.variables.completed = true;
+        gameState.currentGoal = getSystemRecommendedGoal();
+        reports.push({ tone: 'good', level: 'critical', text: '刘表线完结。玩家进入自由游玩，当前目标改由系统自动推荐。' });
+      }
+    }
+
+    function processPlotLines(reports = []) {
+      if (!isStoryMode()) return;
+      Object.entries(PLOT_LINE_BLUEPRINTS).forEach(([lineId, blueprint]) => {
+        const state = ensurePlotLineState(lineId);
+        if (state.status !== 'active') return;
+        for (const node of blueprint.nodes || []) {
+          if (hasPlotNode(state, node.id)) continue;
+          if (gameState.turn < Number(node.minTurn || 1)) continue;
+          if (node.condition && !node.condition(state)) continue;
+          triggerPlotNode(lineId, node, state, reports);
+          break;
+        }
+      });
+    }
+
+    function resolvePlotEventChoice(letter, choiceId, reports = []) {
+      const lineId = letter?.meta?.lineId;
+      const nodeId = letter?.meta?.nodeId;
+      if (!lineId || !nodeId) return false;
+      const state = ensurePlotLineState(lineId);
+      const node = (PLOT_LINE_BLUEPRINTS[lineId]?.nodes || []).find(item => item.id === nodeId);
+      if (lineId === 'liu_biao' && nodeId === 'lb_4_3') {
+        const endings = {
+          supportLiuQi: 'support_liu_qi',
+          recognizeLiuCong: 'recognize_liu_cong',
+          standIndependent: 'independent_jingzhou'
+        };
+        state.variables.liuBiaoEnding = endings[choiceId] || 'undecided';
+        state.variables.liuBiaoEndingChoice = choiceId;
+        state.variables.supportedLiuQi = choiceId === 'supportLiuQi';
+        state.variables.recognizedLiuCong = choiceId === 'recognizeLiuCong';
+        state.variables.playerIndependentAtEnding = choiceId === 'standIndependent';
+        if (choiceId === 'supportLiuQi') {
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 8, 0, 100);
+          gameState.characters.kuaiYue.trust = clamp(Number(gameState.characters.kuaiYue.trust || 0) + 8, 0, 100);
+          reports.push({ tone: 'good', text: '你选择扶刘琦守荆州，合法性上升，蒯越更愿与你合作。' });
+        } else if (choiceId === 'recognizeLiuCong') {
+          gameState.player.protection = clamp(Number(gameState.player.protection || 0) + 5, 0, 100);
+          gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) - 6, 0, 100);
+          reports.push({ tone: 'warn', text: '你承认刘琮继位，襄阳名义暂稳，但未来曹操线可据此生成更保守的开局。' });
+        } else if (choiceId === 'standIndependent') {
+          gameState.player.independent = true;
+          gameState.player.ambition = clamp(Number(gameState.player.ambition || 0) + 12, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 6, 0, 100);
+          reports.push({ tone: 'bad', text: '你趁乱自立，声望与野心上升，但后续剧情线会把你视作荆州新变量。' });
+        }
+      }
+      if (node?.final) {
+        completePlotLine(lineId, state, reports);
+      }
+      return true;
     }
 
     function addCharacterMemory(character, memory) {
@@ -4953,12 +5239,14 @@ const MAX_MAP_ZOOM = 4.2;
       if (letter.kind === 'npcInitiative') {
         const result = await resolveNpcInitiativeLetter(letter, choiceId);
         if (result === 'conversation') return;
+      } else if (letter.kind === 'plotEvent') {
+        resolvePlotEventChoice(letter, choiceId, reports);
       } else {
         resolveNpcLetterChoice(letter, choiceId, reports);
       }
 
       const senderId = letter.fromCharacterId || letter.senderId || letter.fromId || letter.sender || letter.characterId || (letter.meta && letter.meta.characterId);
-      if (senderId === 'liuBiao') {
+      if (senderId === 'liuBiao' && letter.kind !== 'plotEvent') {
         if (choiceId === 'obey') gameState.player.protection = clamp(gameState.player.protection + 3, 0, 100);
         if (choiceId === 'support') gameState.cities.guiyang.food += 420;
         if (choiceId === 'conceal') applyProtectionDecay(6, '你向刘表隐瞒桂阳实情');
@@ -5388,6 +5676,21 @@ const MAX_MAP_ZOOM = 4.2;
       };
       gameState.militaryOrders.push({ ...structuredClone(order), campaignId: campaign.id, status: 'marching', eta: travelTurns });
       gameState.campaigns.push(campaign);
+      if (isBattle) {
+        gameState.factionWarState ||= { lastAttackTurnByFaction: {}, recentWars: [] };
+        gameState.factionWarState.recentWars.push({
+          attacker: 'player',
+          defender: cityController(target.id),
+          source: source.id,
+          target: target.id,
+          turn: gameState.turn,
+          troops: amount,
+          routeMode: campaign.routeMode
+        });
+        if (gameState.factionWarState.recentWars.length > 30) {
+          gameState.factionWarState.recentWars.shift();
+        }
+      }
       playMarchEffect(campaign);
       reports.push({ tone: 'good', text: source.name + '军启程前往' + target.name + '，预计 ' + travelTurns + ' 回合抵达。' });
       if (isBattle) maybeRevealCharactersFromWar(cityController(target.id), campaign, reports);
@@ -5864,6 +6167,7 @@ const MAX_MAP_ZOOM = 4.2;
           if (controller === faction) continue;
           // Player cities are valid targets; hostility is handled by getFactionHostility.
           if (!gameState.cities[targetId] || isRemovedCityId(targetId)) continue;
+          if (controller === 'player' && !canNpcTargetPlayer(faction)) continue;
           const hostility = getFactionHostility(faction, controller);
           if (hostility <= -5 && edge.roadType !== 'water') {
             targets.add(targetId);
@@ -5882,6 +6186,122 @@ const MAX_MAP_ZOOM = 4.2;
       return 0;
     }
 
+    function recentPlayerAggressionAgainst(factionId) {
+      let score = 0;
+      (gameState.campaigns || []).filter(isActiveCampaign).forEach(campaign => {
+        if (campaign.faction !== 'player') return;
+        const targetController = cityController(campaign.target);
+        if (targetController === factionId) score += campaign.status === 'siege' ? 2.4 : 1.6;
+      });
+      (gameState.factionWarState?.recentWars || []).forEach(war => {
+        if (!war || war.attacker !== 'player') return;
+        if (gameState.turn - Number(war.turn || 0) > 18) return;
+        const defender = war.defender || cityController(war.target);
+        if (defender === factionId) {
+          const age = Math.max(0, gameState.turn - Number(war.turn || 0));
+          score += clamp(2.2 - age * 0.08, 0.5, 2.2);
+        }
+      });
+      return score;
+    }
+
+    function liuBiaoProtectionWarDampener() {
+      if (gameState.player?.independent) return 1;
+      const protection = clamp(Number(gameState.player?.protection || 0), 0, 100);
+      if (protection >= 85) return 0.12;
+      if (protection >= 70) return 0.22;
+      if (protection >= 55) return 0.42;
+      if (protection >= 40) return 0.68;
+      return 1;
+    }
+
+    function historicalPlayerWarPressure(factionId) {
+      if (!isStoryMode()) return 0;
+      const turn = Number(gameState.turn || 1);
+      const playerCities = controlledCities().map(city => city.id);
+      const cityCount = playerCities.length;
+      const pressure = {
+        liubiao: 0,
+        cao: turn >= 45 ? 18 : turn >= 30 ? 8 : 0,
+        sun: turn >= 28 && cityCount >= 3 ? 10 : 0,
+        yuan: playerCities.some(id => ['baima', 'dongjun', 'pingyuan', 'yecheng'].includes(id)) ? 24 : 0,
+        yuanshu: turn >= 18 && cityCount >= 2 ? 10 : 0,
+        gongsun: playerCities.includes('pingyuan') || playerCities.includes('yecheng') ? 14 : 0,
+        liubiao_local: 0
+      };
+      if (factionId === 'liubiao' && Number(gameState.player?.protection || 0) < 35) return 14;
+      return pressure[factionId] || 0;
+    }
+
+    function getNpcPlayerWarDesire(factionId) {
+      const aggression = recentPlayerAggressionAgainst(factionId);
+      const protection = clamp(Number(gameState.player?.protection || 0), 0, 100);
+      const protectionDampener = liuBiaoProtectionWarDampener();
+      const historical = aggression > 0 ? historicalPlayerWarPressure(factionId) * 0.35 : 0;
+      const basePressure = isStoryMode()
+        ? (['cao', 'yuan', 'sun', 'yuanshu'].includes(factionId) ? 5 : 2)
+        : (['cao', 'yuan', 'gongsun', 'sun', 'yuanshu'].includes(factionId) ? 26 : 18);
+      const sandboxExpansionPressure = !isStoryMode() ? Math.max(0, controlledCities().length - 1) * 4 : 0;
+      const ambitionPressure = !isStoryMode() ? clamp(Number(gameState.player?.ambition || 0) - 35, 0, 65) * 0.18 : 0;
+      const grievance = aggression * 34;
+      const raw = basePressure + sandboxExpansionPressure + ambitionPressure + historical + grievance;
+      const protectedRaw = aggression > 0
+        ? raw * clamp(0.7 + aggression * 0.18, protectionDampener, 1.3)
+        : raw * protectionDampener;
+      return {
+        score: clamp(protectedRaw, 0, 100),
+        aggression,
+        protection,
+        protectionDampener,
+        historical,
+        raw
+      };
+    }
+
+    function canNpcTargetPlayer(factionId) {
+      const desire = getNpcPlayerWarDesire(factionId);
+      if (desire.aggression > 0) return desire.score >= 18;
+      if (isStoryMode()) {
+        if (desire.protection >= 85) return desire.score >= 8 && Math.random() < 0.08;
+        if (desire.protection >= 70) return desire.score >= 8 && Math.random() < 0.14;
+        if (desire.protection >= 55) return desire.score >= 8 && Math.random() < 0.26;
+        return desire.score >= 8 && Math.random() < 0.42;
+      }
+      if (desire.protection >= 85) return desire.score >= 6 && Math.random() < 0.25;
+      if (desire.protection >= 70) return desire.score >= 8 && Math.random() < 0.38;
+      if (desire.protection >= 55) return desire.score >= 10 && Math.random() < 0.55;
+      return desire.score >= 10;
+    }
+
+    function npcTargetScore(factionId, targetId) {
+      const city = gameState.cities[targetId];
+      const controller = cityController(targetId);
+      const hostility = Math.abs(getFactionHostility(factionId, controller));
+      const leakBonus = getActiveIntelligenceLeakBonus(factionId, targetId).targetScore;
+      let score = hostility + publicSupportTargetScore(city) + leakBonus;
+      if (controller === 'player') {
+        const desire = getNpcPlayerWarDesire(factionId);
+        score = score * 0.35 + desire.score;
+        if (desire.aggression > 0) score += 18 + desire.aggression * 7;
+        else score *= liuBiaoProtectionWarDampener();
+      } else if (isStoryMode()) {
+        const historicRivals = {
+          cao: ['yuan', 'yuanshu', 'liu', 'liubiao'],
+          yuan: ['cao', 'gongsun'],
+          sun: ['liubiao', 'yuanshu', 'cao'],
+          liu: ['cao', 'yuanshu'],
+          liubiao: ['sun', 'yuanshu'],
+          yuanshu: ['liu', 'cao', 'sun'],
+          gongsun: ['yuan'],
+          liuzhang: ['zhanglu'],
+          zhanglu: ['liuzhang', 'cao'],
+          mateng: ['cao', 'zhanglu']
+        };
+        if ((historicRivals[factionId] || []).includes(controller)) score += 18;
+      }
+      return score;
+    }
+
     function getActiveIntelligenceLeakBonus(factionId, cityId) {
       const leaks = gameState.publicUnrestState?.intelligenceLeaks || [];
       const activeLeak = leaks.find(leak =>
@@ -5896,7 +6316,11 @@ const MAX_MAP_ZOOM = 4.2;
     function getFactionHostility(factionA, factionB) {
       if (factionA === factionB) return 100;
       if ((factionA === 'player' && isPlayerAlliedWithFaction(factionB)) || (factionB === 'player' && isPlayerAlliedWithFaction(factionA))) return 80;
-      if (factionA === 'player' || factionB === 'player') return -100;
+      if (factionA === 'player' || factionB === 'player') {
+        const npcFaction = factionA === 'player' ? factionB : factionA;
+        const desire = getNpcPlayerWarDesire(npcFaction);
+        return -clamp(12 + desire.score, 0, 100);
+      }
       const rels = gameState.factionRelations || {};
       const row = rels[factionA] || {};
       return row[factionB] || 0;
@@ -5989,10 +6413,14 @@ const MAX_MAP_ZOOM = 4.2;
         return city && realTroops(city.garrison) > 500;
       });
       if (!hasEnoughTroops) return false;
-      const maxHostility = Math.max(...targets.map(t => Math.abs(getFactionHostility(faction, cityController(t)))));
-      const baseChance = clamp(0.08 + maxHostility / 300, 0.05, 0.55);
-      const aggressionBonus = ['cao', 'yuan', 'gongsun'].includes(faction) ? 0.12 : 0;
-      const chance = baseChance + aggressionBonus;
+      const maxScore = Math.max(...targets.map(t => npcTargetScore(faction, t)));
+      const hasPlayerTarget = targets.some(targetId => cityController(targetId) === 'player');
+      const desire = getNpcPlayerWarDesire(faction);
+      const baseChance = clamp(0.05 + maxScore / 360, 0.03, 0.5);
+      const aggressionBonus = ['cao', 'yuan', 'gongsun'].includes(faction) ? 0.08 : 0;
+      const protectionPenalty = hasPlayerTarget && desire.aggression <= 0 ? (1 - liuBiaoProtectionWarDampener()) * 0.18 : 0;
+      const retaliationBonus = desire.aggression > 0 ? clamp(desire.aggression * 0.08, 0.06, 0.22) : 0;
+      const chance = clamp(baseChance + aggressionBonus + retaliationBonus - protectionPenalty, 0.02, 0.58);
       return Math.random() < chance;
     }
 
@@ -6005,18 +6433,13 @@ const MAX_MAP_ZOOM = 4.2;
       );
       if (candidates.length === 0) return null;
       candidates.sort((a, b) => {
-        const ha = Math.abs(getFactionHostility(faction, cityController(a)));
-        const hb = Math.abs(getFactionHostility(faction, cityController(b)));
-        const leakBonusA = getActiveIntelligenceLeakBonus(faction, a).targetScore;
-        const leakBonusB = getActiveIntelligenceLeakBonus(faction, b).targetScore;
-        return (hb + publicSupportTargetScore(gameState.cities[b]) + leakBonusB) -
-               (ha + publicSupportTargetScore(gameState.cities[a]) + leakBonusA);
+        return npcTargetScore(faction, b) - npcTargetScore(faction, a);
       });
       const topTargets = candidates.slice(0, Math.min(3, candidates.length));
       for (const targetId of topTargets) {
         const sourceId = getNpcCampaignSource(faction, targetId);
         if (!sourceId) continue;
-        const hostility = Math.abs(getFactionHostility(faction, cityController(targetId)));
+        const hostility = Math.max(Math.abs(getFactionHostility(faction, cityController(targetId))), npcTargetScore(faction, targetId));
         let troopsAmount, routeMode;
         if (hostility >= 30) {
           troopsAmount = 2000 + Math.floor(Math.random() * 1500);
@@ -7518,6 +7941,11 @@ const MAX_MAP_ZOOM = 4.2;
       const summary = getStoredSaveSummary();
       const continueButton = document.getElementById('continueGame');
       const status = document.getElementById('menuSaveStatus');
+      document.querySelectorAll('[data-game-mode-choice]').forEach(button => {
+        const active = button.getAttribute('data-game-mode-choice') === selectedNewGameMode;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
       if (continueButton) continueButton.disabled = !summary;
       if (!status) return;
       if (!summary) {
@@ -7547,10 +7975,11 @@ const MAX_MAP_ZOOM = 4.2;
       updateMainMenu();
     }
 
-    function resetRuntimeForNewGame() {
+    function resetRuntimeForNewGame(mode = selectedNewGameMode) {
       clearGuideHighlights();
       removeGuideOverlay();
       gameState = createInitialState();
+      initializePlotLinesForMode(mode);
       characterDraft = { name: '', identity: 'commandant' };
       characterCreationStep = 'arrival';
       FACTIONS.player.name = '玩家';
@@ -7565,7 +7994,7 @@ const MAX_MAP_ZOOM = 4.2;
     function beginNewGameFlow() {
       stopOpeningTransition();
       stopOfficeHandoffTransition();
-      resetRuntimeForNewGame();
+      resetRuntimeForNewGame(selectedNewGameMode);
       launchScreen = 'character';
       render();
     }
@@ -7639,8 +8068,10 @@ const MAX_MAP_ZOOM = 4.2;
       setMapFocusOn(center.x, center.y, 2.55);
       resetActionPoints();
       gameState.storyFlags.introSeen = true;
-      gameState.currentGoal = '稳定桂阳：整顿治安，安抚士族，备粮并训练郡兵。';
+      if (isStoryMode()) activatePlotLine('liu_biao');
+      gameState.currentGoal = getDisplayedCurrentGoal();
       addNews('good', '刘表密令：桂阳实际控制权交予' + gameState.player.name + '。第一阶段目标：稳定桂阳。');
+      processPlotLines(gameState.turnEvents);
       launchScreen = 'game';
       updateTabLockStates();
       saveToStorage(false);
@@ -7748,7 +8179,7 @@ const MAX_MAP_ZOOM = 4.2;
       const items = [
         ['回合 / 日期', isGuideActive() ? '新手引导｜第' + gameState.tutorial.guidePhase + '回合' : '第' + gameState.turn + '回合｜' + formatDate()],
         ['当前篇章', getActName()],
-        ['当前目标', gameState.currentGoal],
+        ['当前目标', getDisplayedCurrentGoal(), 'currentGoalHelp'],
         ['粮草', fmt(totals.food)],
         ['府库', fmt(totals.money)],
         ['刘表庇护', gameState.player.protection + ' / 100', 'protectionHelp'],
@@ -8410,7 +8841,7 @@ const MAX_MAP_ZOOM = 4.2;
           <div class="character-card-body">
             <strong>${escapeHtml(character.name)}</strong>
             <small>${escapeHtml(factionName(character.faction))}｜${escapeHtml(character.type)}｜${escapeHtml(character.rarity)}</small>
-            <small>${escapeHtml(lordState || character.status)}</small>
+            <small>${escapeHtml(lordState || characterStatusName(character.status))}</small>
           </div>
         </article>
       `;
@@ -8504,7 +8935,7 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="character-detail-portrait">
           ${renderCharacterPortrait(character, 'detail')}
         </div>
-        <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(character.status)}</span></div>
+        <div class="tag-row"><span class="tag">${escapeHtml(character.role)}</span><span class="tag">${escapeHtml(regionName(character.location))}</span><span class="tag">${escapeHtml(characterStatusName(character.status))}</span></div>
         ${battleTags ? `<div class="tag-row character-battle-tags">${battleTags}</div>` : ''}
         <p>${escapeHtml(character.summary)}</p>
         <div class="kv-grid">
@@ -9630,7 +10061,7 @@ const MAX_MAP_ZOOM = 4.2;
         </div>
         <div class="card">
           <h3>荆州人物</h3>
-          <p>蔡瑁：${gameState.characters.caiMao.status}｜蒯越：${gameState.characters.kuaiYue.status}｜黄祖：${gameState.characters.huangZu.status}｜文聘：${gameState.characters.wenPin.status}</p>
+          <p>蔡瑁：${escapeHtml(characterStatusName(gameState.characters.caiMao.status))}｜蒯越：${escapeHtml(characterStatusName(gameState.characters.kuaiYue.status))}｜黄祖：${escapeHtml(characterStatusName(gameState.characters.huangZu.status))}｜文聘：${escapeHtml(characterStatusName(gameState.characters.wenPin.status))}</p>
         </div>
       `;
     }
@@ -9646,7 +10077,7 @@ const MAX_MAP_ZOOM = 4.2;
           ${metric('袁绍权威', y.authority)}
           ${metric('袁绍警戒', y.alert)}
           ${metric('袁绍信任', y.trust)}
-          <div class="tag-row"><span class="tag">状态：${y.status}</span><span class="tag">本营：邺城</span></div>
+          <div class="tag-row"><span class="tag">状态：${escapeHtml(characterStatusName(y.status))}</span><span class="tag">本营：邺城</span></div>
         </div>
         <div class="card">
           <h3>夺袁行动</h3>
@@ -10163,6 +10594,7 @@ const MAX_MAP_ZOOM = 4.2;
       processAllianceDiplomacy(reports);
       runFactionAI(reports);
       runNpcWarAI(reports);
+      processPlotLines(reports);
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
       evaluateNpcInitiatives();
@@ -12808,6 +13240,8 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.turnEvents ||= [];
       migrated.turnSummaries ||= [];
       migrated.visualEffects ||= [];
+      migrated.gameMode = migrated.gameMode === 'story' ? 'story' : 'sandbox';
+      migrated.plotLineStates ||= {};
       migrated.tutorial ||= null;
       migrated.militaryPlanner ||= { sourceId: null, targetId: null, route: 'official' };
       migrated.factionWarState ||= { lastAttackTurnByFaction: {}, recentWars: [] };
@@ -12871,6 +13305,7 @@ const MAX_MAP_ZOOM = 4.2;
         characters: Object.assign(fresh.characters, loaded.characters || {}),
         diplomacy: Object.assign(fresh.diplomacy, loaded.diplomacy || {}),
         storyFlags: Object.assign(fresh.storyFlags, loaded.storyFlags || {}),
+        plotLineStates: Object.assign(fresh.plotLineStates || {}, loaded.plotLineStates || {}),
         aiMemory: Object.assign(fresh.aiMemory, loaded.aiMemory || {}),
         mapState: Object.assign(fresh.mapState, loaded.mapState || {}),
         militaryPlanner: Object.assign(fresh.militaryPlanner, loaded.militaryPlanner || { sourceId: null, targetId: null, route: 'official' }),
@@ -12884,6 +13319,8 @@ const MAX_MAP_ZOOM = 4.2;
       });
       Object.values(normalized.cities).forEach(normalizeCityPolicy);
       normalized.mapState = normalizeMapState(normalized.mapState);
+      normalized.gameMode = normalized.gameMode === 'story' ? 'story' : 'sandbox';
+      normalized.plotLineStates ||= {};
       if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 2) {
         applyInitialPublicSupportProfiles(normalized, true);
       }
@@ -14073,6 +14510,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     // ===================== 长悬停 tooltip =====================
     const HELP_TEXT = {
+      currentGoalHelp: getCurrentGoalHelpText,
       protectionHelp: '<strong>刘表庇护</strong><br>代表刘表名义上给予你的背书与保护。<br><span style="color:var(--good)">数值越高，外部势力越不敢轻易攻击、离间或试探桂阳；外交也更容易解锁。</span><br><span style="color:var(--bad)">擅自扩张、越权外交、隐瞒军备或荆南士族疑心过高，都会消耗这份庇护。</span>',
       gentrySuspicionHelp: '<strong>士族疑心</strong><br>代表荆南士族对你是否守礼、守信、能安民的怀疑程度。<br><span style="color:var(--good)">疑心越低，士族更愿意荐才、维持清议支持，地方局势更稳。</span><br><span style="color:var(--bad)">疑心过高会带来流言、观望与掣肘，并可能拖累刘表庇护。</span>',
       'cityOrder:recruit': '<strong>征兵</strong><br><span style="color:var(--good)">好处：快速增加兵力，补充守军和可调兵力。</span><br><span style="color:var(--bad)">代价：可能降低民心，并增加粮食压力。</span><br>消耗 1 政务点',
@@ -14119,7 +14557,8 @@ const MAX_MAP_ZOOM = 4.2;
         return;
       }
       const key = target.getAttribute('data-help-key');
-      const text = key ? HELP_TEXT[key] : target.getAttribute('data-help');
+      const helper = key ? HELP_TEXT[key] : target.getAttribute('data-help');
+      const text = typeof helper === 'function' ? helper() : helper;
       if (!text) { hideTooltip(); return; }
       clearTimeout(tooltipState.timer);
       tooltipState.timer = setTimeout(() => {
@@ -14298,6 +14737,12 @@ const MAX_MAP_ZOOM = 4.2;
         }
         if (event.target.closest('[data-auth-guest]')) {
           await enterAsGuest();
+          return;
+        }
+        const modeChoice = event.target.closest('[data-game-mode-choice]');
+        if (modeChoice) {
+          selectedNewGameMode = modeChoice.getAttribute('data-game-mode-choice') === 'story' ? 'story' : 'sandbox';
+          updateMainMenu();
           return;
         }
         const menuAction = event.target.closest('[data-menu-action]');

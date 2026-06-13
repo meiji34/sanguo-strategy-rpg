@@ -2396,6 +2396,46 @@
       background: linear-gradient(90deg, rgba(42, 51, 45, 0.68), rgba(14, 19, 17, 0.42));
     }
 
+    .mode-choice {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .mode-choice-btn {
+      min-height: 62px;
+      border: 1px solid rgba(200, 205, 190, 0.18);
+      border-radius: 2px;
+      padding: 9px 10px;
+      color: rgba(222, 224, 210, 0.78);
+      background: rgba(11, 15, 14, 0.62);
+      text-align: left;
+    }
+
+    .mode-choice-btn strong,
+    .mode-choice-btn span {
+      display: block;
+    }
+
+    .mode-choice-btn strong {
+      color: #ecebd6;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+    }
+
+    .mode-choice-btn span {
+      margin-top: 4px;
+      color: rgba(222, 224, 210, 0.62);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .mode-choice-btn.active {
+      border-color: rgba(218, 189, 115, 0.62);
+      background: linear-gradient(180deg, rgba(73, 58, 34, 0.74), rgba(17, 22, 18, 0.76));
+      box-shadow: inset 0 0 18px rgba(224, 189, 104, 0.08), 0 8px 16px rgba(0, 0, 0, 0.28);
+    }
+
     .menu-save-status {
       width: min(430px, 86vw);
       min-height: 24px;
