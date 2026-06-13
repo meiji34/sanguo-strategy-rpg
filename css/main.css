@@ -5176,6 +5176,16 @@
       50% { stroke-opacity: 1; filter: drop-shadow(0 0 14px rgba(255, 215, 0, 0.9)) drop-shadow(0 0 28px rgba(255, 215, 0, 0.4)); }
     }
 
+    /* 新手引导完成弹窗 */
+    .guide-complete-modal .guide-complete-text {
+      font-size: 1.15rem;
+      line-height: 1.9;
+      white-space: pre-wrap;
+      text-align: center;
+      padding: 24px 20px;
+      color: #5c4f3a;
+    }
+
     /* Tab 锁定样式 */
     [data-tab].tab-locked {
       opacity: 0.52;

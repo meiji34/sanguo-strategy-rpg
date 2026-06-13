@@ -4880,7 +4880,13 @@ const MAX_MAP_ZOOM = 4.2;
       if (choice === 'relief' && campaign) requestRelief(campaign.id, campaign.target);
       if (choice === 'hold' && campaign) gameState.cities[campaign.target].defense = clamp(gameState.cities[campaign.target].defense + 4, 0, 100);
       if (choice === 'supply' && campaign) campaign.supply = Math.max(0, campaign.supply - 2);
-      if (choice === 'support') performLiuBiaoAction('supplies');
+      if (choice === 'support') {
+        const lb = gameState.characters.liuBiao;
+        const gy = gameState.cities[gameState.player.startingCity || 'guiyang'];
+        gy.food += 700;
+        gy.garrison.infantry += 100;
+        lb.trust = clamp(lb.trust - 3, 0, 100);
+      }
       if (choice !== 'later') addNews('warn', '紧急事务已处理：' + matter.title);
       gameState.activeModal = null;
       openNextCriticalModal();
@@ -5570,11 +5576,20 @@ const MAX_MAP_ZOOM = 4.2;
       }
       // If guide is active and we're closing an eventDetail modal, advance guide step
       const wasGuideModal = isGuideActive() && gameState.activeModal?.type === 'eventDetail';
+      // 第3回合：对话弹窗关闭后，自动高亮结束回合按钮
+      const wasDialogueInPhase3 = isGuideActive() && gameState.activeModal?.type === 'dialogue' && gameState.tutorial.guidePhase === 3 && getGuideStepIndex(3) === 4;
       gameState.activeModal = null;
       openNextCriticalModal();
       render();
       if (wasGuideModal) {
         advanceGuideStep();
+      }
+      if (wasDialogueInPhase3) {
+        setTimeout(() => {
+          clearGuideHighlights();
+          setForceAction('endTurn', 'endTurn');
+          highlightGuideElement('[data-end-turn="1"]', '请点击结束回合，完成本回合', 'left');
+        }, 200);
       }
     }
 
@@ -5865,6 +5880,13 @@ const MAX_MAP_ZOOM = 4.2;
         root.innerHTML = `<div class="game-modal">
           <div class="modal-head"><h2>${escapeHtml(modal.title)}</h2><button class="ghost-btn" data-close-modal="1">收起</button></div>
           <div class="dialogue-text">${escapeHtml(modal.text)}</div>
+        </div>`;
+        return;
+      }
+      if (modal.type === 'guideComplete') {
+        root.innerHTML = `<div class="game-modal guide-complete-modal">
+          <div class="modal-head"><h2>${escapeHtml(modal.title)}</h2><button class="ghost-btn" data-close-modal="1">开始</button></div>
+          <div class="guide-complete-text">${escapeHtml(modal.text)}</div>
         </div>`;
         return;
       }
@@ -6640,6 +6662,10 @@ const MAX_MAP_ZOOM = 4.2;
       const transition = document.getElementById('openingTransition');
       transition?.classList.toggle('show', launchScreen === 'transition' || launchScreen === 'commissioning');
       transition?.classList.toggle('departure', launchScreen === 'commissioning');
+      if (launchScreen !== 'game') {
+        clearGuideHighlights();
+        removeGuideOverlay();
+      }
       updateAuthScreen();
       updateMainMenu();
     }
@@ -6686,6 +6712,7 @@ const MAX_MAP_ZOOM = 4.2;
       startAutosaveTimer();
       updateAutosaveDisplay();
       render();
+      if (isGuideActive()) processGuidePhase();
       return true;
     }
 
@@ -8977,8 +9004,23 @@ const MAX_MAP_ZOOM = 4.2;
       render();
     }
 
-    function performLiuBiaoAction(action) {
+    function queueLiuBiaoAction(action) {
       if (!spendPoint('dip')) return;
+      const names = { report: '上报桂阳局势', loyal: '表明忠心', supplies: '请求兵粮', conceal: '隐瞒扩张准备' };
+      gameState.orders.push({
+        id: uid(),
+        type: 'liubiao',
+        point: 'dip',
+        label: '襄阳：' + (names[action] || action),
+        payload: { action }
+      });
+      toast('已加入指令：襄阳 ' + (names[action] || action));
+      saveToStorage(false);
+      render();
+    }
+
+    function resolveLiuBiaoAction(order, reports) {
+      const action = order.payload.action;
       const liuBiao = gameState.characters.liuBiao;
       const guiyang = gameState.cities.guiyang;
       const gentry = gameState.characters.jingnanGentry;
@@ -8986,25 +9028,23 @@ const MAX_MAP_ZOOM = 4.2;
         liuBiao.trust = clamp(liuBiao.trust + 5, 0, 100);
         gameState.player.protection = clamp(gameState.player.protection + 4, 0, 100);
         gentry.suspicion = clamp(gentry.suspicion - 2, 0, 100);
-        addNews('good', '你向襄阳上报桂阳局势。刘表认可你的谨慎，庇护略有恢复。');
+        reports.push({ tone: 'good', text: '你向襄阳上报桂阳局势。刘表认可你的谨慎，庇护略有恢复。' });
       } else if (action === 'loyal') {
         liuBiao.trust = clamp(liuBiao.trust + 7, 0, 100);
         gameState.player.ambition = clamp(gameState.player.ambition - 2, 0, 100);
         gameState.player.protection = clamp(gameState.player.protection + 3, 0, 100);
-        addNews('good', '你向刘表表明忠心。襄阳对桂阳的疑虑暂缓。');
+        reports.push({ tone: 'good', text: '你向刘表表明忠心。襄阳对桂阳的疑虑暂缓。' });
       } else if (action === 'supplies') {
         guiyang.food += 700;
         guiyang.garrison.infantry += 100;
         liuBiao.trust = clamp(liuBiao.trust - 3, 0, 100);
-        addNews('warn', '襄阳拨来一批粮草与郡兵。刘表答应支援，也在等待你的治理成果。');
+        reports.push({ tone: 'warn', text: '襄阳拨来一批粮草与郡兵。刘表答应支援，也在等待你的治理成果。' });
       } else if (action === 'conceal') {
         gameState.player.ambition = clamp(gameState.player.ambition + 5, 0, 100);
         gameState.characters.retinue.network = clamp(gameState.characters.retinue.network + 4, 0, 100);
-        applyProtectionDecay(8, '你刻意向襄阳隐瞒扩张准备');
-        addNews('warn', '你选择隐瞒部分准备。亲信网络更深，刘表庇护却因此松动。');
+        applyProtectionDecay(8, '你刻意向襄阳隐瞒扩张准备', reports);
+        reports.push({ tone: 'warn', text: '你选择隐瞒部分准备。亲信网络更深，刘表庇护却因此松动。' });
       }
-      saveToStorage(false);
-      render();
     }
 
     function performYuanAction(action) {
@@ -9144,6 +9184,7 @@ const MAX_MAP_ZOOM = 4.2;
         if (order.type === 'military') resolveMilitaryOrder(order, reports);
         if (order.type === 'scheme') resolveScheme(order, reports);
         if (order.type === 'diplomacy') resolveDiplomacy(order, reports);
+        if (order.type === 'liubiao') resolveLiuBiaoAction(order, reports);
         if (order.type === 'inner') resolveInner(order, reports);
       });
     }
@@ -12479,7 +12520,12 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.tutorial.guidePhase += 1;
       gameState.tutorial._stepIndex = {};
       gameState.tutorial.forceAction = null;
-      processGuidePhase();
+      // If we've advanced past the last guide phase, complete immediately
+      if (gameState.tutorial.guidePhase > 5) {
+        completeGuide();
+      } else {
+        processGuidePhase();
+      }
     }
 
     function completeGuide() {
@@ -12501,9 +12547,9 @@ const MAX_MAP_ZOOM = 4.2;
       updateTabLockStates();
       saveToStorage(false);
       gameState.activeModal = {
-        type: 'eventDetail',
+        type: 'guideComplete',
         title: '新手引导完成',
-        text: '新手引导已经完成，现在开始你的乱世执棋吧。'
+        text: '新手引导已经完成，现在开始你的乱世执棋吧！'
       };
       render();
     }
@@ -12627,14 +12673,15 @@ const MAX_MAP_ZOOM = 4.2;
           setForceAction('clickTab', 'characters');
           highlightGuideElement('[data-tab="characters"]', '点击查看人物列表', 'top');
           break;
-        case 3: // 刘表人物卡片
-          setForceAction('clickCharacter', 'liubiao');
-          highlightGuideElement('[data-open-character-profile="liubiao"]', '查看刘表的详细属性与关系', 'left');
+        case 3: // 刘表人物卡片（强制高亮点击）
+          setForceAction('clickCharacter', 'liuBiao');
+          highlightGuideElement('[data-open-character-profile="liuBiao"]', '请点击刘表，查看详细属性与关系', 'left');
           break;
-        case 4: // 会谈按钮
+        case 4: // 会谈按钮（强制高亮点击）
           setForceAction('clickConversation', 'talk');
-          highlightGuideElement('[data-conversation="talk"]', '会谈可提升信任和关系', 'left');
+          highlightGuideElement('[data-conversation="talk"]', '请点击会谈，提升信任和关系', 'left');
           break;
+        // 结束回合步骤在对话弹窗关闭后自动触发（见 closeActiveModal）
         default:
           endGuideTurn();
           return;
@@ -13453,7 +13500,11 @@ const MAX_MAP_ZOOM = 4.2;
           if (checkForceAction('clickConversation', convType)) return;
           startNpcConversation(conversation.getAttribute('data-character'), convType);
           if (isGuideActive() && isForceAction('clickConversation', convType)) {
-            advanceGuideStep();
+            clearGuideHighlights();
+            // 第3回合：不立即推进步骤，等对话弹窗关闭后再高亮结束回合
+            if (!(gameState.tutorial.guidePhase === 3 && getGuideStepIndex(3) === 4)) {
+              advanceGuideStep();
+            }
           }
           return;
         }
@@ -13713,7 +13764,7 @@ const MAX_MAP_ZOOM = 4.2;
         const liubiao = event.target.closest('[data-liubiao-action]');
         if (liubiao) {
           const action = liubiao.getAttribute('data-liubiao-action');
-          performLiuBiaoAction(action);
+          queueLiuBiaoAction(action);
           if (isGuideActive() && isForceAction('liubiaoAction', action)) {
             gameState.tutorial.forceAction = null;
             clearGuideHighlights();
@@ -13998,8 +14049,8 @@ const MAX_MAP_ZOOM = 4.2;
     else resetActionPoints();
     render();
     validateCityData();
-    // Restore guide highlights if guide was active
-    if (isGuideActive()) {
+    // Restore guide highlights only when actually entering the game screen
+    if (isGuideActive() && launchScreen === 'game') {
       processGuidePhase();
     }
     if (gameState.turn > 1) {
