@@ -57,6 +57,7 @@ const MAX_MAP_ZOOM = 4.2;
     const MAX_NPC_CAMPAIGNS_PER_TURN = 3;
     const MAX_ATTACKERS_PER_TARGET_CITY = 3;
     const MULTI_FACTION_TARGET_CHANCE = 0.22;
+    const NPC_RECRUITMENT_REPORT_THRESHOLD = 650;
     const CHARACTER_PORTRAITS = {
       liuBiao: './assets/characters/liu-biao.png',
       caiMao: './assets/characters/cai-mao.jpg',
@@ -323,22 +324,144 @@ const MAX_MAP_ZOOM = 4.2;
       return cities.reduce((sum, city) => sum + Number(city.publicSupport || 0), 0) / cities.length;
     }
 
+    function getPlayerAverageOrder() {
+      const cities = controlledCities();
+      if (!cities.length) return 0;
+      return cities.reduce((sum, city) => sum + Number(city.order || 0), 0) / cities.length;
+    }
+
+    function getFactionControlledCityIds(factionId) {
+      return Object.values(gameState.cities || {})
+        .filter(city => city && !isRemovedCityId(city.id) && cityController(city.id) === factionId)
+        .map(city => city.id);
+    }
+
+    function getFactionPressureProfile(factionId) {
+      const controlled = getFactionControlledCityIds(factionId);
+      const activeAgainst = (gameState.campaigns || []).filter(campaign =>
+        isActiveCampaign(campaign) &&
+        cityController(campaign.target) === factionId &&
+        campaign.faction !== factionId
+      );
+      const recentWars = (gameState.factionWarState?.recentWars || [])
+        .filter(war => war && gameState.turn - Number(war.turn || 0) <= 12);
+      const recentAgainst = recentWars.filter(war => war.defender === factionId || cityController(war.target) === factionId);
+      const playerAttacks = recentAgainst.filter(war => war.attacker === 'player').length +
+        activeAgainst.filter(campaign => campaign.faction === 'player').length;
+      const lostCities = recentWars.filter(war =>
+        war.defender === factionId &&
+        war.target &&
+        gameState.cities?.[war.target] &&
+        cityController(war.target) !== factionId
+      ).length;
+      const siegeCount = activeAgainst.filter(campaign => campaign.status === 'siege').length;
+      const targetTroops = getFactionMilitaryPower(factionId);
+      const playerTroops = getPlayerMilitaryPower();
+      const troopDisadvantage = targetTroops <= 0 ? 1.4 : clamp(playerTroops / Math.max(1, targetTroops) - 1, 0, 2.5);
+      const cityPressure = controlled.length <= 1 ? 1 : clamp((activeAgainst.length + recentAgainst.length + lostCities) / Math.max(1, controlled.length), 0, 2.2);
+      const pressure = clamp(
+        activeAgainst.length * 10 +
+        siegeCount * 12 +
+        recentAgainst.length * 5 +
+        lostCities * 14 +
+        troopDisadvantage * 18 +
+        (controlled.length <= 1 ? 8 : 0),
+        0,
+        100
+      );
+      const grievance = clamp(
+        playerAttacks * 16 +
+        lostCities * 8 +
+        siegeCount * 5 +
+        cityPressure * 8,
+        0,
+        100
+      );
+      return {
+        pressure,
+        grievance,
+        activeAttacks: activeAgainst.length,
+        siegeCount,
+        recentAttacks: recentAgainst.length,
+        playerAttacks,
+        lostCities,
+        cityCount: controlled.length,
+        troopDisadvantage
+      };
+    }
+
+    const LORD_SOLICITATION_PROFILES = {
+      liuBei: { focus: '仁义与民心', minPublic: 68, minPrestige: 45, minTrust: 62, minRespect: 55, weightPublic: 1.45, weightPrestige: 1.2, weightTroops: 0.45, weightOrder: 0.55, baseDifficulty: 72, minChance: 8, maxChance: 38 },
+      caoCao: { focus: '实力、秩序与威慑', minTroopRatio: 1.65, minOrder: 55, minPrestige: 52, minRespect: 65, weightTroops: 1.35, weightOrder: 1.05, weightPrestige: 0.9, weightFear: 0.9, baseDifficulty: 82, minChance: 6, maxChance: 30 },
+      sunQuan: { focus: '江东稳定、经济与水路安全', minCityCount: 5, minOrder: 55, minPrestige: 48, minTrust: 56, weightCities: 0.9, weightOrder: 0.95, weightPrestige: 0.9, weightPublic: 0.6, baseDifficulty: 74, minChance: 8, maxChance: 34 },
+      yuanShao: { focus: '声望、名分与体面', minPrestige: 65, minCityCount: 5, minRespect: 58, weightPrestige: 1.45, weightCities: 0.9, weightRespect: 0.9, baseDifficulty: 76, minChance: 8, maxChance: 36 },
+      liuBiao: { focus: '合法性、荆州稳定与士族信任', minPrestige: 55, minPublic: 62, minOrder: 58, minRespect: 55, weightPrestige: 1.0, weightPublic: 1.05, weightOrder: 0.95, baseDifficulty: 78, minChance: 7, maxChance: 32 },
+      liuZhang: { focus: '保境安民与安全承诺', minPublic: 60, minOrder: 55, minTrust: 55, weightPublic: 1.0, weightOrder: 0.9, weightTrust: 0.95, weightPressure: 0.9, baseDifficulty: 62, minChance: 12, maxChance: 52 },
+      zhangLu: { focus: '地方秩序与自治承诺', minOrder: 62, minPublic: 55, minTrust: 52, weightOrder: 1.2, weightPublic: 0.8, weightTrust: 0.8, baseDifficulty: 60, minChance: 12, maxChance: 50 },
+      maTeng: { focus: '军力、边地安全与抗曹形势', minTroopRatio: 1.35, minRespect: 52, weightTroops: 1.15, weightRespect: 0.85, weightFear: 0.55, weightPressure: 1.0, baseDifficulty: 66, minChance: 10, maxChance: 48 },
+      gongsunZan: { focus: '军力、北方战局与压制袁绍', minTroopRatio: 1.45, minRespect: 55, weightTroops: 1.2, weightRespect: 0.75, weightPressure: 0.95, baseDifficulty: 68, minChance: 10, maxChance: 45 },
+      yuanShu: { focus: '强权、体面与利益', minTroopRatio: 1.5, minPrestige: 45, weightTroops: 1.1, weightPrestige: 0.6, weightFear: 0.85, weightPressure: 1.1, baseDifficulty: 64, minChance: 10, maxChance: 46 },
+      default: { focus: '实力、声望、关系与败势压力', minTroopRatio: 1.35, minPrestige: 45, minTrust: 55, minRespect: 50, weightTroops: 0.95, weightPrestige: 0.8, weightTrust: 0.85, weightRespect: 0.75, weightPressure: 0.8, baseDifficulty: 66, minChance: 10, maxChance: 45 }
+    };
+
+    function getLordSolicitationProfile(character) {
+      return LORD_SOLICITATION_PROFILES[character?.id] || LORD_SOLICITATION_PROFILES.default;
+    }
+
     function getLordSolicitationEligibility(character) {
       if (!isFactionLordCharacter(character)) {
         return { isLord: false, eligible: false, locked: false, reason: '不是势力主公' };
       }
       const factionId = character.lordOfFaction || FACTION_LORD_META[character.id]?.faction || character.faction;
+      const profile = getLordSolicitationProfile(character);
       const playerTroops = getPlayerMilitaryPower();
       const targetTroops = getFactionMilitaryPower(factionId);
       const playerPublic = getPlayerAveragePublicSupport();
       const targetPublic = getFactionAveragePublicSupport(factionId);
+      const playerOrder = getPlayerAverageOrder();
       const playerCityCount = controlledCities().length;
-      const targetCityCount = Object.values(gameState.cities || {})
-        .filter(city => city && cityController(city.id) === factionId).length;
-      const troopRatioRequired = targetCityCount <= 1 ? 1.15 : 1.35;
-      const troopOk = playerTroops >= Math.max(1500, targetTroops * troopRatioRequired);
-      const publicOk = playerPublic >= targetPublic + 12;
-      const cityOk = playerCityCount >= 2;
+      const targetCityCount = getFactionControlledCityIds(factionId).length;
+      const pressure = getFactionPressureProfile(factionId);
+      const troopRatio = playerTroops / Math.max(1, targetTroops);
+      const prestige = Number(gameState.player?.prestige || 0);
+      const trust = Number(character.trustPlayer || 0);
+      const respect = Number(character.respectPlayer || 0);
+      const fear = Number(character.fearPlayer || 0);
+      const suspicion = Number(character.suspicionOfPlayer || 0);
+      const troopRatioRequired = profile.minTroopRatio || (targetCityCount <= 1 ? 1.25 : 1.55);
+      const checks = [
+        { key: 'troops', ok: troopRatio >= troopRatioRequired || pressure.pressure >= 62, label: '兵力或败势压力', detail: '兵力比 ' + troopRatio.toFixed(2) + ' / ' + troopRatioRequired.toFixed(2) + '，压力 ' + Math.round(pressure.pressure) },
+        { key: 'prestige', ok: prestige >= (profile.minPrestige || 40), label: '声望', detail: Math.round(prestige) + ' / ' + (profile.minPrestige || 40) },
+        { key: 'trust', ok: trust >= (profile.minTrust || 48) || pressure.pressure >= 70, label: '信任', detail: Math.round(trust) + ' / ' + (profile.minTrust || 48) },
+        { key: 'respect', ok: respect >= (profile.minRespect || 45), label: '尊重', detail: Math.round(respect) + ' / ' + (profile.minRespect || 45) },
+        { key: 'public', ok: playerPublic >= (profile.minPublic || 45), label: '我方民心', detail: Math.round(playerPublic) + ' / ' + (profile.minPublic || 45) },
+        { key: 'order', ok: playerOrder >= (profile.minOrder || 40), label: '我方治安', detail: Math.round(playerOrder) + ' / ' + (profile.minOrder || 40) },
+        { key: 'cities', ok: playerCityCount >= (profile.minCityCount || 2), label: '控制城池', detail: playerCityCount + ' / ' + (profile.minCityCount || 2) }
+      ];
+      const failed = checks.filter(check => !check.ok);
+
+      const score = clamp(
+        (troopRatio - 1) * 18 * (profile.weightTroops || 0.75) +
+        (prestige - 35) * 0.55 * (profile.weightPrestige || 0.65) +
+        (playerPublic - 45) * 0.65 * (profile.weightPublic || 0.55) +
+        (playerOrder - 45) * 0.55 * (profile.weightOrder || 0.45) +
+        (trust - 45) * 0.85 * (profile.weightTrust || 0.6) +
+        (respect - 45) * 0.75 * (profile.weightRespect || 0.55) +
+        (fear - 30) * 0.35 * (profile.weightFear || 0.35) +
+        pressure.pressure * 0.55 * (profile.weightPressure || 0.65) -
+        suspicion * 0.45 -
+        Number(character.personality?.proud || 45) * 0.16 -
+        Number(character.stats?.ambition || 45) * 0.14,
+        -60,
+        120
+      );
+      const unlockScore = score >= profile.baseDifficulty - 30;
+      const eligible = failed.length <= 2 && unlockScore && character.status !== 'recruited';
+      const successChance = clamp(
+        (score - profile.baseDifficulty + 50) / 100,
+        (profile.minChance || 8) / 100,
+        (profile.maxChance || 45) / 100
+      );
 
       if (character.id === 'liuBiao' && !gameState.player?.independent) {
         return {
@@ -350,33 +473,40 @@ const MAX_MAP_ZOOM = 4.2;
           targetTroops,
           playerPublic,
           targetPublic,
+          playerOrder,
           playerCityCount,
           targetCityCount,
-          details: { troopOk, publicOk, cityOk, requiredTroopRatio: troopRatioRequired, requiredPublicLead: 12 }
+          details: { checks, failed, pressure, profile, troopRatio, score, successChance }
         };
       }
 
-      const eligible = troopOk && publicOk && cityOk;
       return {
         isLord: true,
         eligible,
         locked: !eligible,
         reason: eligible
-          ? '你已具备压倒性威望，可尝试招揽此方主公。'
-          : '兵力、民心或城池基础尚不足以招揽此方主公。',
+          ? '条件已足，可尝试招揽；但主公仍可能争执、拒绝或反目。'
+          : '主公招揽条件不足：' + (failed.map(item => item.label).join('、') || '局势压力或关系不足') + '。',
         details: {
-          troopOk,
-          publicOk,
-          cityOk,
-          requiredTroopRatio: troopRatioRequired,
-          requiredPublicLead: 12
+          checks,
+          failed,
+          pressure,
+          profile,
+          troopRatio,
+          score,
+          successChance,
+          requiredTroopRatio: troopRatioRequired
         },
         playerTroops,
         targetTroops,
         playerPublic,
         targetPublic,
+        playerOrder,
         playerCityCount,
-        targetCityCount
+        targetCityCount,
+        successChance,
+        pressure,
+        profile
       };
     }
 
@@ -1324,44 +1454,73 @@ const MAX_MAP_ZOOM = 4.2;
       return Array.from(result);
     }
 
-    function checkNewBorderFactions() {
+    function pushCharacterDiscoveryReport(count, reason, reports) {
+      if (!count || !reports) return;
+      reports.push({
+        tone: 'good',
+        level: 'minor',
+        text: reason + '，' + count + ' 名历史人物进入传闻。'
+      });
+    }
+
+    function checkNewBorderFactions(reports) {
       gameState.knownBorderFactions ||= [];
 
       const current = getCurrentBorderFactions();
       const known = new Set(gameState.knownBorderFactions);
+      let total = 0;
 
       current.forEach(factionId => {
         if (known.has(factionId)) return;
         gameState.knownBorderFactions.push(factionId);
-        unlockCharactersByFaction(factionId, '与该势力接壤', 3);
+        const count = unlockCharactersByFaction(factionId, '与该势力接壤', 3);
+        total += count;
+        pushCharacterDiscoveryReport(count, '与' + factionName(factionId) + '接壤', reports);
       });
+
+      return total;
     }
 
-    function checkIntelligenceNetworkUnlocks() {
+    function checkIntelligenceNetworkUnlocks(reports) {
       gameState.characterUnlockFlags ||= {};
 
       const network = gameState.characters?.retinue?.network || 0;
+      let total = 0;
 
       if (network >= 30 && !gameState.characterUnlockFlags.intel30) {
         gameState.characterUnlockFlags.intel30 = true;
-        revealCharacter('siMaHui', 'rumored', '荆州名士传闻');
-        revealCharacter('pangDeGong', 'rumored', '荆州名士传闻');
-        revealCharacter('huangChengYan', 'rumored', '荆州名士传闻');
+        const count = [
+          revealCharacter('siMaHui', 'rumored', '荆州名士传闻'),
+          revealCharacter('pangDeGong', 'rumored', '荆州名士传闻'),
+          revealCharacter('huangChengYan', 'rumored', '荆州名士传闻')
+        ].filter(Boolean).length;
+        total += count;
+        pushCharacterDiscoveryReport(count, '情报网达到 30，荆州名士传闻浮现', reports);
       }
 
       if (network >= 60 && !gameState.characterUnlockFlags.intel60) {
         gameState.characterUnlockFlags.intel60 = true;
-        revealCharacter('zhugeLiang', 'rumored', '情报网络探知');
-        revealCharacter('pangTong', 'rumored', '情报网络探知');
-        revealCharacter('xuShu', 'rumored', '情报网络探知');
+        const count = [
+          revealCharacter('zhugeLiang', 'rumored', '情报网络探知'),
+          revealCharacter('pangTong', 'rumored', '情报网络探知'),
+          revealCharacter('xuShu', 'rumored', '情报网络探知')
+        ].filter(Boolean).length;
+        total += count;
+        pushCharacterDiscoveryReport(count, '情报网达到 60，隆中线索被探知', reports);
       }
 
       if (network >= 90 && !gameState.characterUnlockFlags.intel90) {
         gameState.characterUnlockFlags.intel90 = true;
-        revealCharacter('zhugeLiang', 'discovered', '情报详查');
-        revealCharacter('pangTong', 'discovered', '情报详查');
-        revealCharacter('xuShu', 'discovered', '情报详查');
+        const count = [
+          revealCharacter('zhugeLiang', 'discovered', '情报详查'),
+          revealCharacter('pangTong', 'discovered', '情报详查'),
+          revealCharacter('xuShu', 'discovered', '情报详查')
+        ].filter(Boolean).length;
+        total += count;
+        pushCharacterDiscoveryReport(count, '情报网达到 90，隆中人物行踪更清晰', reports);
       }
+
+      return total;
     }
 
     function getDiplomacyActionFaction(action) {
@@ -1379,8 +1538,9 @@ const MAX_MAP_ZOOM = 4.2;
       return map[action] || null;
     }
 
-    function maybeRevealCharactersFromWar(factionId, campaign) {
+    function maybeRevealCharactersFromWar(factionId, campaign, reports) {
       if (!campaign) return 0;
+      if (!factionId || factionId === 'player' || factionId === 'local') return 0;
       if (campaign.visibility === 'hidden') return 0;
       if (['raid', 'night', 'stealth'].includes(campaign.routeMode)) return 0;
 
@@ -1391,7 +1551,16 @@ const MAX_MAP_ZOOM = 4.2;
       if (gameState.turn - last < 5) return 0;
 
       gameState.characterUnlockFlags.warRevealTurnByFaction[factionId] = gameState.turn;
-      return unlockCharactersByFaction(factionId, '天下战事', 2);
+      const count = unlockCharactersByFaction(factionId, '天下战事', 2);
+      pushCharacterDiscoveryReport(count, factionName(factionId) + '卷入公开战事', reports);
+      return count;
+    }
+
+    function processCharacterDiscoveryTriggers(reports) {
+      let total = 0;
+      total += checkNewBorderFactions(reports) || 0;
+      total += checkIntelligenceNetworkUnlocks(reports) || 0;
+      return total;
     }
 
     function isMajorNpcForInitiative(character) {
@@ -3324,6 +3493,238 @@ const MAX_MAP_ZOOM = 4.2;
       return cityController(cityId) === factionId;
     }
 
+    function ensureDiplomacyRecord(factionId) {
+      if (!factionId || factionId === 'player') return null;
+      gameState.diplomacy ||= {};
+      gameState.diplomacy[factionId] ||= { relation: 30, pact: '未接触' };
+      gameState.diplomacy[factionId].alliance ||= null;
+      return gameState.diplomacy[factionId];
+    }
+
+    function ensureAllDiplomacyRecords() {
+      Object.keys(FACTIONS).forEach(factionId => {
+        if (factionId !== 'player') ensureDiplomacyRecord(factionId);
+      });
+    }
+
+    function getLordCharacterByFaction(factionId) {
+      return Object.values(gameState.characterRoster || {}).find(character =>
+        character && isFactionLordCharacter(character) &&
+        (character.lordOfFaction === factionId || FACTION_LORD_META[character.id]?.faction === factionId)
+      ) || null;
+    }
+
+    function isPlayerAlliedWithFaction(factionId) {
+      const record = ensureDiplomacyRecord(factionId);
+      return record?.pact === '盟友' && record.alliance?.active !== false;
+    }
+
+    function setFactionRelation(factionA, factionB, value) {
+      if (!factionA || !factionB || factionA === factionB) return;
+      gameState.factionRelations ||= structuredClone(DEFAULT_FACTION_RELATIONS);
+      gameState.factionRelations[factionA] ||= {};
+      gameState.factionRelations[factionB] ||= {};
+      gameState.factionRelations[factionA][factionB] = value;
+      gameState.factionRelations[factionB][factionA] = value;
+    }
+
+    function getFactionRelationValue(factionA, factionB) {
+      if (factionA === factionB) return 100;
+      const row = gameState.factionRelations?.[factionA] || {};
+      return Number(row[factionB] ?? DEFAULT_FACTION_RELATIONS[factionA]?.[factionB] ?? 0);
+    }
+
+    function getPlayerEnemyFactions() {
+      const enemies = new Set();
+      Object.keys(FACTIONS).forEach(fid => {
+        if (fid !== 'player' && fid !== 'local' && getFactionRelationValue('player', fid) <= -20) enemies.add(fid);
+      });
+      (gameState.campaigns || []).filter(isActiveCampaign).forEach(campaign => {
+        const targetController = cityController(campaign.target);
+        if (campaign.faction === 'player' && targetController && targetController !== 'player' && targetController !== 'local') {
+          enemies.add(targetController);
+        }
+        if (campaign.faction && campaign.faction !== 'player' && targetController === 'player') {
+          enemies.add(campaign.faction);
+        }
+      });
+      (gameState.factionWarState?.recentWars || []).forEach(war => {
+        if (!war || gameState.turn - Number(war.turn || 0) > 12) return;
+        const defender = war.defender || cityController(war.target);
+        if (war.attacker === 'player' && defender && defender !== 'player' && defender !== 'local') {
+          enemies.add(defender);
+        }
+        if (war.attacker && war.attacker !== 'player' && defender === 'player') {
+          enemies.add(war.attacker);
+        }
+      });
+      return [...enemies];
+    }
+
+    function getCommonEnemiesWithPlayer(factionId) {
+      const playerEnemies = getPlayerEnemyFactions();
+      return playerEnemies.filter(other =>
+        other !== factionId &&
+        (getFactionRelationValue(factionId, other) <= -20 ||
+          (getAllianceProfile(factionId).preferredEnemies || []).includes(other))
+      );
+    }
+
+    function getOutrageFactions() {
+      const outrage = {};
+      Object.keys(FACTIONS).forEach(fid => { outrage[fid] = 0; });
+      Object.entries(gameState.factionRelations || DEFAULT_FACTION_RELATIONS).forEach(([from, rels]) => {
+        Object.entries(rels || {}).forEach(([to, value]) => {
+          if (to === 'player' || to === 'local') return;
+          if (Number(value) <= -25) outrage[to] = (outrage[to] || 0) + 1;
+        });
+      });
+      (gameState.factionWarState?.recentWars || []).forEach(war => {
+        if (!war || gameState.turn - Number(war.turn || 0) > 12) return;
+        if (war.attacker && war.attacker !== 'player' && war.attacker !== 'local') outrage[war.attacker] = (outrage[war.attacker] || 0) + 1.4;
+      });
+      return Object.entries(outrage)
+        .filter(([, score]) => score >= 3)
+        .map(([fid]) => fid);
+    }
+
+    const ALLIANCE_PROFILES = {
+      liu: { focus: '共同抗曹、仁义声望与民心', minRelation: 42, minPrestige: 35, minPublic: 58, preferredEnemies: ['cao', 'yuanshu'], needsCommonEnemy: true, outrageOk: true },
+      cao: { focus: '共同强敌、秩序与现实利益', minRelation: 55, minPrestige: 48, minOrder: 55, preferredEnemies: ['yuan', 'yuanshu', 'zhanglu'], needsCommonEnemy: true, outrageOk: false },
+      sun: { focus: '江东安全、水路压力与抗强敌', minRelation: 45, minPrestige: 38, minCityCount: 3, preferredEnemies: ['cao', 'liubiao', 'yuanshu'], needsCommonEnemy: true, outrageOk: true },
+      yuan: { focus: '名望、体面与共同威胁', minRelation: 50, minPrestige: 60, minCityCount: 4, preferredEnemies: ['cao', 'gongsun', 'yuanshu'], needsCommonEnemy: true, outrageOk: true },
+      liubiao: { focus: '荆州稳定、合法性与共同外患', minRelation: 52, minPrestige: 45, minPublic: 55, preferredEnemies: ['sun', 'cao', 'yuanshu'], needsCommonEnemy: false, outrageOk: true },
+      liuzhang: { focus: '益州安全、低威胁和共同外患', minRelation: 38, minPublic: 52, minOrder: 50, preferredEnemies: ['zhanglu', 'cao'], needsCommonEnemy: false, outrageOk: true },
+      zhanglu: { focus: '地方自治、秩序和共同压力', minRelation: 38, minOrder: 58, preferredEnemies: ['liuzhang', 'cao', 'mateng'], needsCommonEnemy: false, outrageOk: true },
+      mateng: { focus: '抗曹、军力与边地互保', minRelation: 35, minPrestige: 35, preferredEnemies: ['cao', 'zhanglu'], needsCommonEnemy: true, outrageOk: true },
+      gongsun: { focus: '抗袁、北方战局和军力声望', minRelation: 35, minPrestige: 35, preferredEnemies: ['yuan', 'cao'], needsCommonEnemy: true, outrageOk: true },
+      yuanshu: { focus: '利益、体面和对众敌自保', minRelation: 50, minPrestige: 45, preferredEnemies: ['cao', 'yuan', 'liu'], needsCommonEnemy: false, outrageOk: true },
+      default: { focus: '关系、共同敌人和局势压力', minRelation: 42, minPrestige: 35, preferredEnemies: [], needsCommonEnemy: true, outrageOk: true }
+    };
+
+    function getAllianceProfile(factionId) {
+      return ALLIANCE_PROFILES[factionId] || ALLIANCE_PROFILES.default;
+    }
+
+    function getAllianceEligibility(character) {
+      if (!character || !isFactionLordCharacter(character)) return { eligible: false, reason: '只有势力主公可以正式结盟。' };
+      const factionId = character.lordOfFaction || FACTION_LORD_META[character.id]?.faction || character.faction;
+      if (isPlayerAlliedWithFaction(factionId)) return { eligible: true, allied: true, reason: '已结盟，可随时正式解约。' };
+      const profile = getAllianceProfile(factionId);
+      const record = ensureDiplomacyRecord(factionId);
+      const relation = Number(record?.relation || 0);
+      const prestige = Number(gameState.player?.prestige || 0);
+      const publicSupport = getPlayerAveragePublicSupport();
+      const order = getPlayerAverageOrder();
+      const cityCount = controlledCities().length;
+      const commonEnemies = getCommonEnemiesWithPlayer(factionId);
+      const outrageFactions = getOutrageFactions();
+      const preferredCommonEnemies = commonEnemies.filter(fid => profile.preferredEnemies?.includes(fid));
+      const hasCommonEnemy = commonEnemies.length > 0;
+      const hasPreferredEnemy = preferredCommonEnemies.length > 0;
+      const outrageMatch = outrageFactions.some(fid => fid !== factionId && (profile.preferredEnemies?.includes(fid) || profile.outrageOk));
+      const pressure = getFactionPressureProfile(factionId);
+      const checks = [
+        { label: '关系', ok: relation >= (profile.minRelation || 40), detail: Math.round(relation) + ' / ' + (profile.minRelation || 40) },
+        { label: '声望', ok: prestige >= (profile.minPrestige || 0), detail: Math.round(prestige) + ' / ' + (profile.minPrestige || 0) },
+        { label: '民心', ok: publicSupport >= (profile.minPublic || 0), detail: Math.round(publicSupport) + ' / ' + (profile.minPublic || 0) },
+        { label: '治安', ok: order >= (profile.minOrder || 0), detail: Math.round(order) + ' / ' + (profile.minOrder || 0) },
+        { label: '城池', ok: cityCount >= (profile.minCityCount || 1), detail: cityCount + ' / ' + (profile.minCityCount || 1) },
+        { label: '共同敌人/众愤', ok: !profile.needsCommonEnemy || hasCommonEnemy || outrageMatch || pressure.pressure >= 55, detail: commonEnemies.map(factionName).join('、') || (outrageMatch ? '存在众愤势力' : '暂无') }
+      ];
+      const failed = checks.filter(item => !item.ok);
+      const eligible = failed.length === 0 || (failed.length === 1 && (hasPreferredEnemy || pressure.pressure >= 70));
+      return {
+        eligible,
+        allied: false,
+        factionId,
+        profile,
+        record,
+        relation,
+        commonEnemies,
+        preferredCommonEnemies,
+        outrageFactions,
+        pressure,
+        checks,
+        failed,
+        reason: eligible
+          ? '具备结盟条件。'
+          : '结盟条件不足：' + failed.map(item => item.label + ' ' + item.detail).join('；')
+      };
+    }
+
+    function formAllianceWithFaction(factionId, options = {}) {
+      const record = ensureDiplomacyRecord(factionId);
+      if (!record) return false;
+      const lord = options.lord || getLordCharacterByFaction(factionId);
+      record.pact = '盟友';
+      record.relation = clamp(Math.max(Number(record.relation || 0), 68) + Number(options.relationBonus || 0), 0, 100);
+      record.alliance = {
+        active: true,
+        sinceTurn: gameState.turn,
+        withLordId: lord?.id || '',
+        initiator: options.initiator || 'player',
+        lastAidTurn: -99,
+        lastRequestTurn: -99,
+        cancelledTurn: null,
+        cancelledBy: ''
+      };
+      setFactionRelation('player', factionId, 80);
+      if (lord) {
+        lord.npcAgency ||= {};
+        lord.npcAgency.relationshipStance = 'ally';
+        lord.trustPlayer = clamp(Number(lord.trustPlayer || 0) + 6, 0, 100);
+        lord.respectPlayer = clamp(Number(lord.respectPlayer || 0) + 4, 0, 100);
+        addCharacterMemory(lord, {
+          turn: gameState.turn,
+          type: 'alliance',
+          summary: lord.name + '与玩家正式结盟。',
+          text: lord.name + '与玩家正式结盟。'
+        });
+      }
+      return true;
+    }
+
+    function cancelAllianceWithFaction(factionId, cancelledBy = 'player', reports = null) {
+      const record = ensureDiplomacyRecord(factionId);
+      if (!record || record.pact !== '盟友') return false;
+      record.pact = '解约';
+      record.relation = clamp(Number(record.relation || 0) - (cancelledBy === 'player' ? 10 : 14), 0, 100);
+      record.alliance ||= {};
+      record.alliance.active = false;
+      record.alliance.cancelledTurn = gameState.turn;
+      record.alliance.cancelledBy = cancelledBy;
+      setFactionRelation('player', factionId, Math.min(20, Number(record.relation || 0) - 30));
+      const lord = getLordCharacterByFaction(factionId);
+      if (lord) {
+        lord.suspicionOfPlayer = clamp(Number(lord.suspicionOfPlayer || 0) + (cancelledBy === 'player' ? 8 : 4), 0, 100);
+        addCharacterMemory(lord, {
+          turn: gameState.turn,
+          type: 'allianceCancelled',
+          summary: (cancelledBy === 'player' ? '玩家' : lord.name) + '单方面解除盟约。',
+          text: (cancelledBy === 'player' ? '玩家' : lord.name) + '单方面解除盟约。'
+        });
+      }
+      const text = (cancelledBy === 'player' ? '你' : factionName(factionId)) + '正式解除与' + (cancelledBy === 'player' ? factionName(factionId) : '玩家') + '的盟约。';
+      if (reports) reports.push({ tone: 'warn', level: 'important', text });
+      else addNews('warn', text);
+      return true;
+    }
+
+    function penalizeAttackingAlliance(factionId, reports) {
+      if (!isPlayerAlliedWithFaction(factionId)) return false;
+      gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) - 18, 0, 100);
+      controlledCities().forEach(city => {
+        city.publicSupport = clamp(Number(city.publicSupport || 0) - 2, 0, 100);
+      });
+      const record = ensureDiplomacyRecord(factionId);
+      record.relation = clamp(Number(record.relation || 0) - 30, 0, 100);
+      const text = '你袭击盟友' + factionName(factionId) + '，民心小幅下降，声望大幅受损。盟约仍未自动解除。';
+      if (reports) reports.push({ tone: 'bad', level: 'critical', text });
+      else addNews('bad', text);
+      return true;
+    }
+
     function cityNeighborIds(cityId) {
       const city = gameState.cities?.[cityId];
       const region = getRegion(cityId);
@@ -3901,6 +4302,9 @@ const MAX_MAP_ZOOM = 4.2;
       }
       const npc = gameState.characterRoster[characterId];
       if (!npc || ['hidden', 'rumored', 'dead', 'captured'].includes(npc.status)) return toast('此人暂时无法接触');
+      if (conversationType === 'ally' && isFactionLordCharacter(npc)) {
+        return handleLordAlliance(characterId);
+      }
       if (conversationType === 'recruit' && isFactionLordCharacter(npc)) {
         return toast('此人是一方主公，不能普通招募。需在实力压倒对方后尝试“招揽”。');
       }
@@ -4008,6 +4412,144 @@ const MAX_MAP_ZOOM = 4.2;
       renderModal();
     }
 
+    function handleLordAlliance(characterId) {
+      const npc = gameState.characterRoster?.[characterId];
+      if (!npc || !isFactionLordCharacter(npc)) return toast('只有势力主公可以缔结正式盟约');
+      const factionId = npc.lordOfFaction || FACTION_LORD_META[npc.id]?.faction || npc.faction;
+      if (isPlayerAlliedWithFaction(factionId)) {
+        cancelAllianceWithFaction(factionId, 'player');
+        pushTurnEvent({ level: 'important', tone: 'warn', text: '你与' + factionName(factionId) + '正式解约，双方不再互助。' });
+        saveToStorage(false);
+        render();
+        return toast('盟约已解除');
+      }
+      const eligibility = getAllianceEligibility(npc);
+      if (!eligibility.eligible) return toast(eligibility.reason || '结盟条件不足');
+      if (!spendPoint('dip')) return;
+      formAllianceWithFaction(factionId, { lord: npc, initiator: 'player', relationBonus: 8 });
+      pushTurnEvent({ level: 'important', tone: 'good', text: '你与' + factionName(factionId) + '正式结盟。盟约期间双方可能互助或求援。' });
+      saveToStorage(false);
+      render();
+      toast('盟约已缔结');
+    }
+
+    function revealFactionCharactersAfterSubmission(factionId, reports) {
+      let contactable = 0;
+      Object.values(gameState.characterRoster || {}).forEach(character => {
+        if (!character || character.faction !== factionId || isInternalPlayerCharacterId(character.id)) return;
+        if (character.status === 'hidden') {
+          character.status = 'rumored';
+          character.discoveredBy = '主公归附';
+          contactable++;
+        } else if (character.status === 'rumored' || character.status === 'discovered') {
+          character.status = 'contactable';
+          character.discoveredBy = '主公归附';
+          contactable++;
+        }
+      });
+      if (contactable) {
+        reports.push({ tone: 'good', level: 'minor', text: factionName(factionId) + '旧部中有 ' + contactable + ' 人进入可接触或传闻。' });
+      }
+      return contactable;
+    }
+
+    function clearFactionCampaignsAgainstPlayer(factionId, reports) {
+      let cleared = 0;
+      (gameState.campaigns || []).forEach(campaign => {
+        if (!isActiveCampaign(campaign)) return;
+        const attacksPlayer = campaign.faction === factionId && cityController(campaign.target) === 'player';
+        const playerAttacksFaction = campaign.faction === 'player' && cityController(campaign.target) === factionId;
+        if (!attacksPlayer && !playerAttacksFaction) return;
+        campaign.status = 'complete';
+        campaign.phase = '归附停战';
+        campaign.slotOccupied = false;
+        cleared++;
+      });
+      if (cleared) {
+        reports.push({ tone: 'good', level: 'minor', text: factionName(factionId) + '归附后，双方 ' + cleared + ' 路战役停战。' });
+      }
+      return cleared;
+    }
+
+    function applyLordSubmission(npc, choiceId, eligibility, reports) {
+      const factionId = npc.lordOfFaction || FACTION_LORD_META[npc.id]?.faction || npc.faction;
+      const pressure = eligibility.pressure || getFactionPressureProfile(factionId);
+      const cities = getFactionControlledCityIds(factionId);
+      const oldFactionName = factionName(factionId);
+      gameState.submissionState ||= {};
+      gameState.submissionState[factionId] = {
+        factionId,
+        lordId: npc.id,
+        submittedTurn: gameState.turn,
+        protectedUntil: gameState.turn + 8,
+        grievance: clamp(Number(pressure.grievance || 0) + (choiceId === 'demandSubmission' ? 18 : 0), 0, 100),
+        pressureAtSubmission: Math.round(pressure.pressure || 0),
+        playerAttacks: Number(pressure.playerAttacks || 0),
+        warningLevel: 0,
+        status: 'submitted'
+      };
+
+      clearFactionCampaignsAgainstPlayer(factionId, reports);
+      cities.forEach(cityId => {
+        const city = gameState.cities[cityId];
+        if (!city) return;
+        captureRegion(cityId, 'player', reports, { select: false, skipProtectionDecay: true });
+        city.publicSupport = clamp(Number(city.publicSupport || 0) - clamp(4 + pressure.grievance / 14, 3, 12), 0, 100);
+        city.order = clamp(Number(city.order || 0) - clamp(5 + pressure.grievance / 12, 4, 14), 0, 100);
+        city.submissionUnrest = {
+          factionId,
+          lordId: npc.id,
+          untilTurn: gameState.turn + 14,
+          grievance: gameState.submissionState[factionId].grievance
+        };
+      });
+
+      npc.status = 'recruited';
+      npc.faction = 'player';
+      npc.recruitedBy = gameState.player.name;
+      npc.solicitationState = 'aligned';
+      npc.lordSolicitation ||= {};
+      npc.lordSolicitation.status = 'aligned';
+      npc.lordSolicitation.turn = gameState.turn;
+      npc.lordSolicitation.choiceId = choiceId;
+      npc.lordSolicitation.originalFaction = factionId;
+      npc.lordSolicitation.grievance = gameState.submissionState[factionId].grievance;
+      npc.npcAgency ||= {};
+      npc.npcAgency.relationshipStance = choiceId === 'demandSubmission' ? 'dependentLord' : 'subordinateAlly';
+
+      gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + Math.max(4, cities.length * 3), 0, 100);
+      gameState.player.ambition = clamp(Number(gameState.player.ambition || 0) + Math.max(3, cities.length * 2), 0, 100);
+      gameState.player.threat = clamp(Number(gameState.player.threat || 0) + Math.max(2, cities.length), 0, 100);
+
+      revealFactionCharactersAfterSubmission(factionId, reports);
+      reports.push({
+        tone: 'good',
+        level: 'critical',
+        text: npc.name + '率' + oldFactionName + '归附，你获得 ' + cities.length + ' 座城池实际控制权；旧部不稳将在 ' + (gameState.submissionState[factionId].protectedUntil - gameState.turn) + ' 回合后开始发酵。'
+      });
+      return { factionId, cities };
+    }
+
+    function rollLordSolicitationOutcome(npc, choiceId, eligibility) {
+      const pressure = eligibility.pressure || getFactionPressureProfile(npc.lordOfFaction || npc.faction);
+      let chance = Number(eligibility.successChance || 0.2);
+      if (choiceId === 'promiseAutonomy') chance += 0.08;
+      if (choiceId === 'offerProtection') chance += 0.05;
+      if (choiceId === 'demandSubmission') chance -= 0.08;
+      chance += clamp(Number(npc.trustPlayer || 0) - 60, -25, 25) / 400;
+      chance += clamp(Number(pressure.pressure || 0) - 45, -20, 35) / 360;
+      chance -= clamp(Number(pressure.grievance || 0), 0, 100) / 420;
+      chance -= clamp(Number(npc.suspicionOfPlayer || 0) - 45, 0, 50) / 380;
+      chance = clamp(chance, 0.04, eligibility.profile?.maxChance ? eligibility.profile.maxChance / 100 : 0.55);
+      const roll = Math.random();
+      if (roll < chance) return { result: 'success', chance, roll };
+      const disputeChance = clamp(0.18 + Number(npc.personality?.proud || 45) / 500 + Number(pressure.grievance || 0) / 360, 0.18, 0.55);
+      if (roll < chance + disputeChance) return { result: 'dispute', chance, roll };
+      const hostilityChance = clamp(0.08 + Number(npc.suspicionOfPlayer || 0) / 700 + (choiceId === 'demandSubmission' ? 0.08 : 0), 0.06, 0.28);
+      if (roll > 1 - hostilityChance) return { result: 'hostile', chance, roll };
+      return { result: 'delay', chance, roll };
+    }
+
     function resolveLordSolicitationChoice(characterId, choiceId) {
       const npc = gameState.characterRoster?.[characterId];
       if (!npc || !isFactionLordCharacter(npc)) return toast('主公招揽目标不存在');
@@ -4033,29 +4575,176 @@ const MAX_MAP_ZOOM = 4.2;
         return toast('条件不足，招揽失败');
       }
 
-      npc.lordSolicitation ||= {};
-      npc.lordSolicitation.status = 'aligned';
-      npc.lordSolicitation.turn = gameState.turn;
-      npc.lordSolicitation.choiceId = choiceId;
-      npc.solicitationState = 'aligned';
+      const reports = [];
+      const outcome = rollLordSolicitationOutcome(npc, choiceId, eligibility);
       npc.npcAgency ||= {};
-      npc.npcAgency.relationshipStance = choiceId === 'demandSubmission' ? 'dependentLord' : 'subordinateAlly';
-      npc.attitudeToPlayer = clamp(Number(npc.attitudeToPlayer || 0) + 10, 0, 100);
-      npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) + (choiceId === 'demandSubmission' ? 4 : 8), 0, 100);
-      npc.respectPlayer = clamp(Number(npc.respectPlayer || 0) + (choiceId === 'demandSubmission' ? 8 : 5), 0, 100);
-      npc.fearPlayer = clamp(Number(npc.fearPlayer || 0) + 5, 0, 100);
+      let summary = '';
+      if (outcome.result === 'success') {
+        npc.attitudeToPlayer = clamp(Number(npc.attitudeToPlayer || 0) + 12, 0, 100);
+        npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) + (choiceId === 'demandSubmission' ? 3 : 8), 0, 100);
+        npc.respectPlayer = clamp(Number(npc.respectPlayer || 0) + (choiceId === 'demandSubmission' ? 8 : 5), 0, 100);
+        npc.fearPlayer = clamp(Number(npc.fearPlayer || 0) + 5, 0, 100);
+        applyLordSubmission(npc, choiceId, eligibility, reports);
+        summary = npc.name + '接受招揽，承认你的主导地位。成功率 ' + Math.round(outcome.chance * 100) + '%。';
+      } else if (outcome.result === 'dispute') {
+        npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) - (choiceId === 'demandSubmission' ? 8 : 4), 0, 100);
+        npc.suspicionOfPlayer = clamp(Number(npc.suspicionOfPlayer || 0) + 10, 0, 100);
+        npc.respectPlayer = clamp(Number(npc.respectPlayer || 0) + (choiceId === 'demandSubmission' ? 2 : 0), 0, 100);
+        npc.npcAgency.grievance = { turn: gameState.turn, source: 'lordSolicitation', summary: '招揽席上发生争执', resolved: false };
+        summary = npc.name + '没有归附，席间与玩家发生争执。成功率 ' + Math.round(outcome.chance * 100) + '%。';
+        reports.push({ tone: 'warn', level: 'important', text: summary });
+      } else if (outcome.result === 'hostile') {
+        npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) - 12, 0, 100);
+        npc.suspicionOfPlayer = clamp(Number(npc.suspicionOfPlayer || 0) + 18, 0, 100);
+        npc.fearPlayer = clamp(Number(npc.fearPlayer || 0) + 4, 0, 100);
+        npc.npcAgency.relationshipStance = 'hostile';
+        npc.npcAgency.grievance = { turn: gameState.turn, source: 'lordSolicitation', summary: '公开拒绝招揽，转为敌意', resolved: false };
+        summary = npc.name + '公开拒绝招揽，旧部敌意上升。成功率 ' + Math.round(outcome.chance * 100) + '%。';
+        reports.push({ tone: 'bad', level: 'important', text: summary });
+      } else {
+        npc.trustPlayer = clamp(Number(npc.trustPlayer || 0) + (choiceId === 'promiseAutonomy' ? 2 : 0), 0, 100);
+        npc.suspicionOfPlayer = clamp(Number(npc.suspicionOfPlayer || 0) + 4, 0, 100);
+        summary = npc.name + '暂缓归附，仍在观望局势。成功率 ' + Math.round(outcome.chance * 100) + '%。';
+        reports.push({ tone: 'warn', level: 'minor', text: summary });
+      }
       addCharacterMemory(npc, {
         turn: gameState.turn,
         type: 'lordSolicitation',
-        summary: npc.name + '与玩家达成招揽约定，承认玩家主导地位，但保留旧部名分。',
-        text: npc.name + '与玩家达成招揽约定，承认玩家主导地位，但保留旧部名分。',
+        summary,
+        text: summary,
         choice: choiceLabels[choiceId] || choiceId
       });
-      pushTurnEvent({ level: 'important', tone: 'good', text: npc.name + '接受招揽，承认你的主导地位。' });
+      reports.forEach(report => {
+        addNews(report.tone, report.text);
+        pushTurnEvent({ level: report.level || 'important', tone: report.tone, text: report.text });
+      });
       gameState.activeModal = null;
       saveToStorage(false);
       render();
-      toast('主公招揽达成');
+      toast(outcome.result === 'success' ? '主公招揽达成' : '主公未归附');
+    }
+
+    function processSubmissionInstability(reports) {
+      gameState.submissionState ||= {};
+      Object.entries(gameState.submissionState).forEach(([factionId, state]) => {
+        if (!state || state.status !== 'submitted') return;
+        const lord = gameState.characterRoster?.[state.lordId];
+        const submittedCities = Object.values(gameState.cities || {}).filter(city =>
+          city &&
+          !isRemovedCityId(city.id) &&
+          cityController(city.id) === 'player' &&
+          city.submissionUnrest?.factionId === factionId
+        );
+        if (!submittedCities.length) {
+          state.status = 'absorbed';
+          return;
+        }
+        if (gameState.turn <= Number(state.protectedUntil || 0)) return;
+
+        const avgPublic = submittedCities.reduce((sum, city) => sum + Number(city.publicSupport || 0), 0) / submittedCities.length;
+        const avgOrder = submittedCities.reduce((sum, city) => sum + Number(city.order || 0), 0) / submittedCities.length;
+        const avgFood = submittedCities.reduce((sum, city) => sum + Number(city.food || 0), 0) / submittedCities.length;
+        const avgTroops = submittedCities.reduce((sum, city) => sum + realTroops(city.garrison), 0) / submittedCities.length;
+        const trust = Number(lord?.trustPlayer || 45);
+        const grievance = Number(state.grievance || 0);
+        const risk = clamp(
+          grievance * 0.65 +
+          (55 - avgPublic) * 0.75 +
+          (55 - avgOrder) * 0.75 +
+          (avgFood < 1200 ? 10 : 0) +
+          (avgTroops < 650 ? 10 : 0) +
+          (50 - trust) * 0.65 +
+          Number(state.playerAttacks || 0) * 6,
+          0,
+          100
+        );
+        state.lastRisk = Math.round(risk);
+
+        if (risk >= 55 && state.warningLevel < 1) {
+          state.warningLevel = 1;
+          reports.push({ tone: 'warn', level: 'important', text: factionName(factionId) + '旧部不稳，归附城池暗中怀念故主。若民心、治安或主公信任继续下滑，可能反叛。' });
+          return;
+        }
+        if (risk < 72) return;
+        const chance = clamp((risk - 62) / 100, 0.08, 0.42);
+        if (Math.random() >= chance) return;
+
+        const rebelCount = Math.max(1, Math.ceil(submittedCities.length * clamp(risk / 140, 0.35, 0.75)));
+        submittedCities
+          .sort((a, b) => (Number(a.publicSupport || 0) + Number(a.order || 0)) - (Number(b.publicSupport || 0) + Number(b.order || 0)))
+          .slice(0, rebelCount)
+          .forEach(city => {
+            captureRegion(city.id, factionId, reports, { select: false, skipProtectionDecay: true });
+            city.submissionUnrest = null;
+            city.morale = clamp(Number(city.morale || 0) + 8, 0, 100);
+          });
+        if (lord) {
+          lord.status = 'contactable';
+          lord.faction = factionId;
+          lord.solicitationState = 'rebelled';
+          lord.trustPlayer = clamp(Number(lord.trustPlayer || 0) - 18, 0, 100);
+          lord.suspicionOfPlayer = clamp(Number(lord.suspicionOfPlayer || 0) + 20, 0, 100);
+          lord.npcAgency ||= {};
+          lord.npcAgency.relationshipStance = 'hostile';
+          addCharacterMemory(lord, {
+            turn: gameState.turn,
+            type: 'submissionRebellion',
+            summary: factionName(factionId) + '旧部反叛，' + lord.name + '重新自立。',
+            text: factionName(factionId) + '旧部反叛，' + lord.name + '重新自立。'
+          });
+        }
+        state.status = 'rebelled';
+        reports.push({ tone: 'bad', level: 'critical', text: factionName(factionId) + '旧部反叛，' + rebelCount + ' 座归附城池倒向故主。' });
+      });
+    }
+
+    function processAllianceDiplomacy(reports) {
+      Object.keys(FACTIONS).filter(factionId => factionId !== 'player' && factionId !== 'local').forEach(factionId => {
+        const record = ensureDiplomacyRecord(factionId);
+        if (!record || record.pact !== '盟友' || record.alliance?.active === false) return;
+        const lord = getLordCharacterByFaction(factionId);
+        const relation = Number(record.relation || 0);
+        const playerUnderAttack = (gameState.campaigns || []).filter(campaign =>
+          isActiveCampaign(campaign) &&
+          campaign.faction !== 'player' &&
+          cityController(campaign.target) === 'player'
+        );
+        const allyUnderAttack = (gameState.campaigns || []).filter(campaign =>
+          isActiveCampaign(campaign) &&
+          campaign.faction !== factionId &&
+          cityController(campaign.target) === factionId
+        );
+
+        if (relation < 24 && gameState.turn - Number(record.alliance.cancelledTurn || -99) > 2 && Math.random() < 0.22) {
+          cancelAllianceWithFaction(factionId, 'npc', reports);
+          return;
+        }
+
+        if (playerUnderAttack.length && gameState.turn - Number(record.alliance.lastAidTurn || -99) >= 5 && Math.random() < clamp(0.18 + relation / 260, 0.18, 0.5)) {
+          const home = controlledCities().sort((a, b) => realTroops(b.garrison) - realTroops(a.garrison))[0];
+          if (home) {
+            const food = Math.max(180, Math.round((gameState.cities[gameState.player.startingCity || home.id]?.food || 0) * 0.02));
+            home.food = Math.max(0, Number(home.food || 0) + food);
+            home.garrison.infantry = Math.max(0, Number(home.garrison.infantry || 0) + 120);
+            record.alliance.lastAidTurn = gameState.turn;
+            reports.push({ tone: 'good', level: 'important', text: factionName(factionId) + '履行盟约，向' + home.name + '送来粮草 ' + fmt(food) + ' 与援兵 120。' });
+          }
+        }
+
+        if (allyUnderAttack.length && gameState.turn - Number(record.alliance.lastRequestTurn || -99) >= 5 && Math.random() < clamp(0.15 + (100 - relation) / 280, 0.12, 0.42)) {
+          record.alliance.lastRequestTurn = gameState.turn;
+          if (lord) {
+            createLetter({
+              senderId: lord.id,
+              title: factionName(factionId) + '求援',
+              body: factionName(factionId) + '遭受攻打，' + lord.name + '请求你履行盟约，出兵、送粮或至少牵制敌军。',
+              kind: 'allianceRequest',
+              choices: [{ id: 'ack', label: '知晓' }]
+            });
+          }
+          reports.push({ tone: 'warn', level: 'important', text: factionName(factionId) + '依据盟约向你求援。' });
+        }
+      });
     }
 
     function markLetterResolved(letter, choiceId) {
@@ -4667,6 +5356,9 @@ const MAX_MAP_ZOOM = 4.2;
         reports.push({ tone: 'bad', text: '战役槽已满，' + source.name + '无法向' + target.name + '出征。' });
         return null;
       }
+      if (isBattle) {
+        penalizeAttackingAlliance(cityController(target.id), reports);
+      }
       const amount = Math.min(order.payload.troops, Math.max(0, realTroops(source.garrison) - 300));
       if (amount < 100) return null;
       const armyTroops = extractTroops(source.garrison, amount);
@@ -4698,15 +5390,16 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.campaigns.push(campaign);
       playMarchEffect(campaign);
       reports.push({ tone: 'good', text: source.name + '军启程前往' + target.name + '，预计 ' + travelTurns + ' 回合抵达。' });
+      if (isBattle) maybeRevealCharactersFromWar(cityController(target.id), campaign, reports);
       if (isBattle) completeFirstMilitaryOrderAfterResolved('battle', reports);
       return campaign;
     }
 
-    function createNpcCampaign({ faction, source, target, troops: amount }, reports = []) {
+    function createNpcCampaign({ faction, source, target, troops: amount, routeMode = 'official' }, reports = []) {
       const route = findCampaignRoute(source, target, 'official');
       if (!route) return null;
       const campaign = {
-        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode: 'official',
+        id: 'campaign_' + uid(), faction, type: 'attack', objective: 'capture', source, target, route, routeMode,
         tactic: 'balanced', army: troops(Math.round(amount * 0.66), Math.round(amount * 0.12), Math.round(amount * 0.22), 0),
         commander: factionName(faction) + '军将', status: 'marching', phase: '行军', eta: calculateTravelTurns(route, { troops: amount, supply: 6 }),
         travelRemaining: calculateTravelTurns(route, { troops: amount, supply: 6 }), siegeRemaining: 2, supply: 7, risk: 1, slotOccupied: true, createdTurn: gameState.turn
@@ -4714,6 +5407,8 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.campaigns.push(campaign);
       if (isControlledBy(target, 'player')) addUrgentMatter({ type: 'enemyMarch', campaignId: campaign.id, title: '敌军逼近 ' + regionName(target), text: factionName(faction) + '军正向' + regionName(target) + '进军。' });
       reports.push({ tone: 'bad', text: factionName(faction) + '军自' + regionName(source) + '向' + regionName(target) + '进军，ETA ' + campaign.eta + ' 回合。' });
+      maybeRevealCharactersFromWar(faction, campaign, reports);
+      maybeRevealCharactersFromWar(cityController(target), campaign, reports);
       return campaign;
     }
 
@@ -5167,8 +5862,7 @@ const MAX_MAP_ZOOM = 4.2;
           const targetId = edge.to;
           const controller = cityController(targetId);
           if (controller === faction) continue;
-          // 保护玩家：桂阳开局阶段禁止 NPC 打玩家
-          if (controller === 'player') continue;
+          // Player cities are valid targets; hostility is handled by getFactionHostility.
           if (!gameState.cities[targetId] || isRemovedCityId(targetId)) continue;
           const hostility = getFactionHostility(faction, controller);
           if (hostility <= -5 && edge.roadType !== 'water') {
@@ -5201,6 +5895,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function getFactionHostility(factionA, factionB) {
       if (factionA === factionB) return 100;
+      if ((factionA === 'player' && isPlayerAlliedWithFaction(factionB)) || (factionB === 'player' && isPlayerAlliedWithFaction(factionA))) return 80;
       if (factionA === 'player' || factionB === 'player') return -100;
       const rels = gameState.factionRelations || {};
       const row = rels[factionA] || {};
@@ -6363,7 +7058,6 @@ const MAX_MAP_ZOOM = 4.2;
       window.advanceCampaigns = advanceCampaigns;
       window.findCampaignRoute = findCampaignRoute;
       window.requestRelief = requestRelief;
-      window.launchDiversionAttack = launchDiversionAttack;
       window.retreatCampaign = retreatCampaign;
       window.playMarchEffect = playMarchEffect;
       window.playBattleEffect = playBattleEffect;
@@ -7664,6 +8358,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (filter === 'recruited') return character.status === 'recruited';
       if (filter === 'contactable') return character.status === 'contactable' || character.status === 'discovered';
       if (filter === 'rumored') return character.status === 'rumored';
+      if (filter === 'lords') return isFactionLordCharacter(character);
       if (filter === 'historical') return character.historical;
       if (filter === 'random') return character.randomTalent;
       return character.type === filter;
@@ -7687,7 +8382,7 @@ const MAX_MAP_ZOOM = 4.2;
       }
       const filters = [
         ['all', '全部'], ['recruited', '已招募'], ['contactable', '可接触'], ['rumored', '传闻'],
-        ['historical', '历史人物'], ['random', '随机人物'], ['武将', '武将'], ['谋士', '谋士'], ['政务', '政务']
+        ['lords', '主公'], ['historical', '历史人物'], ['random', '随机人物'], ['武将', '武将'], ['谋士', '谋士'], ['政务', '政务']
       ];
       return `
         <div class="card">
@@ -7788,7 +8483,15 @@ const MAX_MAP_ZOOM = 4.2;
       const style = character.speechStyle || {};
       const conversationButtons = Object.entries(CONVERSATION_ACTIONS)
         .filter(([id]) => !(isLord && id === 'recruit'))
-        .map(([id, action]) => `<button data-conversation="${id}" data-character="${character.id}" ${canTalk ? '' : 'disabled'}>${action.label}</button>`)
+        .filter(([id]) => id !== 'ally' || isLord)
+        .map(([id, action]) => {
+          const factionId = character.lordOfFaction || FACTION_LORD_META[character.id]?.faction || character.faction;
+          const allianceInfo = id === 'ally' && isLord ? getAllianceEligibility(character) : null;
+          const label = id === 'ally' && isLord && isPlayerAlliedWithFaction(factionId) ? '解除盟约' : action.label;
+          const disabled = !canTalk || (id === 'ally' && isLord && !allianceInfo?.eligible && !allianceInfo?.allied);
+          const help = id === 'ally' && isLord ? ` title="${escapeHtml(allianceInfo?.reason || '')}"` : '';
+          return `<button data-conversation="${id}" data-character="${character.id}" ${disabled ? 'disabled' : ''}${help}>${label}</button>`;
+        })
         .join('');
       const investigateButton = character.status === 'rumored'
         ? `<button data-investigate-character="${character.id}">调查传闻</button>`
@@ -7820,6 +8523,7 @@ const MAX_MAP_ZOOM = 4.2;
         </div>
       </div>
       ${renderLordSolicitationCard(character)}
+      ${renderLordAllianceCard(character)}
       <div class="card">
         <h3>目标与自我判断</h3>
         <p><strong>长期目标：</strong>${escapeHtml(character.longTermGoal || '尚未显露。')}</p>
@@ -7840,11 +8544,15 @@ const MAX_MAP_ZOOM = 4.2;
           <div class="card lord-solicit-card locked">
             <h3>主公招揽</h3>
             <p class="muted">此人是一方主公，不可普通招募。</p>
+            <p><strong>看重：</strong>${escapeHtml(info.profile?.focus || '实力与关系')}</p>
             <p>${escapeHtml(info.reason)}</p>
             <div class="kv"><span>我方兵力</span><strong>${fmt(info.playerTroops || 0)}</strong></div>
             <div class="kv"><span>对方兵力</span><strong>${fmt(info.targetTroops || 0)}</strong></div>
             <div class="kv"><span>我方平均民心</span><strong>${Math.round(info.playerPublic || 0)}</strong></div>
             <div class="kv"><span>对方平均民心</span><strong>${Math.round(info.targetPublic || 0)}</strong></div>
+            <div class="kv"><span>势力败势压力</span><strong>${Math.round(info.pressure?.pressure || 0)}</strong></div>
+            <div class="kv"><span>归附隐患</span><strong>${Math.round(info.pressure?.grievance || 0)}</strong></div>
+            ${info.details?.failed?.length ? `<p class="muted">不足：${info.details.failed.map(item => escapeHtml(item.label + ' ' + item.detail)).join('；')}</p>` : ''}
             <button disabled>条件不足，无法招揽</button>
           </div>
         `;
@@ -7852,11 +8560,15 @@ const MAX_MAP_ZOOM = 4.2;
       return `
         <div class="card lord-solicit-card">
           <h3>主公招揽</h3>
-          <p>你已具备压倒性威望，可尝试以盟主之势招揽 ${escapeHtml(character.name)}。</p>
+          <p>你已具备开口资格，但 ${escapeHtml(character.name)} 仍可能观望、争执或反目。</p>
+          <p><strong>看重：</strong>${escapeHtml(info.profile?.focus || '实力与关系')}</p>
           <div class="kv"><span>我方兵力</span><strong>${fmt(info.playerTroops || 0)}</strong></div>
           <div class="kv"><span>对方兵力</span><strong>${fmt(info.targetTroops || 0)}</strong></div>
           <div class="kv"><span>我方平均民心</span><strong>${Math.round(info.playerPublic || 0)}</strong></div>
           <div class="kv"><span>对方平均民心</span><strong>${Math.round(info.targetPublic || 0)}</strong></div>
+          <div class="kv"><span>尝试成功率</span><strong>${Math.round((info.successChance || 0) * 100)}%</strong></div>
+          <div class="kv"><span>势力败势压力</span><strong>${Math.round(info.pressure?.pressure || 0)}</strong></div>
+          <div class="kv"><span>归附隐患</span><strong>${Math.round(info.pressure?.grievance || 0)}</strong></div>
           <button data-solicit-lord="${character.id}">招揽此方主公</button>
         </div>
       `;
@@ -8067,7 +8779,6 @@ const MAX_MAP_ZOOM = 4.2;
         ${detail}
         ${deltaPanel}
         <div class="campaign-progress"><i style="--value:${clamp(progress, 0, 100)}%"></i></div>
-        ${campaign.status === 'siege' ? `<div class="button-grid"><button data-request-relief="${campaign.id}" data-relief-city="${campaign.target}">求援</button><button data-diversion="${campaign.id}" data-diversion-target="${campaign.source}">围魏救赵</button></div>` : ''}
       </div>`;
     }
 
@@ -8589,6 +9300,27 @@ const MAX_MAP_ZOOM = 4.2;
       return flags.length ? flags.join('，') + '。' : '局势平稳，可按长期目标安排。';
     }
 
+    function renderLordAllianceCard(character) {
+      if (!isFactionLordCharacter(character)) return '';
+      const info = getAllianceEligibility(character);
+      const commonEnemyText = info.commonEnemies?.length ? info.commonEnemies.map(factionName).join('、') : '暂无';
+      const outrageText = info.outrageFactions?.length ? info.outrageFactions.map(factionName).join('、') : '暂无';
+      const buttonText = info.allied ? '正式解约' : '缔结盟约';
+      return `
+        <div class="card lord-alliance-card ${info.eligible ? '' : 'locked'}">
+          <h3>主公盟约</h3>
+          <p><strong>看重：</strong>${escapeHtml(info.profile?.focus || '共同利益')}</p>
+          <div class="kv"><span>关系</span><strong>${Math.round(info.relation || 0)}</strong></div>
+          <div class="kv"><span>共同敌人</span><strong>${escapeHtml(commonEnemyText)}</strong></div>
+          <div class="kv"><span>众愤势力</span><strong>${escapeHtml(outrageText)}</strong></div>
+          <div class="kv"><span>对方压力</span><strong>${Math.round(info.pressure?.pressure || 0)}</strong></div>
+          <p class="muted">${escapeHtml(info.reason || '')}</p>
+          ${info.failed?.length ? `<p class="muted">不足：${info.failed.map(item => escapeHtml(item.label + ' ' + item.detail)).join('；')}</p>` : ''}
+          <button data-conversation="ally" data-character="${character.id}" ${info.eligible ? '' : 'disabled'}>${buttonText}</button>
+        </div>
+      `;
+    }
+
     function battleRouteHelp(route) {
       const table = {
         official: {
@@ -8830,6 +9562,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function renderDiplomacyPanel() {
+      ensureAllDiplomacyRecords();
       const selected = gameState.cities[gameState.selectedCityId] || gameState.cities[gameState.player.startingCity || 'guiyang'];
       const canReach = selected && canOperateAtCity(selected.id);
       return `
@@ -9011,6 +9744,66 @@ const MAX_MAP_ZOOM = 4.2;
         orderDelta: tax.order + grain.order + publicMod.orderDelta + (realTroops(city.garrison) > city.population * 0.035 ? -0.8 : 0),
         growth: tax.growth * grain.growth
       };
+    }
+
+    function processNpcCityRecruitment(city, eco, reports) {
+      const controller = cityController(city.id);
+      if (!controller || controller === 'player') return false;
+      if (!FACTIONS[controller]) return false;
+      if (city.publicSupport <= 0 || city.order <= 0) return false;
+
+      const currentTroops = realTroops(city.garrison);
+      const localScale = controller === 'local' ? 0.45 : 1;
+      const targetCap = Math.max(500, Math.round(city.population * (controller === 'local' ? 0.024 : 0.052)));
+      if (currentTroops >= targetCap) return false;
+
+      const publicMod = getPublicSupportEconomyModifier(city);
+      const borderPressure = cityNeighborIds(city.id).some(neighborId => {
+        const neighborController = cityController(neighborId);
+        return neighborController && neighborController !== controller;
+      }) ? 1.18 : 1;
+      const underAttack = activeCampaignsTargetingCity(city.id).length > 0 ? 1.35 : 1;
+      const needRatio = clamp((targetCap - currentTroops) / Math.max(1, targetCap), 0.25, 1.35);
+      const warDamagePenalty = clamp(1 - Number(city.warDamage || 0) / 180, 0.45, 1);
+      const baseRate = Number(city.recruitBase || 0.012);
+      const rawAmount = Math.round(
+        city.population *
+        baseRate *
+        (0.11 + Number(city.level || 1) * 0.018) *
+        publicMod.recruit *
+        borderPressure *
+        underAttack *
+        needRatio *
+        warDamagePenalty *
+        localScale
+      );
+
+      if (rawAmount <= 0) return false;
+
+      const foodCost = Math.max(20, Math.round(rawAmount * 0.72));
+      const moneyCost = Math.max(12, Math.round(rawAmount * 0.36));
+      const foodRatio = city.food >= foodCost ? 1 : clamp(city.food / Math.max(1, foodCost), 0.15, 1);
+      const moneyRatio = city.money >= moneyCost ? 1 : clamp(city.money / Math.max(1, moneyCost), 0.2, 1);
+      const resourceRatio = Math.min(foodRatio, moneyRatio);
+      const amount = Math.min(targetCap - currentTroops, Math.max(25, Math.round(rawAmount * resourceRatio)));
+      if (amount <= 0) return false;
+
+      city.food = Math.max(0, Number(city.food || 0) - Math.round(foodCost * resourceRatio));
+      city.money = Math.max(0, Number(city.money || 0) - Math.round(moneyCost * resourceRatio));
+      city.population = Math.max(8000, Number(city.population || 0) - Math.round(amount * 0.42));
+      city.garrison.infantry = Math.max(0, Number(city.garrison.infantry || 0) + Math.round(amount * 0.64));
+      city.garrison.archers = Math.max(0, Number(city.garrison.archers || 0) + Math.round(amount * 0.24));
+      city.garrison.cavalry = Math.max(0, Number(city.garrison.cavalry || 0) + Math.round(amount * 0.12));
+      city.morale = clamp(Number(city.morale || 0) + (resourceRatio >= 0.85 ? 0.8 : 0.25), 0, 100);
+
+      if (amount >= NPC_RECRUITMENT_REPORT_THRESHOLD && cityReachDistance(city.id) <= 2) {
+        reports.push({
+          tone: 'warn',
+          level: 'minor',
+          text: factionName(controller) + '在' + city.name + '补充兵力 ' + fmt(amount) + '，周边战备正在恢复。'
+        });
+      }
+      return true;
     }
 
     function queueCityOrder(cityId, action) {
@@ -9359,17 +10152,21 @@ const MAX_MAP_ZOOM = 4.2;
       const before = snapshotPlayerState();
       const reports = [];
       gameState.turnEvents = [];
+      processCharacterDiscoveryTriggers(reports);
       processAppointmentAutoTasks(reports);
       processOrders(reports);
       unlockTabsByTutorialProgress();
       advanceCampaigns(reports);
       processEconomy(reports);
       processPublicSupportCrises(reports);
+      processSubmissionInstability(reports);
+      processAllianceDiplomacy(reports);
       runFactionAI(reports);
       runNpcWarAI(reports);
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
       evaluateNpcInitiatives();
+      processCharacterDiscoveryTriggers(reports);
       unlockTabsByTutorialProgress();
       advanceDate(TURN_DAYS);
       gameState.turn += 1;
@@ -10143,6 +10940,7 @@ const MAX_MAP_ZOOM = 4.2;
         city.agriculture = clamp(city.agriculture + (eco.growth - 1) * 0.45 - city.warDamage * 0.006, 0, 100);
         city.commerce = clamp(city.commerce + (eco.commerceFactor - 1) * 0.55 - city.warDamage * 0.008, 0, 100);
         city.warDamage = clamp(city.warDamage - 3, 0, 100);
+        processNpcCityRecruitment(city, eco, reports);
         if (city.food <= 0) {
           city.morale = clamp(city.morale - 7, 0, 100);
           city.publicSupport = clamp(city.publicSupport - 4, 0, 100);
@@ -12013,11 +12811,17 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.tutorial ||= null;
       migrated.militaryPlanner ||= { sourceId: null, targetId: null, route: 'official' };
       migrated.factionWarState ||= { lastAttackTurnByFaction: {}, recentWars: [] };
+      migrated.submissionState ||= {};
       migrated.publicUnrestState ||= { lastCrisisTurnByCity: {}, rebellionCities: {}, intelligenceLeaks: [] };
       migrated.publicUnrestState.lastCrisisTurnByCity ||= {};
       migrated.publicUnrestState.rebellionCities ||= {};
       migrated.publicUnrestState.intelligenceLeaks ||= [];
       migrated.factionRelations ||= structuredClone(DEFAULT_FACTION_RELATIONS);
+      migrated.diplomacy ||= {};
+      Object.keys(FACTIONS).forEach(factionId => {
+        if (factionId !== 'player') migrated.diplomacy[factionId] ||= { relation: 30, pact: '未接触', alliance: null };
+        if (factionId !== 'player' && migrated.diplomacy[factionId]) migrated.diplomacy[factionId].alliance ||= null;
+      });
       migrated.aiContentCache ||= {};
       migrated.aiContentPayloads ||= {};
       migrated.aiContentPending ||= {};
@@ -13727,16 +14531,6 @@ const MAX_MAP_ZOOM = 4.2;
               advanceGuideStep();
             }
           }
-          return;
-        }
-        const relief = event.target.closest('[data-request-relief]');
-        if (relief) {
-          requestRelief(relief.getAttribute('data-request-relief'), relief.getAttribute('data-relief-city'));
-          return;
-        }
-        const diversion = event.target.closest('[data-diversion]');
-        if (diversion) {
-          launchDiversionAttack(diversion.getAttribute('data-diversion'), diversion.getAttribute('data-diversion-target'));
           return;
         }
         if (calibrationState.enabled && event.target.closest('#mapStage')) {
