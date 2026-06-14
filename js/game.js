@@ -2844,6 +2844,8 @@ const MAX_MAP_ZOOM = 4.2;
           localTrialResolved: false,
           jingnanOpening: true,
           liuBiaoBreak: null,
+          plagueState: { activeByCity: {}, lastCheckTurn: 0, lastOutbreakTurn: 0 },
+          redemptionLines: {},
           yuanDisarm: false,
           openConflict: false,
           yechengInside: 0,
@@ -4173,6 +4175,132 @@ const MAX_MAP_ZOOM = 4.2;
       return 'undecided';
     }
 
+    function getLiuBiaoStageEndingInfo(state) {
+      const ending = state?.variables?.liuBiaoEnding || 'undecided';
+      const inherited = ending === 'player_inherits_jingzhou';
+      const supportedLiuQi = ending === 'support_liu_qi';
+      const recognizedLiuCong = ending === 'recognize_liu_cong';
+      const independent = ending === 'independent_jingzhou' || gameState.player.independent;
+      if (inherited) {
+        return {
+          name: '忠臣托孤',
+          summary: '刘表病逝前将荆州托付给你。襄阳、江陵、江夏、长沙诸郡改奉新主，刘表篇在“奉遗命承州”的格局中阶段结算。',
+          next: '后续剧情线可以从荆州新主开局：曹操南征会更重视你，孙权会重新评估江夏水路，刘备入荆也会变成客主关系。'
+        };
+      }
+      if (supportedLiuQi) {
+        return {
+          name: '刘琦正统',
+          summary: '刘表遗命归于刘琦，你保住荆南重臣的位置，并在荆州正统名分下获得继续周旋的空间。刘表篇在“扶弱守名”的格局中阶段结算。',
+          next: '后续剧情线可以围绕刘琦、蔡氏和外敌压力展开：你既可辅政，也可在危局中另立新局。'
+        };
+      }
+      if (recognizedLiuCong) {
+        return {
+          name: '蔡氏刘琮',
+          summary: '刘琮在蔡氏拥立下承继荆州，你选择承认襄阳新秩序。刘表篇在“保守继位、暗流未息”的格局中阶段结算。',
+          next: '后续剧情线可以接入蔡氏牵制、曹操南下和降曹压力，你需要决定继续忍耐还是趁势改局。'
+        };
+      }
+      if (independent) {
+        return {
+          name: '荆南自立',
+          summary: '刘表身后，荆州名分无法再约束你。你以荆南为根基自立，旧州府秩序与新兴军府正式分道扬镳。',
+          next: '后续剧情线可以从独立诸侯开局：襄阳残余、江东水路、曹操南征都会把你视作必须处理的新变量。'
+        };
+      }
+      return {
+        name: '襄阳余响',
+        summary: '刘表去世后，荆州权力重新洗牌。你的选择已经改变第一阶段格局，但天下棋局尚未终止。',
+        next: '后续剧情线可以根据你的城池、民心、人物救赎和外部关系继续展开。'
+      };
+    }
+
+    function guanduState(state) {
+      state.variables.guandu ||= {
+        caoScore: 0,
+        yuanScore: 0,
+        playerStance: '',
+        fates: {},
+        allianceChoice: '',
+        startedAfterLiuBiao: true
+      };
+      state.variables.guandu.fates ||= {};
+      return state.variables.guandu;
+    }
+
+    function getGuanduPowerLabel() {
+      const totals = cityTotals();
+      const cities = controlledCities().length;
+      const troops = Number(totals.troops || 0);
+      const prestige = Number(gameState.player.prestige || 0);
+      const power = cities * 12 + troops / 520 + prestige * 0.7 + Number(gameState.player.legitimacy || 0) * 0.35;
+      if (power >= 110) return { key: 'hegemon', label: '足以左右北方胜负' };
+      if (power >= 78) return { key: 'strong', label: '足以让曹袁同时顾忌' };
+      if (power >= 48) return { key: 'middle', label: '可以作为关键外援' };
+      return { key: 'weak', label: '仍需借大势自保' };
+    }
+
+    function getGuanduLiuBiaoContext() {
+      const conclusion = gameState.storyFlags?.liuBiaoStageConclusion;
+      if (conclusion?.name) return conclusion.name;
+      const state = gameState.plotLineStates?.liu_biao;
+      return getLiuBiaoStageEndingInfo(state).name;
+    }
+
+    function guanduBodyFor(senderId) {
+      const liuResult = getGuanduLiuBiaoContext();
+      const power = getGuanduPowerLabel();
+      if (senderId === 'caoCao') {
+        if (liuResult === '忠臣托孤') return '曹操密信至：荆州新主既定，许昌不愿北战时再多一名南方敌手。曹操愿以朝廷名义承认你的荆州地位，换你在官渡时牵制袁绍粮道。当前你的势力被评为：' + power.label + '。';
+        if (liuResult === '蔡氏刘琮') return '曹操密信至：襄阳保守，荆州未定。曹操暗示若你在官渡时保持善意，日后南下可给你保留体面。当前你的势力被评为：' + power.label + '。';
+        if (liuResult === '荆南自立') return '曹操密信至：你既已自立，许昌便按诸侯待你。曹操愿互不相扰，但要求你切断袁绍可能南联之路。当前你的势力被评为：' + power.label + '。';
+        return '曹操密信至：北方将决于官渡。许昌不求你立刻出兵，只求你在关键时刻给袁绍添一处破绽。当前你的势力被评为：' + power.label + '。';
+      }
+      if (liuResult === '忠臣托孤') return '袁绍密信至：袁氏称你既承荆州，便该与河北名门共扶汉室，不可坐视曹操挟天子而专权。当前你的势力被评为：' + power.label + '。';
+      if (liuResult === '刘琦正统') return '袁绍密信至：河北愿承认刘琦名分，并请你在荆州南北之间为袁军牵制曹操。当前你的势力被评为：' + power.label + '。';
+      if (liuResult === '荆南自立') return '袁绍密信至：袁氏虽不喜你自立，却更忌曹操坐大。若你愿助袁，河北可暂认你的荆南事实。当前你的势力被评为：' + power.label + '。';
+      return '袁绍密信至：官渡将定天下归属。袁氏希望你站在河北一边，至少不要让曹操安心南顾。当前你的势力被评为：' + power.label + '。';
+    }
+
+    function setCharacterFate(id, status, faction = null, reports = []) {
+      const character = gameState.characterRoster?.[id] || gameState.characters?.[id];
+      if (!character) return;
+      character.status = status;
+      if (faction) character.faction = faction;
+      if (status === '战死' || status === '处死') character.alive = false;
+      reports.push({ tone: status === '战死' || status === '处死' ? 'bad' : 'good', text: character.name + '命运改变：' + status + '。' });
+    }
+
+    function revealGuanduFigures() {
+      ['caoCao', 'yuanShao', 'liuBei', 'sunQuan', 'xunYu', 'guoJia', 'juShou', 'tianFeng', 'xuYou', 'yanLiang', 'wenChou', 'zhangHe', 'gaoLan'].forEach(id => {
+        const character = gameState.characterRoster?.[id];
+        if (character && character.status === 'hidden') character.status = 'rumored';
+      });
+    }
+
+    function getGuanduResultInfo(state) {
+      const guandu = guanduState(state);
+      const caoScore = Number(guandu.caoScore || 0);
+      const yuanScore = Number(guandu.yuanScore || 0);
+      if (caoScore >= yuanScore + 4) {
+        return {
+          name: '曹操逆胜',
+          summary: '曹操在官渡以少胜多，袁绍大军崩解。许昌声威暴涨，北方即将进入曹操追亡逐北的阶段。'
+        };
+      }
+      if (yuanScore >= caoScore + 4) {
+        return {
+          name: '袁绍压胜',
+          summary: '袁绍采纳稳进之策，官渡战局压过曹操。许昌震动，历史原本的败局被你推向另一条路。'
+        };
+      }
+      return {
+        name: '南北僵持',
+        summary: '曹袁在官渡互有胜负，双方都无法彻底吞下对手。你的选择让北方进入更漫长的对峙。'
+      };
+    }
+
     function transferJingzhouToPlayerByWill(state) {
       if (state.variables.jingzhouInherited) return;
       state.variables.jingzhouInherited = true;
@@ -4248,6 +4376,15 @@ const MAX_MAP_ZOOM = 4.2;
     function getLiuBiaoPlotStageInfo(state, node) {
       const breakInfo = getLiuBiaoBreakStageInfo();
       if (breakInfo) return breakInfo;
+      if (state?.status === 'completed') {
+        const conclusion = state.variables?.stageConclusion || gameState.storyFlags?.liuBiaoStageConclusion || getLiuBiaoStageEndingInfo(state);
+        return {
+          name: conclusion.name || '阶段结算',
+          focus: '刘表篇已经收束，当前重点是整理结算后的城池、人物、外交和防务变化。',
+          avoid: '不要把这次弹窗理解为整局终局。它只是刘表篇的阶段结果，后面仍可接新的剧情线。',
+          next: conclusion.next || '后续剧情线会根据刘表篇的阶段结果继续展开。'
+        };
+      }
       const stage = Number(node?.stage || state?.stage || 1);
       if (stage <= 1) {
         return {
@@ -4285,7 +4422,7 @@ const MAX_MAP_ZOOM = 4.2;
         name: '襄阳余响',
         focus: '消化刘表遗命带来的新格局，整理荆州内部关系和下一条天下线。',
         avoid: '不要忽略新继承关系带来的城池、防务和外交变化。',
-        next: '“襄阳夜雨”后，刘表线完结并切回系统推荐目标。'
+        next: '“襄阳夜雨”后，刘表篇只做阶段结算，不代表剧情模式终局。后续剧情线可以从此接续。'
       };
     }
 
@@ -4294,7 +4431,7 @@ const MAX_MAP_ZOOM = 4.2;
         id: 'liu_biao',
         title: '刘表线',
         openingGoal: '剧情目标：稳住桂阳，等待襄阳后续来信。',
-        completedGoal: '刘表线已完结：进入自由游玩，按系统推荐目标推进。',
+        completedGoal: '剧情目标：刘表篇已阶段结算，整顿荆州内政、人物关系与边境防务，等待下一条剧情线接续。',
         nodes: [
           { id: 'lb_1_1', stage: 1, title: '密令入匣', minTurn: 1, senderId: 'liuBiao', body: '刘表密令入匣，桂阳名义上仍属荆州，实权却已交到你手中。先稳住治安、粮草与军心，襄阳会继续观察。', goal: '剧情目标：稳定桂阳，治安、粮草、守军缺一不可。', auto: true },
           { id: 'lb_1_2', stage: 1, title: '襄阳来信', minTurn: 5, senderId: 'liuBiao', body: '襄阳问桂阳近日安抚成效。刘表并未催逼扩张，只要你能让地方不乱，这份庇护便仍然有效。', goal: '剧情目标：维持刘表庇护，继续安抚桂阳。' },
@@ -4347,8 +4484,78 @@ const MAX_MAP_ZOOM = 4.2;
             if (heir === 'liuQi') gameState.characters.kuaiYue.trust = clamp(Number(gameState.characters.kuaiYue.trust || 0) + 8, 0, 100);
             if (heir === 'liuCong') gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) - 8, 0, 100);
           } },
-          { id: 'lb_5_branch', stage: 5, title: '分支结局', minTurn: 50, senderId: 'kuaiYue', body: '荆州诸人已经看清你的选择。刘表线进入余响，新的天下线可以从此处接续。', goal: '剧情目标：等待襄阳夜雨，为刘表线收束。', condition: state => !!state.variables.liuBiaoEnding },
-          { id: 'lb_5_rain', stage: 5, title: '襄阳夜雨', minTurn: 50, senderId: 'liuBiao', body: '襄阳夜雨落在旧州府瓦上。刘表一线到此完结，荆州仍在，棋局却已不再由他落子。', goal: '刘表线已完结：进入自由游玩，按系统推荐目标推进。', condition: state => hasPlotNode(state, 'lb_5_branch') && turnsSincePlotNode(state, 'lb_5_branch') >= 5, final: true }
+          { id: 'lb_5_branch', stage: 5, title: '阶段结局', minTurn: 50, senderId: 'kuaiYue', body: state => {
+            const info = getLiuBiaoStageEndingInfo(state);
+            return '荆州诸人已经看清你的选择。当前刘表篇阶段结果为“' + info.name + '”。这只是第一段剧情线的结算，不是整局游戏终局。';
+          }, goal: '剧情目标：等待襄阳夜雨，为刘表篇做阶段收束。', condition: state => !!state.variables.liuBiaoEnding },
+          { id: 'lb_5_rain', stage: 5, title: '襄阳夜雨', minTurn: 50, senderId: 'liuBiao', body: state => {
+            const info = getLiuBiaoStageEndingInfo(state);
+            return '襄阳夜雨落在旧州府瓦上。刘表篇第一阶段结算：' + info.name + '。' + info.summary + ' ' + info.next;
+          }, goal: '剧情目标：刘表篇已阶段结算，整理城池、防务与人物关系，等待新的剧情线。', condition: state => hasPlotNode(state, 'lb_5_branch') && turnsSincePlotNode(state, 'lb_5_branch') >= 5, final: true, onTrigger: state => {
+            state.variables.stageConclusion = getLiuBiaoStageEndingInfo(state);
+            gameState.storyFlags ||= {};
+            gameState.storyFlags.liuBiaoStageConclusion = state.variables.stageConclusion;
+          } }
+        ]
+      },
+      guandu: {
+        id: 'guandu',
+        title: '官渡篇',
+        openingGoal: '剧情目标：刘表篇之后先休整内政，观察曹操与袁绍的官渡风声。',
+        completedGoal: '剧情目标：官渡篇已阶段结算，整理北方战局带来的外交、人物和边境变化。',
+        nodes: [
+          { id: 'gd_1_rest', stage: 1, title: '战前休整', minTurn: 1, senderId: 'kuaiYue', body: state => {
+            revealGuanduFigures();
+            const conclusion = getGuanduLiuBiaoContext();
+            const power = getGuanduPowerLabel();
+            return '刘表篇收束后，荆州暂得喘息。州府旧吏、军府新臣与地方士族都在等待你整顿。北方曹操、袁绍已在官渡相持，而你此刻的阶段结果是“' + conclusion + '”，势力水平是“' + power.label + '”。';
+          }, goal: '剧情目标：休整 3 回合，补粮、整军、安民，准备面对曹袁密信。', condition: state => gameState.turn - Number(state.startedTurn || gameState.turn) >= 1, onTrigger: state => {
+            const gd = guanduState(state);
+            gd.restUntilTurn = gameState.turn + 3;
+            gd.liuBiaoContext = getGuanduLiuBiaoContext();
+            gd.powerAtStart = getGuanduPowerLabel().key;
+          } },
+          { id: 'gd_2_cao_letter', stage: 2, title: '许昌密信', minTurn: 1, senderId: 'caoCao', body: () => guanduBodyFor('caoCao'), goal: '剧情目标：决定如何回应曹操，影响官渡曹军胜算与许昌对你的态度。', condition: state => hasPlotNode(state, 'gd_1_rest') && gameState.turn >= Number(guanduState(state).restUntilTurn || 0), choices: [
+            { id: 'aidCaoFood', label: '暗助曹操粮道' },
+            { id: 'aidCaoIntel', label: '送出袁军情报' },
+            { id: 'misleadCao', label: '以假情报误导曹操' },
+            { id: 'declineCao', label: '婉拒许昌密信' }
+          ] },
+          { id: 'gd_2_yuan_letter', stage: 2, title: '邺城密信', minTurn: 1, senderId: 'yuanShao', body: () => guanduBodyFor('yuanShao'), goal: '剧情目标：决定如何回应袁绍，影响官渡袁军胜算与河北人物命运。', condition: state => hasPlotNode(state, 'gd_2_cao_letter') && turnsSincePlotNode(state, 'gd_2_cao_letter') >= 1, choices: [
+            { id: 'adviseYuanSlow', label: '劝袁绍缓进耗曹' },
+            { id: 'urgeYuanAttack', label: '催袁绍急攻许昌' },
+            { id: 'saveTianFeng', label: '为田丰求情' },
+            { id: 'declineYuan', label: '不卷入河北军议' }
+          ] },
+          { id: 'gd_3_alliances', stage: 3, title: '群雄求盟', minTurn: 1, senderId: 'liuBei', body: '官渡相持，天下诸侯都开始寻找后路。刘备希望借你的荆州格局自保，孙权希望稳住江夏水路，曹操与袁绍也各自给出正式盟约的暗示。你只能公开选择一个方向，或保持不结盟。', goal: '剧情目标：选择官渡期间的公开盟友，或维持观望。', condition: state => hasPlotNode(state, 'gd_2_yuan_letter') && turnsSincePlotNode(state, 'gd_2_yuan_letter') >= 2, choices: [
+            { id: 'allyLiuBei', label: '与刘备结成仁义盟' },
+            { id: 'allySunQuan', label: '与孙权结成江上盟' },
+            { id: 'allyCaoCao', label: '与曹操结成许昌盟' },
+            { id: 'allyYuanShao', label: '与袁绍结成河北盟' },
+            { id: 'noAlliance', label: '暂不公开结盟' }
+          ] },
+          { id: 'gd_4_baima', stage: 4, title: '白马生死', minTurn: 1, senderId: 'guanYu', body: '白马、延津之间杀气渐浓。颜良、文丑将成为官渡序幕中的第一批命运节点。若你递出一封信、截下一道军令，甚至可以改变他们是否死于此战。', goal: '剧情目标：决定是否介入白马与延津，改变颜良、文丑的命运。', condition: state => hasPlotNode(state, 'gd_3_alliances') && turnsSincePlotNode(state, 'gd_3_alliances') >= 2, choices: [
+            { id: 'warnYanLiang', label: '密告颜良谨防关羽' },
+            { id: 'letYanLiangDie', label: '任由颜良战死' },
+            { id: 'saveWenChou', label: '接应文丑撤军' },
+            { id: 'ambushBoth', label: '设伏同时削弱曹袁' }
+          ] },
+          { id: 'gd_5_wuchao', stage: 5, title: '乌巢夜火', minTurn: 1, senderId: 'xuYou', body: '许攸受辱，乌巢粮屯暴露在夜色里。张郃、高览也在判断袁绍还能不能听进正确的军令。你的一封回信，将决定火是否烧起、谁能活下来、谁会改换门庭。', goal: '剧情目标：在乌巢之夜选择官渡胜负的关键推手。', condition: state => hasPlotNode(state, 'gd_4_baima') && turnsSincePlotNode(state, 'gd_4_baima') >= 2, choices: [
+            { id: 'burnWuchao', label: '把乌巢情报交给曹操' },
+            { id: 'guardWuchao', label: '提醒袁军严守乌巢' },
+            { id: 'interceptXuYou', label: '截下许攸另作筹码' },
+            { id: 'recruitZhangHe', label: '暗示张郃另寻明主' }
+          ] },
+          { id: 'gd_6_result', stage: 6, title: '官渡阶段结算', minTurn: 1, senderId: 'xunYu', body: state => {
+            const result = getGuanduResultInfo(state);
+            const gd = guanduState(state);
+            return '官渡战报传至荆州：' + result.name + '。' + result.summary + ' 人物命运已被记录：' + Object.entries(gd.fates || {}).map(([id, fate]) => id + '：' + fate).join('；') + '。这仍是剧情模式的阶段结算，后续天下线可以继续接入。';
+          }, goal: '剧情目标：官渡篇已阶段结算，整理北方胜负与人物去向。', condition: state => hasPlotNode(state, 'gd_5_wuchao') && turnsSincePlotNode(state, 'gd_5_wuchao') >= 2, final: true, onTrigger: state => {
+            const result = getGuanduResultInfo(state);
+            guanduState(state).result = result;
+            gameState.storyFlags ||= {};
+            gameState.storyFlags.guanduStageConclusion = result;
+          } }
         ]
       }
     };
@@ -4441,7 +4648,12 @@ const MAX_MAP_ZOOM = 4.2;
       if (breakInfo) return '【' + breakInfo.name + '】' + breakInfo.goal.replace(/^剧情目标：/, '');
       const active = Object.values(gameState.plotLineStates || {})
         .filter(state => state && state.status === 'active' && state.currentGoal);
-      if (!active.length) return '';
+      if (!active.length) {
+        const completed = Object.values(gameState.plotLineStates || {})
+          .filter(state => state && state.status === 'completed' && state.currentGoal)
+          .sort((a, b) => Number(b.completedTurn || 0) - Number(a.completedTurn || 0))[0];
+        return completed?.currentGoal || '';
+      }
       active.sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0));
       const state = active[0];
       const node = (PLOT_LINE_BLUEPRINTS[state?.id]?.nodes || []).find(item => item.id === state?.currentNodeId);
@@ -4478,7 +4690,10 @@ const MAX_MAP_ZOOM = 4.2;
       if (plotGoal) {
         const active = Object.values(gameState.plotLineStates || {})
           .filter(state => state && state.status === 'active' && state.currentGoal)
-          .sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0))[0];
+          .sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0))[0]
+          || Object.values(gameState.plotLineStates || {})
+            .filter(state => state && state.status === 'completed' && state.currentGoal)
+            .sort((a, b) => Number(b.completedTurn || 0) - Number(a.completedTurn || 0))[0];
         const lineName = PLOT_LINE_BLUEPRINTS[active?.id]?.title || '剧情线';
         const node = (PLOT_LINE_BLUEPRINTS[active?.id]?.nodes || []).find(item => item.id === active?.currentNodeId);
         const phase = active?.id === 'liu_biao' ? getLiuBiaoPlotStageInfo(active, node) : null;
@@ -4490,7 +4705,7 @@ const MAX_MAP_ZOOM = 4.2;
           (phase ? '<span style="color:var(--bad)">需要避免：</span>' + escapeHtml(phase.avoid) + '<br>' : '') +
           (phase ? '<span style="color:var(--muted)">后续变化：</span>' + escapeHtml(phase.next) + '<br>' : '') +
           (node ? '<span style="color:var(--muted)">当前节点：</span>' + escapeHtml(node.title) + '｜阶段 ' + Number(node.stage || active.stage || 0) + '<br>' : '') +
-          '<span style="color:var(--bad)">说明：</span>剧情目标只提示方向，不会锁死你的操作；刘表线完结后会自动切回系统推荐目标。';
+          '<span style="color:var(--bad)">说明：</span>剧情目标只提示方向，不会锁死你的操作；刘表篇结算只是阶段结局，后续剧情线仍可继续接入。';
       }
       return '<strong>当前目标</strong><br>' +
         '这是系统根据当前局势自动给出的建议，用来帮你判断下一步优先级。<br>' +
@@ -4532,7 +4747,7 @@ const MAX_MAP_ZOOM = 4.2;
         critical: true,
         kind: 'plotEvent',
         meta: { lineId, nodeId: node.id },
-        choices: node.choices || [{ id: 'ack', label: node.final ? '听雨收卷' : '知晓' }]
+        choices: node.choices || [{ id: 'ack', label: node.final ? '收下阶段结局' : '知晓' }]
       });
       return true;
     }
@@ -4543,8 +4758,17 @@ const MAX_MAP_ZOOM = 4.2;
       state.currentGoal = PLOT_LINE_BLUEPRINTS[lineId]?.completedGoal || '';
       if (lineId === 'liu_biao') {
         state.variables.completed = true;
-        gameState.currentGoal = getSystemRecommendedGoal();
-        reports.push({ tone: 'good', level: 'critical', text: '刘表线完结。玩家进入自由游玩，当前目标改由系统自动推荐。' });
+        gameState.currentGoal = state.currentGoal;
+        reports.push({ tone: 'good', level: 'critical', text: '刘表篇已阶段结算。这只是当前剧情线的结果，后续剧情线仍可从荆州新格局继续展开。' });
+        const guandu = activatePlotLine('guandu');
+        guandu.startedTurn = guandu.startedTurn || gameState.turn;
+        guandu.currentGoal = PLOT_LINE_BLUEPRINTS.guandu?.openingGoal || guandu.currentGoal;
+        reports.push({ tone: 'warn', level: 'important', text: '官渡篇已开启。你将先获得一段休整时间，随后曹操与袁绍会陆续送来密信。' });
+      }
+      if (lineId === 'guandu') {
+        state.variables.completed = true;
+        gameState.currentGoal = state.currentGoal;
+        reports.push({ tone: 'good', level: 'critical', text: '官渡篇已阶段结算。北方胜负、人物命运与盟约关系已经写入后续剧情基础。' });
       }
     }
 
@@ -4569,6 +4793,9 @@ const MAX_MAP_ZOOM = 4.2;
       if (!lineId || !nodeId) return false;
       const state = ensurePlotLineState(lineId);
       const node = (PLOT_LINE_BLUEPRINTS[lineId]?.nodes || []).find(item => item.id === nodeId);
+      if (lineId === 'guandu') {
+        resolveGuanduPlotChoice(state, nodeId, choiceId, reports);
+      }
       if (lineId === 'liu_biao' && nodeId === 'lb_4_3') {
         const endings = {
           supportLiuQi: 'support_liu_qi',
@@ -5711,6 +5938,8 @@ const MAX_MAP_ZOOM = 4.2;
         resolveLiuBiaoBreakChoice(letter, choiceId, reports);
       } else if (letter.kind === 'plotEvent') {
         resolvePlotEventChoice(letter, choiceId, reports);
+      } else if (letter.kind === 'redemption') {
+        resolveRedemptionLetter(letter, choiceId, reports);
       } else {
         resolveNpcLetterChoice(letter, choiceId, reports);
       }
@@ -6343,6 +6572,7 @@ const MAX_MAP_ZOOM = 4.2;
       target.warDamage = clamp(target.warDamage + (win ? 18 : 9), 0, 100);
       target.morale = clamp(target.morale + (win ? -12 : 3), 0, 100);
       const playerLoss = Math.max(0, beforeArmy - realTroops(campaign.army));
+      const battleDefender = cityController(target.id);
       if (win && campaign.objective === 'capture') {
         const oldController = cityController(target.id);
         captureRegion(target.id, campaign.faction, reports, { prestige: campaign.faction === 'player' ? 7 : 0, alert: 12, select: campaign.faction === 'player' });
@@ -6403,6 +6633,92 @@ const MAX_MAP_ZOOM = 4.2;
         campaign.phase = win ? '破城' : '撤退';
       }
       gameState.battleReports.unshift({ turn: gameState.turn, source: regionName(campaign.source), target: target.name, win, ratio: ratio.toFixed(2) });
+      evaluateRedemptionAfterBattle(campaign, target, { win, defender: battleDefender }, reports);
+    }
+
+    function evaluateRedemptionAfterBattle(campaign, target, result, reports = []) {
+      if (!isStoryMode() || !campaign || campaign.faction !== 'player' || !target) return;
+      if (target.id === 'jiangxia' && result.defender === 'liubiao' && result.win) {
+        maybeTriggerRedemptionLine('huangZu', { reason: 'jiangxiaDefeat', cityId: target.id });
+      }
+      if (target.id === 'changsha' && result.win && controlledCities().some(city => city.id === 'changsha')) {
+        maybeTriggerRedemptionLine('weiYan', { reason: 'changshaTaken', cityId: target.id });
+        if (Number(gameState.player.prestige || 0) >= 22 || Number(target.publicSupport || 0) >= 50) {
+          maybeTriggerRedemptionLine('huangZhong', { reason: 'changshaSettled', cityId: target.id });
+        }
+      }
+      if (target.id === 'jiangxia' && result.win && (redemptionState().huangZu?.choice === 'redeem' || gameState.player.prestige >= 35)) {
+        maybeTriggerRedemptionLine('ganNing', { reason: 'jiangxiaWaterways', cityId: target.id });
+      }
+      if (result.win && result.defender === 'liubiao' && gameState.characters.caiMao?.suspicion >= 58 && gameState.player.legitimacy >= 52) {
+        maybeTriggerRedemptionLine('caiMao', { reason: 'liubiaoFrontShaken', cityId: target.id });
+      }
+    }
+
+    function processStoryRedemptionOpportunities(reports = []) {
+      if (!isStoryMode()) return;
+      const liuBiaoPlot = gameState.plotLineStates?.liu_biao;
+      if (liuBiaoPlot && hasPlotNode(liuBiaoPlot, 'lb_3_2')) {
+        maybeTriggerRedemptionLine('liuQi', { reason: 'successionCrisis' });
+      }
+      if (
+        Number(gameState.characters.caiMao?.suspicion || 0) >= 62
+        && Number(gameState.player.legitimacy || 0) >= 52
+        && controlledCities().length >= 3
+      ) {
+        maybeTriggerRedemptionLine('caiMao', { reason: 'gentryBargain' });
+      }
+      if (
+        Number(gameState.player.legitimacy || 0) >= 58
+        && Number(gameState.characters.wenPin?.trust || 0) >= 45
+        && (redemptionState().huangZu?.resolved || controlledCities().length >= 3)
+      ) {
+        maybeTriggerRedemptionLine('wenPin', { reason: 'keptFaith' });
+      }
+      if (
+        liuBiaoPlot
+        && hasPlotNode(liuBiaoPlot, 'lb_3_3')
+        && Number(gameState.player.legitimacy || 0) >= 55
+        && Number(gameState.characters.jingnanGentry?.suspicion || 0) <= 58
+        && !gameState.player.independent
+      ) {
+        maybeTriggerRedemptionLine('kuaiYue', { reason: 'successionBalance' });
+      }
+      if (
+        (redemptionState().huangZu?.resolved || redemptionState().ganNing?.resolved)
+        && gameState.turn - Number(redemptionState().sunResponse?.turn || 0) > 4
+      ) {
+        maybeTriggerRedemptionLine('sunResponse', { reason: 'jiangxiaAftermath' });
+      }
+      const plague = storyPlagueState();
+      if (Number(plague.lastOutbreakTurn || 0) > 0 && gameState.turn - Number(plague.lastOutbreakTurn || 0) <= 3 && !playerHealers().length) {
+        maybeTriggerRedemptionLine('huaTuo', { reason: 'plagueAftermath' });
+      }
+      const guanduPlot = gameState.plotLineStates?.guandu;
+      const guandu = guanduPlot ? guanduState(guanduPlot) : null;
+      if (guanduPlot && hasPlotNode(guanduPlot, 'gd_2_yuan_letter') && gameState.turn - Number(redemptionState().tianFeng?.turn || 0) > 4) {
+        maybeTriggerRedemptionLine('tianFeng', { reason: 'yuanCounsel', guanduChoice: guanduPlot.triggeredNodes?.gd_2_yuan_letter?.turn });
+      }
+      if (guanduPlot && hasPlotNode(guanduPlot, 'gd_4_baima')) {
+        maybeTriggerRedemptionLine('guanYu', { reason: 'baimaFame', yanLiangFate: guandu?.fates?.yanLiang || '' });
+      }
+      if (guanduPlot && hasPlotNode(guanduPlot, 'gd_5_wuchao')) {
+        if (guandu?.fates?.xuYou && !redemptionState().xuYou?.resolved) {
+          maybeTriggerRedemptionLine('xuYou', { reason: 'wuchaoTurn', fate: guandu.fates.xuYou });
+        }
+        if (!guandu?.fates?.zhangHe && !redemptionState().zhangHe?.resolved) {
+          maybeTriggerRedemptionLine('zhangHe', { reason: 'yuanCampDoubt' });
+        }
+      }
+      if (guanduPlot && hasPlotNode(guanduPlot, 'gd_6_result')) {
+        const resultName = guandu?.result?.name || '';
+        if ((resultName === '曹操逆胜' || guandu?.allianceChoice === 'cao') && !redemptionState().xunYu?.resolved) {
+          maybeTriggerRedemptionLine('xunYu', { reason: 'caoVictoryOrder', guanduResult: resultName });
+        }
+        if (Number(guandu?.caoScore || 0) >= 4 && !redemptionState().guoJia?.resolved) {
+          maybeTriggerRedemptionLine('guoJia', { reason: 'guanduRead', guanduResult: resultName });
+        }
+      }
     }
 
     function requestRelief(campaignId, cityId) {
@@ -6433,12 +6749,849 @@ const MAX_MAP_ZOOM = 4.2;
       return matter;
     }
 
+    function storyPlagueState() {
+      gameState.storyFlags ||= {};
+      gameState.storyFlags.plagueState ||= { activeByCity: {}, lastCheckTurn: 0, lastOutbreakTurn: 0 };
+      gameState.storyFlags.plagueState.activeByCity ||= {};
+      return gameState.storyFlags.plagueState;
+    }
+
+    function redemptionState() {
+      gameState.storyFlags ||= {};
+      gameState.storyFlags.redemptionLines ||= {};
+      return gameState.storyFlags.redemptionLines;
+    }
+
+    function playerHealers() {
+      return Object.values(gameState.characterRoster || {}).filter(character => (
+        character
+        && character.type === '医者'
+        && (character.status === 'recruited' || character.faction === 'player')
+      ));
+    }
+
+    function healerBuffLevel() {
+      const healers = playerHealers();
+      if (!healers.length) return 0;
+      const legendary = healers.some(character => character.rarity === '传奇' || character.id === 'huaTuo');
+      return clamp(healers.length + (legendary ? 2 : 0), 1, 5);
+    }
+
+    function cityPlagueLevel(cityId) {
+      return clamp(Number(storyPlagueState().activeByCity?.[cityId] || 0), 0, 100);
+    }
+
+    function setCityPlagueLevel(cityId, value) {
+      const state = storyPlagueState();
+      const next = clamp(Math.round(Number(value || 0)), 0, 100);
+      if (next <= 0) delete state.activeByCity[cityId];
+      else state.activeByCity[cityId] = next;
+      const city = gameState.cities[cityId];
+      if (city) city.plague = next;
+      return next;
+    }
+
+    function plagueRiskForCity(city) {
+      if (!city || !isControlledBy(city.id, 'player')) return 0;
+      const supportRisk = clamp((55 - Number(city.publicSupport || 0)) / 55, 0, 1) * 0.035;
+      const orderRisk = clamp((58 - Number(city.order || 0)) / 58, 0, 1) * 0.03;
+      const foodNeed = Math.max(900, realTroops(city.garrison) * 1.2);
+      const foodRisk = Number(city.food || 0) < foodNeed ? 0.018 : 0;
+      const warRisk = Number(city.warDamage || 0) > 20 ? clamp(Number(city.warDamage || 0) / 100, 0, 1) * 0.026 : 0;
+      const siegeRisk = activeCampaignsTargetingCity(city.id).length ? 0.018 : 0;
+      const populationRisk = Number(city.population || 0) > 52000 ? 0.012 : 0;
+      const activeRisk = cityPlagueLevel(city.id) > 0 ? 0.022 : 0;
+      const healerMitigation = healerBuffLevel() * 0.01;
+      return clamp(0.006 + supportRisk + orderRisk + foodRisk + warRisk + siegeRisk + populationRisk + activeRisk - healerMitigation, 0.002, 0.12);
+    }
+
+    function processStoryPlague(reports = []) {
+      if (!isStoryMode() || gameState.turn < 8) return;
+      const state = storyPlagueState();
+      if (Number(state.lastCheckTurn || 0) === gameState.turn) return;
+      state.lastCheckTurn = gameState.turn;
+
+      Object.entries({ ...(state.activeByCity || {}) }).forEach(([cityId, level]) => {
+        const city = gameState.cities[cityId];
+        if (!city || !isControlledBy(cityId, 'player')) {
+          delete state.activeByCity[cityId];
+          return;
+        }
+        const healer = healerBuffLevel();
+        const next = clamp(Number(level || 0) + 4 - healer * 3, 0, 100);
+        setCityPlagueLevel(cityId, next);
+        if (next > 0) {
+          const populationLoss = Math.round(Number(city.population || 0) * clamp(next / 1000, 0.002, 0.028));
+          city.population = Math.max(800, Number(city.population || 0) - populationLoss);
+          city.publicSupport = clamp(Number(city.publicSupport || 0) - clamp(Math.round(next / 20), 1, 5), 0, 100);
+          city.order = clamp(Number(city.order || 0) - clamp(Math.round(next / 26), 0, 4), 0, 100);
+          reports.push({ tone: 'bad', level: next >= 60 ? 'critical' : 'important', text: city.name + '疫病未平，人口 -' + fmt(populationLoss) + '，民心与治安受损。' });
+        } else {
+          reports.push({ tone: 'good', text: city.name + '疫气渐散，城中秩序开始恢复。' });
+        }
+      });
+
+      const unresolved = (gameState.urgentMatters || []).some(item => !item.resolved && item.type === 'plague');
+      if (unresolved || gameState.turn - Number(state.lastOutbreakTurn || 0) < 5) return;
+      const candidates = controlledCities()
+        .map(city => ({ city, risk: plagueRiskForCity(city) }))
+        .sort((a, b) => b.risk - a.risk);
+      const candidate = candidates[0];
+      if (!candidate || Math.random() >= candidate.risk) return;
+      state.lastOutbreakTurn = gameState.turn;
+      const severity = clamp(Math.round(28 + candidate.risk * 420 + Math.random() * 18), 22, 72);
+      setCityPlagueLevel(candidate.city.id, Math.max(cityPlagueLevel(candidate.city.id), severity));
+      addUrgentMatter({
+        type: 'plague',
+        cityId: candidate.city.id,
+        severity,
+        title: candidate.city.name + '瘟疫入城',
+        text: '城中疫气骤起，医药、粮草、军纪与民心都在同一回合承压。处理得当可以赢得民望，隐瞒或拖延则可能让疫情扩散。'
+      });
+    }
+
+    function resolvePlagueMatter(matter, choice) {
+      const city = gameState.cities[matter.cityId];
+      if (!city) return;
+      const level = Math.max(cityPlagueLevel(city.id), Number(matter.severity || 32));
+      const healers = playerHealers();
+      const healerLevel = healerBuffLevel();
+      const hasHealer = healerLevel > 0;
+      const lines = [];
+
+      if (choice === 'quarantine') {
+        setCityPlagueLevel(city.id, level - 34);
+        city.publicSupport = clamp(Number(city.publicSupport || 0) - 6, 0, 100);
+        city.order = clamp(Number(city.order || 0) + 5, 0, 100);
+        city.money = Math.max(0, Number(city.money || 0) - 70);
+        lines.push('你下令封坊设卡，疫势被压住，但百姓怨气上升。');
+      } else if (choice === 'granary') {
+        setCityPlagueLevel(city.id, level - 26 - healerLevel * 4);
+        city.food = Math.max(0, Number(city.food || 0) - 520);
+        city.money = Math.max(0, Number(city.money || 0) - 140);
+        city.publicSupport = clamp(Number(city.publicSupport || 0) + 9, 0, 100);
+        gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 2, 0, 100);
+        lines.push('你开仓施药，民心回稳，合法性略升。');
+      } else if (choice === 'healer') {
+        const reduction = hasHealer ? 48 + healerLevel * 6 : 18;
+        setCityPlagueLevel(city.id, level - reduction);
+        city.morale = clamp(Number(city.morale || 0) + (hasHealer ? 5 : 1), 0, 100);
+        city.publicSupport = clamp(Number(city.publicSupport || 0) + (hasHealer ? 6 : 2), 0, 100);
+        if (hasHealer) {
+          healers.forEach(healer => addCharacterMemory(healer, { summary: '在' + city.name + '瘟疫中救治军民，医名更盛。' }));
+          lines.push(healers[0].name + '主持疫所，药方奏效，军民伤亡大减。');
+        } else {
+          lines.push('城中医者不足，只能临时征调草泽郎中，疫势略缓。');
+        }
+      } else if (choice === 'liubiao') {
+        const canAsk = Number(gameState.player.protection || 0) >= 35 && !gameState.player.independent;
+        setCityPlagueLevel(city.id, level - (canAsk ? 30 : 12));
+        if (canAsk) {
+          city.food += 260;
+          gameState.player.protection = clamp(Number(gameState.player.protection || 0) - 8, 0, 100);
+          gameState.characters.liuBiao.trust = clamp(Number(gameState.characters.liuBiao.trust || 0) - 4, 0, 100);
+          lines.push('你向襄阳求取医药，刘表拨来药粮，但庇护与信任被消耗。');
+        } else {
+          city.publicSupport = clamp(Number(city.publicSupport || 0) - 3, 0, 100);
+          lines.push('襄阳支援有限，百姓看出你已难借刘表之力。');
+        }
+      } else if (choice === 'conceal') {
+        setCityPlagueLevel(city.id, level - 8);
+        gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) + 12, 0, 100);
+        city.order = clamp(Number(city.order || 0) - 5, 0, 100);
+        storyPlagueState().concealedTurn = gameState.turn;
+        lines.push('你压下疫报，短期避免外敌窥伺，但士族疑心与城中暗流都在上升。');
+      } else if (choice === 'military') {
+        setCityPlagueLevel(city.id, level - 22 - healerLevel * 2);
+        city.morale = clamp(Number(city.morale || 0) - 6, 0, 100);
+        city.order = clamp(Number(city.order || 0) + 7, 0, 100);
+        removeTroops(city.garrison, Math.round(realTroops(city.garrison) * 0.035));
+        lines.push('你以军法隔离营伍，疫情扩散减缓，但军心和兵员都受损。');
+      }
+
+      const remaining = cityPlagueLevel(city.id);
+      const tone = remaining <= 0 ? 'good' : remaining >= 55 ? 'bad' : 'warn';
+      pushTurnEvent({ tone, level: remaining >= 55 ? 'critical' : 'important', text: lines.join('') + ' 当前疫病 ' + remaining + '/100。' });
+      if (choice === 'healer' && !hasHealer) {
+        maybeTriggerRedemptionLine('huaTuo', { reason: 'plague', cityId: city.id });
+      }
+    }
+
+    function maybeTriggerRedemptionLine(lineId, context = {}) {
+      if (!isStoryMode()) return false;
+      const lines = redemptionState();
+      if (lines[lineId]?.offered || lines[lineId]?.resolved) return false;
+      const data = {
+        huangZu: {
+          senderId: 'huangZu',
+          title: '败将求生',
+          body: '江夏旧将黄祖被你逼到退路。他自知旧怨难消，却仍说水路不可一日无将。若给他一条赎罪路，他愿以江夏水军挡住下一次风浪。',
+          choices: [
+            { id: 'redeem', label: '留守江夏赎罪' },
+            { id: 'imprison', label: '收押审问水路' },
+            { id: 'execute', label: '斩首示众' }
+          ]
+        },
+        weiYan: {
+          senderId: 'weiYan',
+          title: '孤将请战',
+          body: '长沙军中有一员勇悍之将，名魏延。他不愿做被旧门第压住的偏将，只求一场能证明自己的战功。重用他，会得锋刃，也会惹来议论。',
+          choices: [
+            { id: 'trial', label: '给他独立战功' },
+            { id: 'restrain', label: '收为偏将约束' },
+            { id: 'reject', label: '压下此人' }
+          ]
+        },
+        liuQi: {
+          senderId: 'liuQi',
+          title: '长公子求援',
+          body: '刘琦遣人密来，言蔡氏之势日重，襄阳已难容他久居。他不求夺权，只求一条能活下去、也能保住荆州名分的路。',
+          choices: [
+            { id: 'escort', label: '护送出镇江夏' },
+            { id: 'support', label: '公开支持刘琦' },
+            { id: 'neutral', label: '只给暗中盘缠' }
+          ]
+        },
+        caiMao: {
+          senderId: 'caiMao',
+          title: '权门退路',
+          body: '蔡瑁终于派人试探：若你愿保蔡氏宗族与水军旧部不被清算，他可以交出一部分襄阳人事与水军名册。此举能稳局，也会让人质疑你与权门妥协。',
+          choices: [
+            { id: 'bargain', label: '保族换权' },
+            { id: 'coerce', label: '逼其交权' },
+            { id: 'purge', label: '准备清算蔡氏' }
+          ]
+        },
+        ganNing: {
+          senderId: 'ganNing',
+          title: '锦帆求名',
+          body: '锦帆贼甘宁听闻你给败将留路，遣人投书。他不愿再做江上盗名之人，只求一战立功，洗去旧迹。',
+          choices: [
+            { id: 'oath', label: '立功赎罪' },
+            { id: 'recruit', label: '直接招安' },
+            { id: 'release', label: '放他自去' }
+          ]
+        },
+        huaTuo: {
+          senderId: 'huaTuo',
+          title: '医者夜访',
+          body: '疫病之后，一位游医夜至府门，自称华佗。他不求官爵，只求药材、疫所与不被权贵拘束的自由。',
+          choices: [
+            { id: 'invite', label: '请为客卿医者' },
+            { id: 'fund', label: '资助行医不拘留' },
+            { id: 'ignore', label: '婉拒入府' }
+          ]
+        },
+        wenPin: {
+          senderId: 'wenPin',
+          title: '守信之将',
+          body: '文聘遣人送来一封军牒：荆州将倾，最怕的不是强敌，而是号令反复、赏罚无信。若你能守约安民，他愿把军心押在你身上。',
+          choices: [
+            { id: 'oath', label: '以军令立誓' },
+            { id: 'frontier', label: '留其守边' },
+            { id: 'doubt', label: '暂不交心' }
+          ]
+        },
+        kuaiYue: {
+          senderId: 'kuaiYue',
+          title: '谋臣下注',
+          body: '蒯越私下送来一卷襄阳人事。卷末只写一句：若新局能保荆州不乱，士族也会选择活路。你知道这是一次下注。',
+          choices: [
+            { id: 'accept', label: '接纳蒯越下注' },
+            { id: 'promise', label: '许以安州之约' },
+            { id: 'refuse', label: '不受士族牵制' }
+          ]
+        },
+        huangZhong: {
+          senderId: 'huangZhong',
+          title: '老将不伏',
+          body: '长沙既定，一名老将仍每日挽弓校射。他说年岁不该决定一个人的结局，若你愿给他战场，他愿用余勇证明自己。',
+          choices: [
+            { id: 'invite', label: '请老将出山' },
+            { id: 'trial', label: '设射礼试锋' },
+            { id: 'retire', label: '厚礼遣归' }
+          ]
+        },
+        sunResponse: {
+          senderId: 'sunQuan',
+          title: '江东来书',
+          body: '江东使者抵达。黄祖、甘宁与江夏水路的选择已经传到孙氏耳中。孙权不急着翻脸，只问你：江上旧怨，究竟要如何了结？',
+          choices: [
+            { id: 'appease', label: '遣使释怨' },
+            { id: 'defy', label: '强硬回书' },
+            { id: 'trade', label: '以水路互市' }
+          ]
+        },
+        tianFeng: {
+          senderId: 'tianFeng',
+          title: '囚门死谏',
+          body: '田丰在邺城狱中托人送来一片竹简：袁军若急胜，必败于粮道；若能忍辱缓进，曹操未必不可破。他不求脱罪，只求有人把正确的话送到能听见的人耳中。',
+          choices: [
+            { id: 'rescue', label: '设法救出田丰' },
+            { id: 'deliver', label: '转送死谏给袁营' },
+            { id: 'silence', label: '按下此信不发' }
+          ]
+        },
+        xuYou: {
+          senderId: 'xuYou',
+          title: '乌巢谋价',
+          body: '许攸派人送来一句话：乌巢之火能烧袁，也能烧曹；真正值钱的不是粮屯，而是谁愿意给他一个足够体面的席位。',
+          choices: [
+            { id: 'buy', label: '重金买断许攸' },
+            { id: 'expose', label: '公开其反复无常' },
+            { id: 'sendCao', label: '放他去见曹操' }
+          ]
+        },
+        zhangHe: {
+          senderId: 'zhangHe',
+          title: '巧变择主',
+          body: '张郃遣亲信试探：战场形势瞬息万变，最怕主帅不听变通。他不求你立刻招纳，只问若有一日袁营错判，你是否容得下一名临阵改计之将。',
+          choices: [
+            { id: 'recruit', label: '许以将位相招' },
+            { id: 'safePassage', label: '只给退路不收人' },
+            { id: 'reject', label: '拒绝临阵易主之人' }
+          ]
+        },
+        xunYu: {
+          senderId: 'xunYu',
+          title: '王佐汉心',
+          body: '荀彧的书信措辞极稳，却字字有锋：官渡若胜，曹操会更近天下一步；但天下秩序究竟应归于汉室，还是归于强臣，终须有人提前立下边界。',
+          choices: [
+            { id: 'hanMandate', label: '承诺尊汉室名义' },
+            { id: 'pragmatic', label: '只谈安民不谈名分' },
+            { id: 'ambition', label: '暗示强者自取天下' }
+          ]
+        },
+        guoJia: {
+          senderId: 'guoJia',
+          title: '鬼才病酒',
+          body: '郭嘉来信极短：官渡胜负已近，他却问你一件旁事，若一个聪明人明知酒色伤身，是否还该为了看尽天下大势而继续燃烧自己？',
+          choices: [
+            { id: 'physician', label: '遣医者劝其养病' },
+            { id: 'strategy', label: '请其留下北征遗策' },
+            { id: 'indulge', label: '纵其快意而行' }
+          ]
+        },
+        guanYu: {
+          senderId: 'guanYu',
+          title: '白马义还',
+          body: '白马一战后，关羽声名震动曹袁。他仍记刘备旧义，也知曹操厚待。若你愿递出一条路，他或许能更早归义，也可能改变刘备之后的命运。',
+          choices: [
+            { id: 'returnLiuBei', label: '助其归还刘备' },
+            { id: 'inviteJingzhou', label: '邀其过境荆州' },
+            { id: 'keepCao', label: '劝其暂留曹营' }
+          ]
+        }
+      }[lineId];
+      if (!data) return false;
+      lines[lineId] = Object.assign({ offered: true, turn: gameState.turn }, context);
+      const sender = gameState.characterRoster[data.senderId];
+      if (sender && sender.status === 'hidden') sender.status = 'rumored';
+      createLetter({
+        senderId: data.senderId,
+        title: data.title,
+        body: data.body,
+        critical: true,
+        kind: 'redemption',
+        meta: { lineId, context },
+        choices: data.choices
+      });
+      return true;
+    }
+
+    function resolveGuanduPlotChoice(state, nodeId, choiceId, reports = []) {
+      const gd = guanduState(state);
+      const addCao = amount => { gd.caoScore = Number(gd.caoScore || 0) + amount; };
+      const addYuan = amount => { gd.yuanScore = Number(gd.yuanScore || 0) + amount; };
+      const relation = (factionId, amount) => {
+        const record = ensureDiplomacyRecord(factionId);
+        record.relation = clamp(Number(record.relation || 0) + amount, 0, 100);
+      };
+      const fate = (id, text, faction = null) => {
+        gd.fates[id] = text;
+        setCharacterFate(id, text, faction, reports);
+      };
+
+      if (nodeId === 'gd_2_cao_letter') {
+        if (choiceId === 'aidCaoFood') {
+          addCao(3);
+          relation('cao', 10);
+          const city = controlledCities()[0];
+          if (city) city.food = Math.max(0, Number(city.food || 0) - 240);
+          reports.push({ tone: 'good', text: '你暗助曹操粮道，曹军官渡续战能力提高。' });
+        } else if (choiceId === 'aidCaoIntel') {
+          addCao(4);
+          relation('cao', 8);
+          gd.playerStance = 'leanCao';
+          reports.push({ tone: 'good', text: '你送出袁军布防情报，曹操更容易抓住官渡破绽。' });
+        } else if (choiceId === 'misleadCao') {
+          addYuan(3);
+          relation('cao', -10);
+          reports.push({ tone: 'warn', text: '你以假情报误导曹操，许昌若察觉，日后会记下这笔账。' });
+        } else {
+          relation('cao', -2);
+          reports.push({ tone: 'warn', text: '你婉拒曹操密信，许昌暂时把你列为观望势力。' });
+        }
+      }
+
+      if (nodeId === 'gd_2_yuan_letter') {
+        if (choiceId === 'adviseYuanSlow') {
+          addYuan(4);
+          relation('yuan', 8);
+          gd.playerStance = gd.playerStance === 'leanCao' ? 'doubleGame' : 'leanYuan';
+          reports.push({ tone: 'good', text: '你劝袁绍缓进耗曹，沮授一派的战略空间上升。' });
+        } else if (choiceId === 'urgeYuanAttack') {
+          addCao(2);
+          relation('yuan', 4);
+          reports.push({ tone: 'warn', text: '你催袁绍急攻许昌，河北声势虽盛，却更容易暴露粮道。' });
+        } else if (choiceId === 'saveTianFeng') {
+          addYuan(2);
+          relation('yuan', 6);
+          fate('tianFeng', '免死下狱');
+          reports.push({ tone: 'good', text: '你为田丰求情，他暂免死罪，袁营保留一条直谏之声。' });
+        } else {
+          relation('yuan', -2);
+          reports.push({ tone: 'warn', text: '你不卷入河北军议，袁绍认为你仍在审势。' });
+        }
+      }
+
+      if (nodeId === 'gd_3_alliances') {
+        const allianceMap = {
+          allyLiuBei: ['liu', 'liuBei', '仁义盟'],
+          allySunQuan: ['sun', 'sunQuan', '江上盟'],
+          allyCaoCao: ['cao', 'caoCao', '许昌盟'],
+          allyYuanShao: ['yuan', 'yuanShao', '河北盟']
+        };
+        if (allianceMap[choiceId]) {
+          const [factionId, lordId, pactName] = allianceMap[choiceId];
+          const lord = gameState.characterRoster?.[lordId] || getLordCharacterByFaction(factionId);
+          ensureDiplomacyRecord(factionId).relation = clamp(Number(ensureDiplomacyRecord(factionId).relation || 0) + 12, 0, 100);
+          formAllianceWithFaction(factionId, { lord, initiator: 'npc', relationBonus: 10 });
+          ensureDiplomacyRecord(factionId).pact = '盟友';
+          ensureDiplomacyRecord(factionId).alliance.name = pactName;
+          gd.allianceChoice = factionId;
+          if (factionId === 'cao') addCao(2);
+          if (factionId === 'yuan') addYuan(2);
+          reports.push({ tone: 'good', level: 'important', text: '你接受' + factionName(factionId) + '的结盟邀请，缔结“' + pactName + '”。' });
+        } else {
+          gd.allianceChoice = 'none';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 2, 0, 100);
+          reports.push({ tone: 'warn', text: '你暂不公开结盟，各方都把你视为官渡胜负后的关键变量。' });
+        }
+      }
+
+      if (nodeId === 'gd_4_baima') {
+        if (choiceId === 'warnYanLiang') {
+          addYuan(3);
+          fate('yanLiang', '白马脱险', 'yuan');
+          relation('yuan', 5);
+        } else if (choiceId === 'letYanLiangDie') {
+          addCao(3);
+          fate('yanLiang', '战死');
+          relation('cao', 5);
+        } else if (choiceId === 'saveWenChou') {
+          addYuan(2);
+          fate('wenChou', '延津脱险', 'yuan');
+          relation('yuan', 4);
+        } else if (choiceId === 'ambushBoth') {
+          addCao(1);
+          addYuan(1);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 5, 0, 100);
+          gd.fates.yanLiang = '受伤未死';
+          gd.fates.wenChou = '撤军失势';
+          reports.push({ tone: 'warn', text: '你设伏同时削弱曹袁，声望上升，但两边都开始提防你。' });
+          relation('cao', -4);
+          relation('yuan', -4);
+        }
+      }
+
+      if (nodeId === 'gd_5_wuchao') {
+        if (choiceId === 'burnWuchao') {
+          addCao(6);
+          fate('xuYou', '投曹献策', 'cao');
+          fate('juShou', '被俘不降', 'yuan');
+          relation('cao', 10);
+        } else if (choiceId === 'guardWuchao') {
+          addYuan(6);
+          fate('xuYou', '失计被疑', 'yuan');
+          fate('juShou', '缓进得用', 'yuan');
+          relation('yuan', 10);
+        } else if (choiceId === 'interceptXuYou') {
+          addCao(1);
+          addYuan(1);
+          fate('xuYou', '被你扣留', 'player');
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 4, 0, 100);
+          reports.push({ tone: 'warn', text: '你截下许攸，把乌巢情报变成自己的筹码。曹袁胜负因此更难预料。' });
+        } else if (choiceId === 'recruitZhangHe') {
+          addCao(2);
+          fate('zhangHe', '转投玩家', 'player');
+          fate('gaoLan', '随张郃观望', 'player');
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 6, 0, 100);
+          reports.push({ tone: 'good', text: '你提前接住张郃、高览的退路，河北巧变之将不再必然归曹。' });
+        }
+      }
+    }
+
+    function getStoryCharacter(characterId) {
+      return gameState.characterRoster?.[characterId] || gameState.characters?.[characterId] || null;
+    }
+
+    function recruitHistoricalCharacter(characterId, reports = []) {
+      const character = getStoryCharacter(characterId);
+      if (!character) return null;
+      character.status = 'recruited';
+      character.faction = 'player';
+      character.loyalty = clamp(Number(character.loyalty || 50) + 10, 0, 100);
+      character.trustPlayer = clamp(Number(character.trustPlayer || 35) + 18, 0, 100);
+      character.suspicionOfPlayer = clamp(Number(character.suspicionOfPlayer || 20) - 10, 0, 100);
+      reports.push({ tone: 'good', level: 'important', text: character.name + '加入你的麾下。' });
+      return character;
+    }
+
+    function resolveRedemptionLetter(letter, choiceId, reports = []) {
+      const lineId = letter.meta?.lineId;
+      const lines = redemptionState();
+      const line = lines[lineId] ||= {};
+      line.resolved = true;
+      line.choice = choiceId;
+      line.resolvedTurn = gameState.turn;
+
+      if (lineId === 'huangZu') {
+        if (choiceId === 'redeem') {
+          const hz = recruitHistoricalCharacter('huangZu', reports);
+          if (hz) {
+            hz.status = '赎守江夏';
+            hz.specialSchemes = uniqueTextList([...(hz.specialSchemes || []), '江夏水屏']);
+          }
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 5, 0, 100);
+          maybeTriggerRedemptionLine('ganNing', { reason: 'huangZuRedeemed' });
+        } else if (choiceId === 'imprison') {
+          gameState.characters.retinue.network = clamp(Number(gameState.characters.retinue.network || 0) + 10, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 2, 0, 100);
+          reports.push({ tone: 'warn', text: '黄祖被收押，江夏水路情报落入你手中。' });
+        } else {
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 5, 0, 100);
+          gameState.diplomacy.sun ||= { relation: 30, pact: '未接触' };
+          gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) + 8, 0, 100);
+          reports.push({ tone: 'bad', text: '黄祖伏诛，江东对你的敌意暂缓，荆州旧将却人人自危。' });
+        }
+      } else if (lineId === 'weiYan') {
+        if (choiceId === 'trial') {
+          const wy = recruitHistoricalCharacter('weiYan', reports);
+          if (wy) {
+            wy.status = '待立奇功';
+            wy.specialSchemes = uniqueTextList([...(wy.specialSchemes || []), '奇兵夺门']);
+          }
+          gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) + 8, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 4, 0, 100);
+        } else if (choiceId === 'restrain') {
+          recruitHistoricalCharacter('weiYan', reports);
+          gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) + 3, 0, 100);
+          reports.push({ tone: 'warn', text: '魏延得用却受节制，锋芒暂被压住。' });
+        } else {
+          gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) - 4, 0, 100);
+          reports.push({ tone: 'warn', text: '你压下魏延，士族稍安，但一柄锋刃从此远去。' });
+        }
+      } else if (lineId === 'liuQi') {
+        if (choiceId === 'escort') {
+          gameState.characters.liuQi.status = '出镇江夏';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 8, 0, 100);
+          gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) + 12, 0, 100);
+          reports.push({ tone: 'good', text: '刘琦出镇江夏，荆州继承局势出现新的正统支点。' });
+        } else if (choiceId === 'support') {
+          gameState.characters.liuQi.status = '公开受援';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 11, 0, 100);
+          applyProtectionDecay(10, '你公开介入刘表二子之争', reports);
+        } else {
+          gameState.characters.liuQi.status = '暗中求存';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 3, 0, 100);
+          reports.push({ tone: 'warn', text: '你只给刘琦一条暗路，正统名分未明，但祸端也暂未扩大。' });
+        }
+      } else if (lineId === 'caiMao') {
+        if (choiceId === 'bargain') {
+          gameState.characters.caiMao.status = '保族交权';
+          gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) - 18, 0, 100);
+          gameState.characters.jingnanGentry.trust = clamp(Number(gameState.characters.jingnanGentry.trust || 0) + 8, 0, 100);
+          gameState.cities.xiangyang && (gameState.cities.xiangyang.intel = clamp(Number(gameState.cities.xiangyang.intel || 0) + 25, 0, 100));
+          reports.push({ tone: 'good', text: '蔡氏交出部分人事与水军名册，襄阳局势趋稳。' });
+        } else if (choiceId === 'coerce') {
+          gameState.characters.caiMao.status = '被迫交权';
+          gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) + 8, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 4, 0, 100);
+          reports.push({ tone: 'warn', text: '蔡瑁被迫退让，但蔡氏旧部暗中记恨。' });
+        } else {
+          gameState.characters.caiMao.status = '清算在即';
+          gameState.characters.caiMao.suspicion = 100;
+          gameState.player.ambition = clamp(Number(gameState.player.ambition || 0) + 8, 0, 100);
+          reports.push({ tone: 'bad', text: '你准备清算蔡氏，荆州权门再无回头路。' });
+        }
+      } else if (lineId === 'ganNing') {
+        if (choiceId === 'oath' || choiceId === 'recruit') {
+          const gn = recruitHistoricalCharacter('ganNing', reports);
+          if (gn) {
+            gn.status = choiceId === 'oath' ? '立功赎罪' : '锦帆归附';
+            gn.specialSchemes = uniqueTextList([...(gn.specialSchemes || []), '锦帆夜袭']);
+          }
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + (choiceId === 'oath' ? 5 : 3), 0, 100);
+        } else {
+          gameState.diplomacy.sun ||= { relation: 30, pact: '未接触' };
+          gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) - 5, 0, 100);
+          reports.push({ tone: 'warn', text: '甘宁顺江而去。将来江东若得此人，水路会更难安。' });
+        }
+      } else if (lineId === 'huaTuo') {
+        if (choiceId === 'invite') {
+          const ht = recruitHistoricalCharacter('huaTuo', reports);
+          if (ht) ht.status = '客卿医者';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 6, 0, 100);
+        } else if (choiceId === 'fund') {
+          const city = controlledCities()[0];
+          if (city) city.money = Math.max(0, Number(city.money || 0) - 180);
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 3, 0, 100);
+          reports.push({ tone: 'good', text: '你资助华佗行医，虽不入府，荆州民间仍记你的善举。' });
+        } else {
+          reports.push({ tone: 'warn', text: '华佗离去，医者线暂时中断。' });
+        }
+      } else if (lineId === 'wenPin') {
+        if (choiceId === 'oath') {
+          const wp = recruitHistoricalCharacter('wenPin', reports);
+          if (wp) {
+            wp.status = '守信归心';
+            wp.specialSchemes = uniqueTextList([...(wp.specialSchemes || []), '守城不动']);
+          }
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 6, 0, 100);
+          controlledCities().forEach(city => { city.morale = clamp(Number(city.morale || 0) + 2, 0, 100); });
+          reports.push({ tone: 'good', text: '文聘归心，荆州军中开始相信你的军令。' });
+        } else if (choiceId === 'frontier') {
+          gameState.characters.wenPin.status = '守边观望';
+          const frontier = controlledCities().find(city => cityNeighborIds(city.id).some(id => !isControlledBy(id, 'player')));
+          if (frontier) frontier.defense = clamp(Number(frontier.defense || 0) + 8, 0, 100);
+          reports.push({ tone: 'good', text: '文聘暂守边地，前线防务更稳，但仍未彻底改换门庭。' });
+        } else {
+          gameState.characters.wenPin.status = '守信未决';
+          reports.push({ tone: 'warn', text: '你没有接住文聘的试探，守信线暂时停在军门之外。' });
+        }
+      } else if (lineId === 'kuaiYue') {
+        if (choiceId === 'accept' || choiceId === 'promise') {
+          const ky = recruitHistoricalCharacter('kuaiYue', reports);
+          if (ky) {
+            ky.status = choiceId === 'promise' ? '安州盟约' : '暗中下注';
+            ky.specialSchemes = uniqueTextList([...(ky.specialSchemes || []), '襄阳内应']);
+          }
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + (choiceId === 'promise' ? 7 : 4), 0, 100);
+          gameState.characters.jingnanGentry.trust = clamp(Number(gameState.characters.jingnanGentry.trust || 0) + 9, 0, 100);
+          if (gameState.cities.xiangyang) gameState.cities.xiangyang.intel = clamp(Number(gameState.cities.xiangyang.intel || 0) + 30, 0, 100);
+          reports.push({ tone: 'good', text: '蒯越下注，你获得襄阳内局与继承风向的关键情报。' });
+        } else {
+          gameState.player.ambition = clamp(Number(gameState.player.ambition || 0) + 5, 0, 100);
+          gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) + 8, 0, 100);
+          reports.push({ tone: 'warn', text: '你拒绝蒯越，士族开始判断你更像一位独断之主。' });
+        }
+      } else if (lineId === 'huangZhong') {
+        if (choiceId === 'invite' || choiceId === 'trial') {
+          const hz = recruitHistoricalCharacter('huangZhong', reports);
+          if (hz) {
+            hz.status = choiceId === 'trial' ? '射礼立名' : '老将出山';
+            hz.specialSchemes = uniqueTextList([...(hz.specialSchemes || []), '百步穿杨']);
+          }
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + (choiceId === 'trial' ? 6 : 4), 0, 100);
+          reports.push({ tone: 'good', text: '黄忠出山，长沙旧军看见了新的战功之路。' });
+        } else {
+          gameState.characters.huangZhong.status = '厚礼归隐';
+          gameState.characters.jingnanGentry.trust = clamp(Number(gameState.characters.jingnanGentry.trust || 0) + 4, 0, 100);
+          reports.push({ tone: 'warn', text: '黄忠受礼归隐，士族称你知礼，却少了一员老将。' });
+        }
+      } else if (lineId === 'sunResponse') {
+        gameState.diplomacy.sun ||= { relation: 30, pact: '未接触' };
+        if (choiceId === 'appease') {
+          gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) + 10, 0, 100);
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 2, 0, 100);
+          reports.push({ tone: 'good', text: '你遣使释怨，江东暂缓水路压力。' });
+        } else if (choiceId === 'trade') {
+          gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) + 5, 0, 100);
+          controlledCities().forEach(city => { if (city.resource && /港|水|江|商/.test(city.resource + city.terrain)) city.commerce = clamp(Number(city.commerce || 0) + 3, 0, 100); });
+          reports.push({ tone: 'good', text: '你以水路互市稳住江东，沿江城池商业略有起色。' });
+        } else {
+          gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) - 12, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 5, 0, 100);
+          reports.push({ tone: 'warn', text: '你强硬回书，声望上涨，但江东水军记住了这份锋芒。' });
+        }
+      } else if (lineId === 'tianFeng') {
+        const guanduPlot = gameState.plotLineStates?.guandu;
+        const gd = guanduPlot ? guanduState(guanduPlot) : null;
+        if (choiceId === 'rescue') {
+          const tf = recruitHistoricalCharacter('tianFeng', reports);
+          if (tf) tf.status = '死谏获救';
+          if (gd) {
+            gd.yuanScore = Number(gd.yuanScore || 0) - 1;
+            gd.fates.tianFeng = '被玩家救出';
+          }
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 5, 0, 100);
+          reports.push({ tone: 'good', text: '田丰脱出邺狱，但袁营少了一道能纠偏的直谏。' });
+        } else if (choiceId === 'deliver') {
+          const tf = getStoryCharacter('tianFeng');
+          if (tf) tf.status = '死谏留名';
+          if (gd) {
+            gd.yuanScore = Number(gd.yuanScore || 0) + 4;
+            gd.fates.tianFeng = '谏书入营';
+          }
+          ensureDiplomacyRecord('yuan').relation = clamp(Number(ensureDiplomacyRecord('yuan').relation || 0) + 5, 0, 100);
+          reports.push({ tone: 'good', text: '田丰谏书送入袁营，若袁绍尚能听进一句，官渡胜负便会偏移。' });
+        } else {
+          const tf = getStoryCharacter('tianFeng');
+          if (tf) tf.status = '囚门无声';
+          if (gd) {
+            gd.caoScore = Number(gd.caoScore || 0) + 2;
+            gd.fates.tianFeng = '谏言被压下';
+          }
+          reports.push({ tone: 'warn', text: '田丰之信被按下，河北少了一次避免败局的机会。' });
+        }
+      } else if (lineId === 'xuYou') {
+        const guanduPlot = gameState.plotLineStates?.guandu;
+        const gd = guanduPlot ? guanduState(guanduPlot) : null;
+        if (choiceId === 'buy') {
+          const xy = recruitHistoricalCharacter('xuYou', reports);
+          if (xy) xy.status = '谋价归附';
+          if (gd) {
+            gd.caoScore = Number(gd.caoScore || 0) - 2;
+            gd.yuanScore = Number(gd.yuanScore || 0) - 1;
+            gd.fates.xuYou = '被玩家买断';
+          }
+          const city = controlledCities()[0];
+          if (city) city.money = Math.max(0, Number(city.money || 0) - 260);
+          reports.push({ tone: 'warn', text: '许攸被你买下，乌巢情报成为你的筹码，但此人贪功难驯。' });
+        } else if (choiceId === 'expose') {
+          const xy = getStoryCharacter('xuYou');
+          if (xy) xy.status = '反复败露';
+          if (gd) {
+            gd.yuanScore = Number(gd.yuanScore || 0) + 2;
+            gd.fates.xuYou = '被揭穿';
+          }
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 3, 0, 100);
+          reports.push({ tone: 'good', text: '你公开许攸反复之态，袁营暂时堵住乌巢破口。' });
+        } else {
+          const xy = getStoryCharacter('xuYou');
+          if (xy) xy.status = '投曹献策';
+          if (gd) {
+            gd.caoScore = Number(gd.caoScore || 0) + 3;
+            gd.fates.xuYou = '放归曹营';
+          }
+          ensureDiplomacyRecord('cao').relation = clamp(Number(ensureDiplomacyRecord('cao').relation || 0) + 6, 0, 100);
+          reports.push({ tone: 'warn', text: '你放许攸去见曹操，乌巢之火更近一步。' });
+        }
+      } else if (lineId === 'zhangHe') {
+        const guanduPlot = gameState.plotLineStates?.guandu;
+        const gd = guanduPlot ? guanduState(guanduPlot) : null;
+        if (choiceId === 'recruit') {
+          const zh = recruitHistoricalCharacter('zhangHe', reports);
+          const gl = recruitHistoricalCharacter('gaoLan', reports);
+          if (zh) zh.status = '巧变归心';
+          if (gl) gl.status = '随友归心';
+          if (gd) {
+            gd.fates.zhangHe = '转投玩家';
+            gd.fates.gaoLan = '随张郃归附';
+            gd.caoScore = Number(gd.caoScore || 0) - 1;
+          }
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 6, 0, 100);
+        } else if (choiceId === 'safePassage') {
+          const zh = getStoryCharacter('zhangHe');
+          const gl = getStoryCharacter('gaoLan');
+          if (zh) zh.status = '留路观望';
+          if (gl) gl.status = '随军观望';
+          if (gd) {
+            gd.fates.zhangHe = '得退路未归附';
+            gd.fates.gaoLan = '随张郃观望';
+          }
+          reports.push({ tone: 'good', text: '你给张郃、高览留下一条退路，未来北方线仍可再接此缘。' });
+        } else {
+          const zh = getStoryCharacter('zhangHe');
+          const gl = getStoryCharacter('gaoLan');
+          if (zh) {
+            zh.status = '另投曹营';
+            zh.faction = 'cao';
+          }
+          if (gl) {
+            gl.status = '另投曹营';
+            gl.faction = 'cao';
+          }
+          if (gd) {
+            gd.caoScore = Number(gd.caoScore || 0) + 2;
+            gd.fates.zhangHe = '归曹';
+            gd.fates.gaoLan = '归曹';
+          }
+          reports.push({ tone: 'warn', text: '你拒绝临阵易主之人，张郃、高览仍会按原本大势寻找曹操。' });
+        }
+      } else if (lineId === 'xunYu') {
+        if (choiceId === 'hanMandate') {
+          const xy = getStoryCharacter('xunYu');
+          if (xy) xy.status = '汉心相许';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 8, 0, 100);
+          ensureDiplomacyRecord('cao').relation = clamp(Number(ensureDiplomacyRecord('cao').relation || 0) + 4, 0, 100);
+          reports.push({ tone: 'good', text: '荀彧记下你的尊汉承诺。日后若曹操越过名分边界，他可能重新评估你。' });
+        } else if (choiceId === 'pragmatic') {
+          const xy = getStoryCharacter('xunYu');
+          if (xy) xy.status = '观政待断';
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 3, 0, 100);
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 2, 0, 100);
+          reports.push({ tone: 'warn', text: '你避开汉室名分，只谈安民。荀彧不反感，却也未完全交心。' });
+        } else {
+          const xy = getStoryCharacter('xunYu');
+          if (xy) xy.status = '疑你有篡心';
+          gameState.player.ambition = clamp(Number(gameState.player.ambition || 0) + 8, 0, 100);
+          gameState.characters.jingnanGentry.suspicion = clamp(Number(gameState.characters.jingnanGentry.suspicion || 0) + 5, 0, 100);
+          reports.push({ tone: 'warn', text: '你暗示强者自取天下，荀彧对你生出深疑。' });
+        }
+      } else if (lineId === 'guoJia') {
+        const healer = playerHealers()[0];
+        if (choiceId === 'physician') {
+          const gj = getStoryCharacter('guoJia');
+          if (gj) gj.status = healer ? '病势暂缓' : '劝医未果';
+          if (healer) addCharacterMemory(healer, { summary: '曾为郭嘉调理病体，延缓鬼才早逝之势。' });
+          ensureDiplomacyRecord('cao').relation = clamp(Number(ensureDiplomacyRecord('cao').relation || 0) + 5, 0, 100);
+          reports.push({ tone: healer ? 'good' : 'warn', text: healer ? '医者介入，郭嘉病势暂缓，未来北征线可能改变。' : '你劝郭嘉养病，但麾下无名医，效果有限。' });
+        } else if (choiceId === 'strategy') {
+          const gj = getStoryCharacter('guoJia');
+          if (gj) gj.status = '遗策成卷';
+          gameState.characters.retinue.network = clamp(Number(gameState.characters.retinue.network || 0) + 8, 0, 100);
+          ensureDiplomacyRecord('cao').relation = clamp(Number(ensureDiplomacyRecord('cao').relation || 0) + 4, 0, 100);
+          reports.push({ tone: 'good', text: '郭嘉留下北征遗策，你的情报网络读懂了曹军后续方向。' });
+        } else {
+          const gj = getStoryCharacter('guoJia');
+          if (gj) gj.status = '快意燃尽';
+          gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 3, 0, 100);
+          reports.push({ tone: 'warn', text: '你纵其快意，郭嘉更愿与你论势，却仍向早逝命运靠近。' });
+        }
+      } else if (lineId === 'guanYu') {
+        if (choiceId === 'returnLiuBei') {
+          const gy = getStoryCharacter('guanYu');
+          if (gy) {
+            gy.status = '千里归义';
+            gy.faction = 'liu';
+          }
+          ensureDiplomacyRecord('liu').relation = clamp(Number(ensureDiplomacyRecord('liu').relation || 0) + 12, 0, 100);
+          gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 4, 0, 100);
+          reports.push({ tone: 'good', text: '你助关羽归还刘备，刘备势力对你大增好感。' });
+        } else if (choiceId === 'inviteJingzhou') {
+          const gy = getStoryCharacter('guanYu');
+          if (gy) gy.status = '过境荆州';
+          ensureDiplomacyRecord('liu').relation = clamp(Number(ensureDiplomacyRecord('liu').relation || 0) + 6, 0, 100);
+          gameState.characters.retinue.network = clamp(Number(gameState.characters.retinue.network || 0) + 5, 0, 100);
+          reports.push({ tone: 'good', text: '关羽过境荆州，刘备线、荆州线之间多了一道可用桥梁。' });
+        } else {
+          const gy = getStoryCharacter('guanYu');
+          if (gy) gy.status = '暂留曹营';
+          ensureDiplomacyRecord('cao').relation = clamp(Number(ensureDiplomacyRecord('cao').relation || 0) + 5, 0, 100);
+          reports.push({ tone: 'warn', text: '你劝关羽暂留曹营，曹操记你识大体，刘备归义线则被推迟。' });
+        }
+      }
+    }
+
     function resolveUrgentMatter(matterId, choice) {
       const matter = gameState.urgentMatters.find(item => item.id === matterId);
       if (!matter) return;
       matter.resolved = choice !== 'later';
       matter.choice = choice;
       const campaign = gameState.campaigns.find(item => item.id === matter.campaignId);
+      if (matter.type === 'plague' && choice !== 'later') resolvePlagueMatter(matter, choice);
       if (choice === 'relief' && campaign) requestRelief(campaign.id, campaign.target);
       if (choice === 'hold' && campaign) gameState.cities[campaign.target].defense = clamp(gameState.cities[campaign.target].defense + 4, 0, 100);
       if (choice === 'supply' && campaign) campaign.supply = Math.max(0, campaign.supply - 2);
@@ -7709,6 +8862,28 @@ const MAX_MAP_ZOOM = 4.2;
       if (modal.type === 'urgent') {
         const matter = gameState.urgentMatters.find(item => item.id === modal.matterId);
         if (!matter) return closeActiveModal();
+        if (matter.type === 'plague') {
+          const city = gameState.cities[matter.cityId];
+          const healerCount = playerHealers().length;
+          root.innerHTML = `<div class="game-modal">
+          <div class="modal-head"><h2>${escapeHtml(matter.title)}</h2><span class="tag">剧情灾变</span></div>
+          <p>${escapeHtml(matter.text)}</p>
+          <div class="tag-row">
+            <span class="tag">疫病：${city ? cityPlagueLevel(city.id) : matter.severity} / 100</span>
+            <span class="tag">医者：${healerCount ? healerCount + ' 人在麾下' : '暂无专职医者'}</span>
+          </div>
+          <div class="modal-actions">
+            <button data-urgent-choice="quarantine" data-matter="${matter.id}">封坊止疫</button>
+            <button data-urgent-choice="granary" data-matter="${matter.id}">开仓施药</button>
+            <button data-urgent-choice="healer" data-matter="${matter.id}">征调医者</button>
+            <button data-urgent-choice="liubiao" data-matter="${matter.id}">求援刘表</button>
+            <button data-urgent-choice="military" data-matter="${matter.id}">军中隔离</button>
+            <button data-urgent-choice="conceal" data-matter="${matter.id}">隐瞒疫情</button>
+            <button class="ghost-btn" data-urgent-choice="later" data-matter="${matter.id}">稍后处理</button>
+          </div>
+        </div>`;
+          return;
+        }
         root.innerHTML = `<div class="game-modal">
           <div class="modal-head"><h2>${escapeHtml(matter.title)}</h2><span class="tag">紧急战事</span></div>
           <p>${escapeHtml(matter.text)}</p>
@@ -8500,11 +9675,13 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function beginNewGameFlow() {
+      stopIntroVideo();
       stopOpeningTransition();
       stopOfficeHandoffTransition();
       resetRuntimeForNewGame(selectedNewGameMode);
-      launchScreen = 'character';
+      launchScreen = 'intro';
       render();
+      beginIntro();
     }
 
     async function resumeSavedGame(show = true) {
@@ -8704,6 +9881,65 @@ const MAX_MAP_ZOOM = 4.2;
       return '天下棋局篇';
     }
 
+    function playerRouteTags() {
+      const tags = [];
+      if (Number(gameState.player.protection || 0) >= 70 && !gameState.player.independent) tags.push('忠臣');
+      if (Number(gameState.player.legitimacy || 0) >= 62) tags.push('仁主');
+      if (Number(gameState.player.ambition || 0) >= 55 || gameState.player.independent) tags.push('割据者');
+      if (Number(gameState.player.fear || 0) >= 48) tags.push('威权');
+      if (playerHealers().length) tags.push('济世');
+      if (!tags.length) tags.push('观望');
+      return tags.slice(0, 4);
+    }
+
+    function redemptionLineLabel(id, line) {
+      const names = {
+        huangZu: '黄祖：江夏赎罪',
+        weiYan: '魏延：反骨重塑',
+        liuQi: '刘琦：继承求生',
+        caiMao: '蔡瑁：权门退路',
+        ganNing: '甘宁：锦帆求名',
+        huaTuo: '华佗：医者自由',
+        wenPin: '文聘：守信之将',
+        kuaiYue: '蒯越：谋臣下注',
+        huangZhong: '黄忠：老将不伏',
+        sunResponse: '孙权：江上旧怨',
+        tianFeng: '田丰：囚门死谏',
+        xuYou: '许攸：乌巢谋价',
+        zhangHe: '张郃：巧变择主',
+        xunYu: '荀彧：王佐汉心',
+        guoJia: '郭嘉：鬼才病酒',
+        guanYu: '关羽：白马义还'
+      };
+      const status = line?.resolved ? '已抉择' : line?.offered ? '待回应' : '传闻';
+      return (names[id] || id) + '｜' + status;
+    }
+
+    function renderStoryThreadsPanel() {
+      if (!isStoryMode()) return '';
+      const lines = redemptionState();
+      const activeLines = Object.entries(lines)
+        .filter(([, line]) => line && (line.offered || line.resolved))
+        .sort((a, b) => Number(b[1].turn || 0) - Number(a[1].turn || 0))
+        .slice(0, 5);
+      const plagueCities = controlledCities().filter(city => cityPlagueLevel(city.id) > 0);
+      const rumors = [
+        lines.wenPin ? '' : '守信之将仍在观察你的军令',
+        lines.kuaiYue ? '' : '襄阳士族会寻找能保全荆州的人',
+        lines.huangZhong ? '' : '长沙旧军中或有老将未伏',
+        lines.sunResponse ? '' : '江东终会回应江夏水路的选择'
+      ].filter(Boolean).slice(0, 3);
+      return `<div class="card">
+          <h3>剧情线索</h3>
+          <div class="tag-row">${playerRouteTags().map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+          ${plagueCities.length ? `<p class="muted">疫病：${plagueCities.map(city => city.name + ' ' + cityPlagueLevel(city.id) + '/100').join('、')}</p>` : '<p class="muted">疫病：暂无城池染疫。</p>'}
+          <div class="orders-list">
+            ${activeLines.length ? activeLines.map(([id, line]) => `<div class="order-item">${escapeHtml(redemptionLineLabel(id, line))}</div>`).join('') : '<div class="order-item">尚未发现人物命运线。战役、瘟疫与继承抉择会打开新的线索。</div>'}
+          </div>
+          ${rumors.length ? `<p class="muted">传闻：${rumors.map(escapeHtml).join('；')}</p>` : ''}
+        </div>`;
+    }
+
     function renderLeftPanel() {
       const p = gameState.player;
       const ap = gameState.actionPoints;
@@ -8732,6 +9968,7 @@ const MAX_MAP_ZOOM = 4.2;
           ${metric('威慑', p.fear)}
         </div>
         ${renderTutorialTaskBar()}
+        ${renderStoryThreadsPanel()}
         <div class="card">
           <h3>本回合行动点</h3>
           <div class="ap-grid">
@@ -8868,6 +10105,7 @@ const MAX_MAP_ZOOM = 4.2;
     function metricHelpKey(label) {
       if (label === '刘表庇护') return 'protectionHelp';
       if (label === '士族疑心') return 'gentrySuspicionHelp';
+      if (label === '疫病') return 'plagueHelp';
       return '';
     }
 
@@ -9789,6 +11027,7 @@ const MAX_MAP_ZOOM = 4.2;
             ${metric('治安', city.order)}
             ${metric('士气', city.morale)}
             ${metric('城防', city.defense)}
+            ${isStoryMode() && cityPlagueLevel(city.id) > 0 ? metric('疫病', cityPlagueLevel(city.id)) : ''}
           </div>
           ${renderCityStrategicEffects(city)}
           <p class="muted city-support-note">民心：${Math.round(city.publicSupport)}｜${publicSupportLabel(city)}：${publicSupportRiskText(city)}</p>
@@ -11111,6 +12350,7 @@ const MAX_MAP_ZOOM = 4.2;
       advanceCampaigns(reports);
       processEconomy(reports);
       processPublicSupportCrises(reports);
+      processStoryPlague(reports);
       processSubmissionInstability(reports);
       processAllianceDiplomacy(reports);
       syncLiuBiaoProtectionWithPlayerAttacks(reports);
@@ -11118,6 +12358,7 @@ const MAX_MAP_ZOOM = 4.2;
       runNpcWarAI(reports);
       processLiuBiaoBreakdown(reports);
       processPlotLines(reports);
+      processStoryRedemptionOpportunities(reports);
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
       evaluateNpcInitiatives();
@@ -11539,10 +12780,15 @@ const MAX_MAP_ZOOM = 4.2;
       } else if (profile.archetype === 'heal') {
         const moraleGain = clamp(2 + charmPower, 1, 12);
         const recovered = Math.round((success ? 90 : 35) * profile.scale + charmPower * 10);
+        const plagueBefore = cityPlagueLevel(home.id);
         home.morale = clamp(home.morale + moraleGain, 0, 100);
         home.garrison.infantry = Math.max(0, Number(home.garrison.infantry || 0) + recovered);
         if (activeHomeCampaign) activeHomeCampaign.supply = Math.max(0, Number(activeHomeCampaign.supply || 0) + 1);
-        detail = home.name + '士气 +' + moraleGain + '，伤兵归队 ' + fmt(recovered) + '。';
+        if (isStoryMode() && plagueBefore > 0) {
+          const plagueDrop = clamp(16 + charmPower + (success ? 12 : 2), 8, 42);
+          setCityPlagueLevel(home.id, plagueBefore - plagueDrop);
+        }
+        detail = home.name + '士气 +' + moraleGain + '，伤兵归队 ' + fmt(recovered) + (plagueBefore > 0 ? '，疫病得到压制' : '') + '。';
       } else {
         const prestigeGain = clamp(1 + charmPower, 1, 10);
         const disruptGain = clamp(4 + strategyPower, 2, 20);
@@ -13763,6 +15009,10 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.visualEffects ||= [];
       migrated.gameMode = migrated.gameMode === 'story' ? 'story' : 'sandbox';
       migrated.plotLineStates ||= {};
+      migrated.storyFlags ||= {};
+      migrated.storyFlags.plagueState ||= { activeByCity: {}, lastCheckTurn: 0, lastOutbreakTurn: 0 };
+      migrated.storyFlags.plagueState.activeByCity ||= {};
+      migrated.storyFlags.redemptionLines ||= {};
       migrated.tutorial ||= null;
       migrated.militaryPlanner ||= { sourceId: null, targetId: null, route: 'official' };
       migrated.factionWarState ||= { lastAttackTurnByFaction: {}, recentWars: [] };
@@ -15089,6 +16339,7 @@ const MAX_MAP_ZOOM = 4.2;
       currentGoalHelp: getCurrentGoalHelpText,
       protectionHelp: '<strong>刘表庇护</strong><br>代表刘表名义上给予你的背书与保护。<br><span style="color:var(--good)">数值越高，外部势力越不敢轻易攻击、离间或试探桂阳；外交也更容易解锁。</span><br><span style="color:var(--bad)">擅自扩张、越权外交、隐瞒军备或荆南士族疑心过高，都会消耗这份庇护。</span>',
       gentrySuspicionHelp: '<strong>士族疑心</strong><br>代表荆南士族对你是否守礼、守信、能安民的怀疑程度。<br><span style="color:var(--good)">疑心越低，士族更愿意荐才、维持清议支持，地方局势更稳。</span><br><span style="color:var(--bad)">疑心过高会带来流言、观望与掣肘，并可能拖累刘表庇护。</span>',
+      plagueHelp: '<strong>疫病</strong><br>剧情模式中的低概率灾变压力。<br><span style="color:var(--good)">医者、民心、治安、充足粮草和及时处置会降低扩散。</span><br><span style="color:var(--bad)">围城、战损、缺粮、隐瞒疫情和治安崩坏会让疫病恶化，并牵动人物救赎线。</span>',
       'cityOrder:recruit': '<strong>征兵</strong><br><span style="color:var(--good)">好处：快速增加兵力，补充守军和可调兵力。</span><br><span style="color:var(--bad)">代价：可能降低民心，并增加粮食压力。</span><br>消耗 1 政务点',
       'cityOrder:train': '<strong>练兵</strong><br><span style="color:var(--good)">好处：提升军队战斗力，为后续调兵和进攻做准备。</span><br><span style="color:var(--bad)">代价：消耗粮食和府库，短期不能直接扩张。</span><br>消耗 1 政务点',
       'cityOrder:fortify': '<strong>修城防</strong><br><span style="color:var(--good)">好处：提高防守能力，敌军来攻时更稳。</span><br><span style="color:var(--bad)">代价：消耗府库和劳力。</span><br>消耗 1 政务点',
