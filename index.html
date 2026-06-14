@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="frame-ancestors 'none';">
   <title>乱世执棋 - 三国战略 RPG 原型</title>
-    <link rel="stylesheet" href="./css/main.css?v=portrait-card-v2">
+    <link rel="stylesheet" href="./css/main.css?v=localized-status-v1">
     <style>
       .character-create.stage-arrival {
         --creation-bg-image: url("./assets/opening/opening_arrival_landscape.png");
@@ -81,6 +81,16 @@
       <div class="menu-actions">
         <button class="menu-action menu-action-primary" id="continueGame" data-menu-action="continue">继续游戏</button>
         <button class="menu-action" data-menu-action="new">开始新游戏</button>
+        <div class="mode-choice" role="radiogroup" aria-label="新游戏模式">
+          <button class="mode-choice-btn active" data-game-mode-choice="sandbox" aria-pressed="true">
+            <strong>沙盒模式</strong>
+            <span>当前自由玩法</span>
+          </button>
+          <button class="mode-choice-btn" data-game-mode-choice="story" aria-pressed="false">
+            <strong>剧情模式</strong>
+            <span>保留全部功能，追加刘表线</span>
+          </button>
+        </div>
         <button class="menu-action" id="loadGame" data-menu-action="load">读取存档</button>
       </div>
       <div class="menu-save-status" id="menuSaveStatus"></div>
@@ -326,7 +336,7 @@
   <div class="game-modal-root" id="gameModalRoot" aria-live="polite"></div>
 
   <script src="./js/data/mapData.js?v=special-schemes-v3"></script>
-  <script src="./js/game.js?v=portrait-card-v2"></script>
+  <script src="./js/game.js?v=localized-status-v1"></script>
 
 </body>
 </html>
