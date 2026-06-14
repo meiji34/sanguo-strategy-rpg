@@ -6878,6 +6878,11 @@ const MAX_MAP_ZOOM = 4.2;
       const wasGuideModal = isGuideActive() && gameState.activeModal?.type === 'eventDetail';
       // 第3回合：对话弹窗关闭后，自动高亮结束回合按钮
       const wasDialogueInPhase3 = isGuideActive() && gameState.activeModal?.type === 'dialogue' && gameState.tutorial.guidePhase === 3 && getGuideStepIndex(3) === 4;
+      // 引导结束后，首次与刘表会话时弹出密令入匣信件
+      if (!isGuideActive() && gameState.tutorial?.guideCompleted && gameState.activeModal?.type === 'dialogue' && gameState.activeModal?.characterId === 'liuBiao') {
+        const plotLetter = gameState.letters.find(item => item.meta?.nodeId === 'lb_1_1' && !item.resolved);
+        if (plotLetter) plotLetter.read = false;
+      }
       gameState.activeModal = null;
       openNextCriticalModal();
       render();
@@ -13746,10 +13751,11 @@ const MAX_MAP_ZOOM = 4.2;
         overlay.addEventListener('click', e => {
           e.stopPropagation();
           e.preventDefault();
-          // 信息展示步骤（无 forceAction）：点击遮罩即可推进
-          if (isGuideActive() && !gameState.tutorial.forceAction) {
+          // 非强制步骤或信息展示类步骤：点击遮罩即可推进
+          if (isGuideActive() && (!gameState.tutorial.forceAction || gameState.tutorial.forceAction.type === 'clickAp')) {
             clearGuideHighlights();
             removeGuideOverlay();
+            gameState.tutorial.forceAction = null;
             advanceGuideStep();
           }
         });
@@ -13810,6 +13816,14 @@ const MAX_MAP_ZOOM = 4.2;
       proxy.addEventListener('click', event => {
         event.stopPropagation();
         event.preventDefault();
+        // 非强制步骤或信息展示类步骤：点击任意位置推进引导
+        if (isGuideActive() && (!gameState.tutorial.forceAction || gameState.tutorial.forceAction.type === 'clickAp')) {
+          clearGuideHighlights();
+          removeGuideOverlay();
+          gameState.tutorial.forceAction = null;
+          advanceGuideStep();
+          return;
+        }
         const liveTarget = document.querySelector(selector);
         if (!liveTarget || liveTarget.disabled || liveTarget.getAttribute('aria-disabled') === 'true') {
           toast('当前引导目标暂不可用');
@@ -13918,6 +13932,27 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.tutorial.highlightedElements = [];
       gameState.tutorial.guideCompleted = false;
       gameState.tutorial._stepIndex = {};
+      // 快照引导前的游戏状态，引导结束后还原
+      const regionControllers = {};
+      if (mapData && mapData.regions) {
+        Object.entries(mapData.regions).forEach(([id, r]) => {
+          regionControllers[id] = { controller: r.controller, faction: r.faction };
+        });
+      }
+      gameState.tutorial._guideSnapshot = {
+        cities: JSON.parse(JSON.stringify(gameState.cities)),
+        player: JSON.parse(JSON.stringify(gameState.player)),
+        characterRoster: JSON.parse(JSON.stringify(gameState.characterRoster)),
+        orders: JSON.parse(JSON.stringify(gameState.orders)),
+        letters: JSON.parse(JSON.stringify(gameState.letters)),
+        armies: JSON.parse(JSON.stringify(gameState.armies)),
+        turnEvents: JSON.parse(JSON.stringify(gameState.turnEvents || [])),
+        news: JSON.parse(JSON.stringify(gameState.news || [])),
+        regionControllers
+      };
+      // 引导期间暂时隐藏密令入匣信件，引导结束后恢复
+      const plotLetter = gameState.letters.find(item => item.meta?.nodeId === 'lb_1_1' && !item.resolved);
+      if (plotLetter) plotLetter.read = true;
       // 临时解锁后续需要的tab
       ['liubiao', 'inner', 'transfer', 'scheme', 'diplomacy', 'characters', 'appointments'].forEach(tabId => {
         if (!gameState.tutorial.unlockedTabs.includes(tabId)) {
@@ -13928,7 +13963,30 @@ const MAX_MAP_ZOOM = 4.2;
       processGuidePhase();
     }
 
+    function restoreGuideSnapshot() {
+      const snap = gameState.tutorial._guideSnapshot;
+      if (!snap) return;
+      // 先还原 mapData region 的控制权，再同步到 cities
+      if (snap.regionControllers && mapData && mapData.regions) {
+        Object.entries(snap.regionControllers).forEach(([id, saved]) => {
+          const r = mapData.regions[id];
+          if (r) { r.controller = saved.controller; r.faction = saved.faction; }
+        });
+      }
+      gameState.cities = snap.cities;
+      gameState.player = snap.player;
+      gameState.characterRoster = snap.characterRoster;
+      gameState.orders = snap.orders;
+      gameState.letters = snap.letters;
+      gameState.armies = snap.armies;
+      gameState.turnEvents = snap.turnEvents;
+      gameState.news = snap.news;
+      gameState.tutorial._guideSnapshot = null;
+      syncMapDataFromGameState();
+    }
+
     function skipForceGuide() {
+      restoreGuideSnapshot();
       clearGuideHighlights();
       removeGuideOverlay();
       gameState.tutorial.guidePhase = 0;
@@ -13991,6 +14049,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function completeGuide() {
+      restoreGuideSnapshot();
       clearGuideHighlights();
       removeGuideOverlay();
       gameState.tutorial.guideCompleted = true;
