@@ -2457,7 +2457,7 @@ const MAX_MAP_ZOOM = 4.2;
       trainCavalry: { type: 'cavalry', label: '练骑兵', troopLabel: '骑兵', troopKind: 'cavalry', effectKey: 'cavalry', food: 0.52, money: 0.36, baseRate: 0.18 },
       trainNavy: { type: 'navy', label: '练水兵', troopLabel: '水兵', troopKind: 'navy', effectKey: 'navy', food: 0.44, money: 0.24, baseRate: 0.2 }
     };
-    const MILITARY_PREP_MODE_LIST = ['drill', 'trainLand', 'trainCavalry', 'trainNavy', 'defense', 'reserve'];
+    const MILITARY_PREP_MODE_LIST = ['drill', 'defense', 'reserve'];
 
     function troops(infantry, cavalry, archers, siege, navy = 0) {
       return { infantry, cavalry, archers, siege, navy };
@@ -2843,6 +2843,7 @@ const MAX_MAP_ZOOM = 4.2;
           tutorialStep: 0,
           localTrialResolved: false,
           jingnanOpening: true,
+          liuBiaoBreak: null,
           yuanDisarm: false,
           openConflict: false,
           yechengInside: 0,
@@ -3859,6 +3860,259 @@ const MAX_MAP_ZOOM = 4.2;
       const item = { tone: 'warn', text: '刘表庇护 -' + amount + '：' + reason + '。当前 ' + gameState.player.protection + '。' };
       if (reports) reports.push(item);
       else addNews(item.tone, item.text);
+      if (isStoryMode() && gameState.player.protection <= 0) {
+        triggerLiuBiaoUltimatum(reports, 'collapse');
+      }
+    }
+
+    function clearLiuBiaoProtectionForPlayerAttack(defenderFaction, reports = []) {
+      if (!isStoryMode() || defenderFaction !== 'liubiao') return false;
+      const before = clamp(Number(gameState.player?.protection || 0), 0, 100);
+      if (before <= 0) return false;
+      gameState.player.protection = 0;
+      const item = { tone: 'bad', level: 'critical', text: '你已主动攻击刘表势力，刘表庇护清零。' };
+      if (reports) reports.push(item);
+      else addNews(item.tone, item.text);
+      return true;
+    }
+
+    function liuBiaoBreakState() {
+      gameState.storyFlags ||= {};
+      return gameState.storyFlags.liuBiaoBreak || null;
+    }
+
+    function liuBiaoBreakActive() {
+      const state = liuBiaoBreakState();
+      return !!state && !['surrendered', 'observing'].includes(state.status) && state.stage !== 'war';
+    }
+
+    function liuBiaoAttitudeLabel() {
+      const state = liuBiaoBreakState();
+      if (state?.attitude) return state.attitude;
+      if (state?.stage === 'war') return '不死不休';
+      if (gameState.player?.independent && isStoryMode()) return '断绝名分';
+      return protectionLevel().name;
+    }
+
+    function triggerLiuBiaoUltimatum(reports = [], source = 'collapse') {
+      if (!isStoryMode()) return false;
+      const existing = liuBiaoBreakState();
+      if (existing && existing.status !== 'observing') return false;
+      gameState.player.protection = 0;
+      gameState.storyFlags.liuBiaoBreak = {
+        status: 'ultimatum',
+        source,
+        stage: 1,
+        startedTurn: gameState.turn,
+        ultimatumTurn: gameState.turn,
+        troopsTurn: null,
+        warTurn: null,
+        surrendered: false,
+        refused: false,
+        kuaiYueWarning: source !== 'lowProtectionIndependence',
+        attitude: source === 'activeIndependence' ? '震怒且失望' : '体面将尽'
+      };
+      gameState.characters.liuBiao.trust = clamp(Number(gameState.characters.liuBiao.trust || 0) - 18, 0, 100);
+      gameState.characters.liuBiao.status = '发出最后通牒';
+      ensureDiplomacyRecord('liubiao').pact = '最后通牒';
+      createLetter({
+        senderId: 'liuBiao',
+        title: '最后通牒',
+        body: '桂阳之事，吾已知悉。尔若三日内亲赴襄阳自辩，尚可留体面。',
+        critical: true,
+        kind: 'liuBiaoBreak',
+        meta: { stage: 'ultimatum' },
+        choices: [
+          { id: 'surrender', label: '亲赴襄阳自辩' },
+          { id: 'refuse', label: '拒绝赴命' }
+        ]
+      });
+      reports.push({ tone: 'bad', level: 'critical', text: '庇护崩溃：刘表发来最后通牒，要求你亲赴襄阳自辩。' });
+      return true;
+    }
+
+    function deployLiuBiaoPressureForces(reports = []) {
+      const state = liuBiaoBreakState();
+      if (!isStoryMode() || !state || state.stage >= 2 || state.stage === 'war' || state.status === 'war' || state.status === 'surrendered') return false;
+      const existingIds = new Set((gameState.armies || []).map(army => army.id));
+      if (!existingIds.has('liubiao_kuaiyue_pressure')) {
+        gameState.armies.push({
+          id: 'liubiao_kuaiyue_pressure',
+          name: '蒯越襄阳兵',
+          faction: 'liubiao',
+          location: gameState.cities.changsha ? 'changsha' : 'xiangyang',
+          destination: 'guiyang',
+          commander: '蒯越',
+          troops: troops(1980, 360, 660, 0),
+          morale: 72,
+          fatigue: 0,
+          food: 1200,
+          loyalty: 80,
+          task: '压迫桂阳'
+        });
+      }
+      if (!existingIds.has('liubiao_wenpin_pressure')) {
+        gameState.armies.push({
+          id: 'liubiao_wenpin_pressure',
+          name: '文聘荆州军',
+          faction: 'liubiao',
+          location: gameState.cities.jiangxia ? 'jiangxia' : 'xiangyang',
+          destination: 'guiyang',
+          commander: '文聘',
+          troops: troops(1320, 180, 500, 0),
+          morale: 76,
+          fatigue: 0,
+          food: 1000,
+          loyalty: 84,
+          task: '夹击桂阳'
+        });
+      }
+      state.stage = 2;
+      state.troopsTurn = gameState.turn;
+      state.attitude = '兵临桂阳';
+      gameState.characters.kuaiYue.status = state.kuaiYueWarning ? '暗递警讯' : '奉命进军';
+      gameState.characters.wenPin.status = '南北夹击';
+      createLetter({
+        senderId: state.kuaiYueWarning ? 'kuaiYue' : 'liuBiao',
+        title: '襄阳兵临',
+        body: state.kuaiYueWarning
+          ? '蒯越遣人暗告：襄阳兵已出，文聘亦奉命压向桂阳。若要回头，这是最后的缝隙。'
+          : '襄阳军旗已至桂阳周边，文聘合兵成势。刘表不再给你留缓冲。',
+        critical: true,
+        kind: 'liuBiaoBreak',
+        meta: { stage: 'troops' },
+        choices: [{ id: 'ack', label: '知晓' }]
+      });
+      reports.push({ tone: 'bad', level: 'critical', text: '襄阳兵临：蒯越率三千襄阳兵压近桂阳，文聘形成南北夹击之势。' });
+      return true;
+    }
+
+    function startLiuBiaoTotalWar(reports = [], source = 'ultimatumExpired') {
+      if (!isStoryMode()) return false;
+      const state = gameState.storyFlags.liuBiaoBreak ||= {};
+      if (state.stage === 'war' || state.status === 'surrendered') return false;
+      state.status = 'war';
+      state.stage = 'war';
+      state.warTurn = gameState.turn;
+      state.attitude = '不死不休';
+      gameState.player.independent = true;
+      gameState.player.faction = 'player';
+      gameState.player.protection = 0;
+      gameState.characters.liuBiao.status = '宣布讨逆';
+      gameState.characters.liuBiao.order = '讨伐叛逆';
+      gameState.characters.liuBiao.trust = 0;
+      gameState.characters.kuaiYue.status = state.kuaiYueWarning === false ? '奉命攻桂阳' : '被迫随军';
+      gameState.characters.wenPin.status = '奉命讨逆';
+      ensureDiplomacyRecord('liubiao').relation = 0;
+      ensureDiplomacyRecord('liubiao').pact = '开战';
+      setFactionRelation('player', 'liubiao', -95);
+      ['changsha', 'jiangxia'].forEach(sourceId => {
+        if (!gameState.cities[sourceId] || !isControlledBy('guiyang', 'player')) return;
+        if (activeCampaignsTargetingCity('guiyang').some(c => c.faction === 'liubiao' && c.source === sourceId)) return;
+        createNpcCampaign({ faction: 'liubiao', source: sourceId, target: 'guiyang', troops: sourceId === 'changsha' ? 1800 : 1200, routeMode: 'official' }, reports);
+      });
+      createLetter({
+        senderId: 'liuBiao',
+        title: '全面开战',
+        body: '刘表正式宣布你为叛逆，荆州各郡奉州牧之命与你断绝往来。旧日庇护至此消失，只余兵锋相见。',
+        critical: true,
+        kind: 'liuBiaoBreak',
+        meta: { stage: 'war', source },
+        choices: [{ id: 'ack', label: '兵来将挡' }]
+      });
+      reports.push({ tone: 'bad', level: 'critical', text: '全面开战：刘表宣布你为叛逆，荆州各郡对你宣战。刘表态度变为“不死不休”。' });
+      return true;
+    }
+
+    function processLiuBiaoBreakdown(reports = []) {
+      if (!isStoryMode()) return;
+      if (gameState.player.protection <= 0 && !liuBiaoBreakState() && !gameState.player.independent) {
+        triggerLiuBiaoUltimatum(reports, 'collapse');
+      }
+      const state = liuBiaoBreakState();
+      if (!state || state.status === 'surrendered' || state.status === 'observing' || state.status === 'war' || state.stage === 'war') return;
+      const elapsed = gameState.turn - Number(state.startedTurn || gameState.turn);
+      if (elapsed >= 2) deployLiuBiaoPressureForces(reports);
+      if (elapsed >= 4 && !state.surrendered) startLiuBiaoTotalWar(reports, state.refused ? 'refusedUltimatum' : 'ultimatumExpired');
+    }
+
+    function resolveLiuBiaoBreakChoice(letter, choiceId, reports = []) {
+      const state = liuBiaoBreakState();
+      if (!state) return false;
+      if (choiceId === 'surrender' && state.status !== 'war') {
+        state.status = 'surrendered';
+        state.surrendered = true;
+        state.attitude = '暂留体面';
+        gameState.player.independent = false;
+        gameState.player.faction = 'liubiao';
+        gameState.player.protection = 25;
+        gameState.characters.liuBiao.status = '暂缓问罪';
+        gameState.characters.liuBiao.trust = clamp(Number(gameState.characters.liuBiao.trust || 0) + 12, 0, 100);
+        ensureDiplomacyRecord('liubiao').relation = clamp(Number(ensureDiplomacyRecord('liubiao').relation || 0) + 12, 0, 100);
+        ensureDiplomacyRecord('liubiao').pact = '自辩待察';
+        gameState.armies = (gameState.armies || []).filter(army => !String(army.id || '').startsWith('liubiao_'));
+        reports.push({ tone: 'warn', level: 'critical', text: '你选择亲赴襄阳自辩。刘表暂留体面，但桂阳重新处在严密监视之下。' });
+        return true;
+      }
+      if (choiceId === 'refuse') {
+        state.refused = true;
+        state.attitude = '拒命待讨';
+        reports.push({ tone: 'bad', text: '你拒绝赴襄阳自辩。襄阳已将此举视作抗命。' });
+        return true;
+      }
+      return true;
+    }
+
+    function declareIndependenceFromLiuBiao() {
+      if (!isStoryMode()) return toast('宣告自立只在剧情模式中可用');
+      const protection = clamp(Number(gameState.player.protection || 0), 0, 100);
+      const reports = [];
+      gameState.player.independent = true;
+      gameState.player.faction = 'player';
+      gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 6, 0, 100);
+      ensureDiplomacyRecord('liubiao').pact = '断绝';
+      if (protection > 60) {
+        gameState.storyFlags.liuBiaoBreak = {
+          status: 'observing',
+          source: 'highProtectionIndependence',
+          stage: 'observing',
+          startedTurn: gameState.turn,
+          attitude: '悲痛不解',
+          caoSunObserveUntil: gameState.turn + 6
+        };
+        gameState.characters.liuBiao.status = '悲痛不解';
+        gameState.diplomacy.cao.relation = clamp(Number(gameState.diplomacy.cao.relation || 0) + 6, 0, 100);
+        gameState.diplomacy.sun ||= { relation: 30, pact: '未接触' };
+        gameState.diplomacy.sun.relation = clamp(Number(gameState.diplomacy.sun.relation || 0) + 6, 0, 100);
+        setFactionRelation('player', 'liubiao', -35);
+        reports.push({ tone: 'warn', level: 'critical', text: '你宣告自立。刘表悲痛不解，天下舆论暂偏向你，曹操与孙权短期内选择观望。' });
+        createLetter({
+          senderId: 'liuBiao',
+          title: '悲痛不解',
+          body: '吾以桂阳托你，原望荆南得一屏障，不料你竟先割名分。若你仍知轻重，莫使荆州百姓先受兵祸。',
+          critical: true,
+          kind: 'liuBiaoBreak',
+          meta: { stage: 'observing' },
+          choices: [{ id: 'ack', label: '自立已定' }]
+        });
+      } else if (protection >= 30) {
+        triggerLiuBiaoUltimatum(reports, 'activeIndependence');
+        gameState.storyFlags.liuBiaoBreak.attitude = '震怒且失望';
+      } else {
+        gameState.storyFlags.liuBiaoBreak = {
+          status: 'war',
+          source: 'lowProtectionIndependence',
+          stage: 3,
+          startedTurn: gameState.turn,
+          kuaiYueWarning: false,
+          attitude: '早有所料'
+        };
+        startLiuBiaoTotalWar(reports, 'lowProtectionIndependence');
+      }
+      reports.forEach(item => pushTurnEvent(item));
+      addNews('warn', '你已宣告自立，刘表线进入断绝分支。');
+      saveToStorage(false);
+      render();
     }
 
     const CONVERSATION_ACTIONS = {
@@ -3883,6 +4137,158 @@ const MAX_MAP_ZOOM = 4.2;
       general_request: { id: 'general_request', title: '将军请战', level: 'important', participant: 'wenPin', onceOnly: false, minTurn: 5, cooldown: 5, description: '文聘认为荆南守备仍有可补之处，请你关注军备。' }
     };
 
+    function isPlayerLiuBiaoLoyalHeirCandidate() {
+      if (!isStoryMode()) return false;
+      const breakState = liuBiaoBreakState();
+      const liuBiao = gameState.characters.liuBiao || {};
+      return !gameState.player.independent
+        && gameState.player.faction === 'liubiao'
+        && Number(gameState.player.protection || 0) >= 70
+        && Number(liuBiao.trust || 0) >= 68
+        && Number(gameState.player.legitimacy || 0) >= 55
+        && Number(gameState.player.ambition || 0) <= 45
+        && !['war', 'ultimatum'].includes(String(breakState?.status || ''));
+    }
+
+    function chooseLiuBiaoHeir() {
+      if (isPlayerLiuBiaoLoyalHeirCandidate()) return 'player';
+      const caiSuspicion = Number(gameState.characters.caiMao?.suspicion || 0);
+      const kuaiTrust = Number(gameState.characters.kuaiYue?.trust || 0);
+      const protection = Number(gameState.player.protection || 0);
+      if (kuaiTrust >= 50 && protection >= 45 && caiSuspicion < 55) return 'liuQi';
+      return 'liuCong';
+    }
+
+    function liuBiaoHeirName(heir) {
+      if (heir === 'player') return gameState.player.name || '你';
+      if (heir === 'liuQi') return '刘琦';
+      if (heir === 'liuCong') return '刘琮';
+      return '未定';
+    }
+
+    function liuBiaoHeirEnding(heir) {
+      if (heir === 'player') return 'player_inherits_jingzhou';
+      if (heir === 'liuQi') return 'support_liu_qi';
+      if (heir === 'liuCong') return 'recognize_liu_cong';
+      return 'undecided';
+    }
+
+    function transferJingzhouToPlayerByWill(state) {
+      if (state.variables.jingzhouInherited) return;
+      state.variables.jingzhouInherited = true;
+      gameState.player.independent = true;
+      gameState.player.faction = 'player';
+      gameState.player.title = '荆州牧';
+      gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 18, 0, 100);
+      gameState.player.legitimacy = clamp(Number(gameState.player.legitimacy || 0) + 16, 0, 100);
+      gameState.player.protection = 0;
+      Object.values(gameState.cities || {}).forEach(city => {
+        if (!city || isRemovedCityId(city.id)) return;
+        const belongsToLiuBiao = city.nominalOwner === 'liubiao'
+          || city.owner === 'liubiao'
+          || city.faction === 'liubiao'
+          || city.controller === 'liubiao'
+          || city.actual === 'liubiao';
+        if (!belongsToLiuBiao && city.id !== 'guiyang') return;
+        captureRegion(city.id, 'player', null, { render: false, select: false, skipProtectionDecay: true, prestige: 0 });
+      });
+      ['liuBiao', 'liuQi', 'liuCong', 'caiMao', 'kuaiYue', 'huangZu', 'wenPin'].forEach(id => {
+        if (gameState.characterRoster?.[id] && gameState.characterRoster[id].faction === 'liubiao') {
+          gameState.characterRoster[id].faction = 'player';
+        }
+      });
+      gameState.characters.liuBiao.status = '病逝托孤';
+      gameState.characters.kuaiYue.status = '奉遗命辅政';
+      gameState.characters.wenPin.status = '奉遗命听调';
+      ensureDiplomacyRecord('liubiao').pact = '遗命继承';
+      ensureDiplomacyRecord('liubiao').relation = 100;
+      setFactionRelation('player', 'liubiao', 100);
+      syncMapDataFromGameState();
+    }
+
+    function getLiuBiaoBreakStageInfo() {
+      const state = liuBiaoBreakState();
+      if (!state) return null;
+      if (state.status === 'observing') {
+        return {
+          name: '悲痛不解',
+          goal: '剧情目标：稳住自立后的舆论窗口，趁曹操与孙权观望时整理内政和防务。',
+          focus: '你已经主动断绝名分，但局势尚未全面翻脸。趁短期观望期补粮、整军、稳定民心。',
+          avoid: '不要连续挑衅周边势力，也不要让桂阳治安和粮草失控。',
+          next: '观望期结束后，外部势力会重新按实力与敌意判断是否进攻。'
+        };
+      }
+      if (state.stage === 'war' || state.status === 'war') {
+        return {
+          name: '全面开战',
+          goal: '剧情目标：刘表已宣布你为叛逆，优先守住桂阳并击退荆州来攻。',
+          focus: '处理紧急战事、补充守军、破坏敌军补给，并准备反攻长沙或江夏。',
+          avoid: '不要让主城空虚，也不要忽视围城战役的粮草与士气。',
+          next: '击退第一轮攻势后，可以转入独立割据路线。'
+        };
+      }
+      if (Number(state.stage) >= 2) {
+        return {
+          name: '襄阳兵临',
+          goal: '剧情目标：襄阳兵已逼近桂阳，决定是回头自辩，还是准备迎战。',
+          focus: '观察蒯越、文聘兵势，补强桂阳城防和士气，必要时处理通牒信件。',
+          avoid: '不要把军令点耗尽在无关行动上，也不要继续消耗民心。',
+          next: '若不投降，约两回合后会进入全面开战。'
+        };
+      }
+      return {
+        name: '最后通牒',
+        goal: '剧情目标：刘表发来最后通牒，必须决定是否亲赴襄阳自辩。',
+        focus: '尽快处理通牒信。自辩会保留体面；拒绝或拖延会让襄阳出兵。',
+        avoid: '不要无视最后通牒太久，否则连锁会继续升级。',
+        next: '两回合后会进入“襄阳兵临”。'
+      };
+    }
+
+    function getLiuBiaoPlotStageInfo(state, node) {
+      const breakInfo = getLiuBiaoBreakStageInfo();
+      if (breakInfo) return breakInfo;
+      const stage = Number(node?.stage || state?.stage || 1);
+      if (stage <= 1) {
+        return {
+          name: '桂阳立足',
+          focus: '稳住桂阳的治安、粮草、民心和守军，这是刘表继续信任你的根基。',
+          avoid: '不要急着扩张，也不要让治安、粮草或守军明显短板。',
+          next: '桂阳站稳后，襄阳会开始观察你扩张后的名义边界。'
+        };
+      }
+      if (stage === 2) {
+        return {
+          name: '扩张疑云',
+          focus: '处理扩张后的名义归属，维持刘表庇护，同时控制声望带来的猜疑。',
+          avoid: '不要一边高速扩张一边隐瞒军备，否则庇护会快速流失。',
+          next: '声望、城池或庇护变化会把你推向襄阳核心权力询问。'
+        };
+      }
+      if (stage === 3) {
+        return {
+          name: '荆州内局',
+          focus: '应对刘琦、刘琮、蔡氏和蒯越的立场变化，争取荆州士族中间派。',
+          avoid: '不要让蔡瑁疑心失控，也不要过早暴露自立野心。',
+          next: '约第 50 回合，刘表病重后会进入继承判断。'
+        };
+      }
+      if (stage === 4) {
+        return {
+          name: '病榻择嗣',
+          focus: '若想被刘表指定继承荆州，要保持忠臣路线：高庇护、高信任、高合法性、低野心。',
+          avoid: '不要自立、不要让庇护崩溃，也不要让刘表信任跌破继承门槛。',
+          next: '刘表遗命公布后，荆州会进入继承余响。'
+        };
+      }
+      return {
+        name: '襄阳余响',
+        focus: '消化刘表遗命带来的新格局，整理荆州内部关系和下一条天下线。',
+        avoid: '不要忽略新继承关系带来的城池、防务和外交变化。',
+        next: '“襄阳夜雨”后，刘表线完结并切回系统推荐目标。'
+      };
+    }
+
     const PLOT_LINE_BLUEPRINTS = {
       liu_biao: {
         id: 'liu_biao',
@@ -3906,13 +4312,41 @@ const MAX_MAP_ZOOM = 4.2;
           { id: 'lb_3_2', stage: 3, title: '二子之争', minTurn: 20, senderId: 'liuQi', body: '刘琦与刘琮之争渐明。刘琦求外援，蔡氏推刘琮，荆州不再只是刘表一人的荆州。', goal: '剧情目标：判断是否介入刘表二子之争。', condition: state => hasPlotNode(state, 'lb_3_1') || gameState.turn >= 28 },
           { id: 'lb_3_3', stage: 3, title: '蔡氏阴谋', minTurn: 20, senderId: 'caiMao', body: '蔡氏势力开始暗中排布人事。你若支持刘琦，蔡瑁必然视你为碍眼之人。', goal: '剧情目标：应对蔡氏敌意，稳住荆州内局。', condition: state => Number(gameState.characters.caiMao?.suspicion || 0) >= 40 || state.variables.supportedLiuQi },
           { id: 'lb_3_4', stage: 3, title: '蒯越站队', minTurn: 20, senderId: 'kuaiYue', body: '蒯越终于表态：荆州要活下去，不能只看宗亲名分，也不能任蔡氏一家遮天。', goal: '剧情目标：争取荆州士族中的中间派。', condition: state => hasPlotNode(state, 'lb_3_3') && turnsSincePlotNode(state, 'lb_3_3') >= 3 },
-          { id: 'lb_4_1', stage: 4, title: '刘表病危', minTurn: 65, senderId: 'liuBiao', body: '襄阳传来密报：刘表病势沉重。荆州的秩序开始从中枢松动，所有人都在等最后一口气。', goal: '剧情目标：准备刘表身后荆州的权力交接。' },
-          { id: 'lb_4_2', stage: 4, title: '最后书信', minTurn: 50, senderId: 'liuBiao', body: '刘表最后一封书信抵达桂阳。他没有明说继承，只问你：荆州若乱，你会守礼、守民，还是取势？', goal: '剧情目标：等待荆州易主，并准备最终选择。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 8 },
-          { id: 'lb_4_3', stage: 4, title: '荆州易主', minTurn: 50, senderId: 'liuBiao', body: '刘表已逝，襄阳城中诸派争声四起。你必须决定：扶刘琦、承认刘琮，或趁乱自立。', goal: '剧情目标：选择刘表线结局方向。', condition: state => hasPlotNode(state, 'lb_4_2') && turnsSincePlotNode(state, 'lb_4_2') >= 3, choices: [
-            { id: 'supportLiuQi', label: '扶刘琦守荆州' },
-            { id: 'recognizeLiuCong', label: '承认刘琮继位' },
-            { id: 'standIndependent', label: '趁乱自立' }
-          ] },
+          { id: 'lb_4_1', stage: 4, title: '刘表病重', minTurn: 50, senderId: 'liuBiao', body: '襄阳传来密报：刘表疾病骤重，州府医官昼夜不离榻前。荆州的秩序开始从中枢松动。', goal: '剧情目标：等待刘表最终遗命。', onTrigger: state => {
+            gameState.characters.liuBiao.status = '病重';
+            gameState.characters.liuBiao.authority = clamp(Number(gameState.characters.liuBiao.authority || 0) - 20, 0, 100);
+            state.variables.liuBiaoIllnessTurn = gameState.turn;
+          } },
+          { id: 'lb_4_2', stage: 4, title: '病榻择嗣', minTurn: 50, senderId: 'liuBiao', body: state => {
+            const heir = state.variables.liuBiaoHeir || 'undecided';
+            if (heir === 'player') return '刘表于病榻前召集近臣，明言桂阳之臣能守礼、能安民、能承荆州。他没有把州印交给宗子，而是将荆州托付给你。';
+            if (heir === 'liuQi') return '刘表病中留下遗命，命刘琦承接荆州名分，并要诸臣以安民为先。荆州诸派仍有暗流，却暂有名义可循。';
+            return '刘表病中留下遗命，承认刘琮继位。蔡氏一门暂掌襄阳，荆州的保守秩序压过了所有变数。';
+          }, goal: '剧情目标：等待荆州易主。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
+            const heir = chooseLiuBiaoHeir();
+            state.variables.liuBiaoHeir = heir;
+            state.variables.liuBiaoHeirName = liuBiaoHeirName(heir);
+            gameState.characters.liuBiao.alive = false;
+            gameState.characters.liuBiao.status = '病逝';
+            gameState.characters.liuBiao.authority = 0;
+          } },
+          { id: 'lb_4_3', stage: 4, title: '荆州易主', minTurn: 50, senderId: 'liuBiao', body: state => {
+            const heir = state.variables.liuBiaoHeir || 'undecided';
+            if (heir === 'player') return '州府遗命公布：刘表以荆州托付于你。襄阳、江陵、江夏、长沙诸郡改奉新主，荆州全境归入你的麾下。';
+            if (heir === 'liuQi') return '刘表已逝，刘琦承继荆州名分。你仍是荆南重臣，但州府继承不再由你决定。';
+            return '刘表已逝，刘琮在蔡氏拥立下承继荆州。襄阳名义暂稳，而新的权力格局将更保守、更猜疑。';
+          }, goal: '剧情目标：刘表线进入继承余响。', condition: state => hasPlotNode(state, 'lb_4_2') && turnsSincePlotNode(state, 'lb_4_2') >= 1, onTrigger: state => {
+            const heir = state.variables.liuBiaoHeir || chooseLiuBiaoHeir();
+            state.variables.liuBiaoHeir = heir;
+            state.variables.liuBiaoEnding = liuBiaoHeirEnding(heir);
+            state.variables.liuBiaoEndingChoice = 'liuBiaoWill:' + heir;
+            state.variables.supportedLiuQi = heir === 'liuQi';
+            state.variables.recognizedLiuCong = heir === 'liuCong';
+            state.variables.playerInheritedJingzhou = heir === 'player';
+            if (heir === 'player') transferJingzhouToPlayerByWill(state);
+            if (heir === 'liuQi') gameState.characters.kuaiYue.trust = clamp(Number(gameState.characters.kuaiYue.trust || 0) + 8, 0, 100);
+            if (heir === 'liuCong') gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) - 8, 0, 100);
+          } },
           { id: 'lb_5_branch', stage: 5, title: '分支结局', minTurn: 50, senderId: 'kuaiYue', body: '荆州诸人已经看清你的选择。刘表线进入余响，新的天下线可以从此处接续。', goal: '剧情目标：等待襄阳夜雨，为刘表线收束。', condition: state => !!state.variables.liuBiaoEnding },
           { id: 'lb_5_rain', stage: 5, title: '襄阳夜雨', minTurn: 50, senderId: 'liuBiao', body: '襄阳夜雨落在旧州府瓦上。刘表一线到此完结，荆州仍在，棋局却已不再由他落子。', goal: '刘表线已完结：进入自由游玩，按系统推荐目标推进。', condition: state => hasPlotNode(state, 'lb_5_branch') && turnsSincePlotNode(state, 'lb_5_branch') >= 5, final: true }
         ]
@@ -4003,11 +4437,19 @@ const MAX_MAP_ZOOM = 4.2;
 
     function getActivePlotGoal() {
       if (!isStoryMode()) return '';
+      const breakInfo = getLiuBiaoBreakStageInfo();
+      if (breakInfo) return '【' + breakInfo.name + '】' + breakInfo.goal.replace(/^剧情目标：/, '');
       const active = Object.values(gameState.plotLineStates || {})
         .filter(state => state && state.status === 'active' && state.currentGoal);
       if (!active.length) return '';
       active.sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0));
-      return active[0].currentGoal;
+      const state = active[0];
+      const node = (PLOT_LINE_BLUEPRINTS[state?.id]?.nodes || []).find(item => item.id === state?.currentNodeId);
+      const phase = state?.id === 'liu_biao' ? getLiuBiaoPlotStageInfo(state, node) : null;
+      const goal = state.currentGoal || '';
+      if (!phase) return goal;
+      if (goal.includes('【' + phase.name + '】')) return goal;
+      return goal.replace(/^剧情目标：/, '【' + phase.name + '】');
     }
 
     function getSystemRecommendedGoal() {
@@ -4039,9 +4481,14 @@ const MAX_MAP_ZOOM = 4.2;
           .sort((a, b) => Number(b.stage || 0) - Number(a.stage || 0))[0];
         const lineName = PLOT_LINE_BLUEPRINTS[active?.id]?.title || '剧情线';
         const node = (PLOT_LINE_BLUEPRINTS[active?.id]?.nodes || []).find(item => item.id === active?.currentNodeId);
+        const phase = active?.id === 'liu_biao' ? getLiuBiaoPlotStageInfo(active, node) : null;
         return '<strong>当前目标</strong><br>' +
           '这是剧情模式下的阶段任务，来自：' + escapeHtml(lineName) + '。<br>' +
+          (phase ? '<span style="color:var(--accent)">当前阶段：</span>' + escapeHtml(phase.name) + '<br>' : '') +
           '<span style="color:var(--good)">现在要做：</span>' + escapeHtml(displayedGoal.replace(/^剧情目标：/, '')) + '<br>' +
+          (phase ? '<span style="color:var(--good)">本阶段重点：</span>' + escapeHtml(phase.focus) + '<br>' : '') +
+          (phase ? '<span style="color:var(--bad)">需要避免：</span>' + escapeHtml(phase.avoid) + '<br>' : '') +
+          (phase ? '<span style="color:var(--muted)">后续变化：</span>' + escapeHtml(phase.next) + '<br>' : '') +
           (node ? '<span style="color:var(--muted)">当前节点：</span>' + escapeHtml(node.title) + '｜阶段 ' + Number(node.stage || active.stage || 0) + '<br>' : '') +
           '<span style="color:var(--bad)">说明：</span>剧情目标只提示方向，不会锁死你的操作；刘表线完结后会自动切回系统推荐目标。';
       }
@@ -4051,6 +4498,20 @@ const MAX_MAP_ZOOM = 4.2;
         '<span style="color:var(--bad)">说明：</span>它不是强制任务。你可以自由内政、外交或出兵；当紧急事务、城池状态、粮草、战役或扩张条件变化时，这里会自动更新。';
     }
 
+    function getTurnDateHelpText() {
+      if (isGuideActive()) {
+        return '<strong>回合 / 日期</strong><br>' +
+          '你正在新手引导中：这里显示的是引导回合，用来拆分教学步骤。<br>' +
+          '<span style="color:var(--good)">完成引导后，会回到正式回合与历史日期显示。</span><br>' +
+          '<span style="color:var(--bad)">说明：</span>引导回合主要服务教学节奏，不代表正式战局已经推进同样天数。';
+      }
+      return '<strong>回合 / 日期</strong><br>' +
+        '当前是第 ' + Number(gameState.turn || 1) + ' 回合，日期为 ' + escapeHtml(formatDate()) + '。<br>' +
+        '<span style="color:var(--good)">每次结束回合会结算命令、经济、战役、外交、剧情与势力行动。</span><br>' +
+        '<span style="color:var(--muted)">时间规则：</span>每个正式回合推进 ' + TURN_DAYS + ' 天；游戏按 30 天一月、12 月一年滚动。<br>' +
+        '<span style="color:var(--bad)">注意：</span>部分剧情会检查回合数或日期窗口，拖延太久可能错过更有利的处理时机。';
+    }
+
     function triggerPlotNode(lineId, node, state, reports = []) {
       if (!node || hasPlotNode(state, node.id)) return false;
       state.triggeredNodes[node.id] = { turn: gameState.turn, title: node.title, stage: node.stage };
@@ -4058,15 +4519,16 @@ const MAX_MAP_ZOOM = 4.2;
       state.currentNodeId = node.id;
       state.currentGoal = node.goal || state.currentGoal;
       if (node.onTrigger) node.onTrigger(state);
+      const nodeBody = typeof node.body === 'function' ? node.body(state) : (node.body || '');
 
       const title = PLOT_LINE_BLUEPRINTS[lineId]?.title || '剧情线';
-      const text = title + '｜' + node.title + '：' + (node.body || '');
+      const text = title + '｜' + node.title + '：' + nodeBody;
       reports.push({ tone: node.final ? 'good' : 'warn', level: 'important', text });
 
       createLetter({
         senderId: node.senderId || 'liuBiao',
         title: node.title,
-        body: node.body || node.title,
+        body: nodeBody || node.title,
         critical: true,
         kind: 'plotEvent',
         meta: { lineId, nodeId: node.id },
@@ -4113,6 +4575,9 @@ const MAX_MAP_ZOOM = 4.2;
           recognizeLiuCong: 'recognize_liu_cong',
           standIndependent: 'independent_jingzhou'
         };
+        if (state.variables.liuBiaoHeir && !endings[choiceId]) {
+          return true;
+        }
         state.variables.liuBiaoEnding = endings[choiceId] || 'undecided';
         state.variables.liuBiaoEndingChoice = choiceId;
         state.variables.supportedLiuQi = choiceId === 'supportLiuQi';
@@ -4140,6 +4605,9 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function addCharacterMemory(character, memory) {
+      if (memory && typeof memory.summary === 'string') {
+        memory.summary = repairDisplayText(memory.summary);
+      }
       character.memory.unshift(Object.assign({ turn: gameState.turn }, memory));
       character.memory = character.memory.slice(0, 18);
     }
@@ -4415,7 +4883,7 @@ const MAX_MAP_ZOOM = 4.2;
         npcText: escapeHtml(String(source.npcText || fallback.npcText)),
         npcIntent: escapeHtml(String(source.npcIntent || fallback.npcIntent)),
         emotionalShift: escapeHtml(String(source.emotionalShift || fallback.emotionalShift)),
-        memorySummary: escapeHtml(String(source.memorySummary || fallback.memorySummary)),
+        memorySummary: repairDisplayText(String(source.memorySummary || fallback.memorySummary)),
         suggestedPlayerChoices: Array.isArray(source.suggestedPlayerChoices) ? source.suggestedPlayerChoices.slice(0, 4) : fallback.suggestedPlayerChoices
       };
     }
@@ -4578,7 +5046,7 @@ const MAX_MAP_ZOOM = 4.2;
       addCharacterMemory(npc, memory);
       gameState.conversations.unshift({ characterId: npc.id, ...memory });
       gameState.conversations = gameState.conversations.slice(0, 80);
-      pushTurnEvent({ level: 'minor', tone: action.trust >= 0 ? 'good' : 'warn', text: npc.name + '：' + dialogue.memorySummary });
+      pushTurnEvent({ level: 'minor', tone: action.trust >= 0 ? 'good' : 'warn', text: npc.name + '：' + repairDisplayText(dialogue.memorySummary) });
       return effects;
     }
 
@@ -5239,6 +5707,8 @@ const MAX_MAP_ZOOM = 4.2;
       if (letter.kind === 'npcInitiative') {
         const result = await resolveNpcInitiativeLetter(letter, choiceId);
         if (result === 'conversation') return;
+      } else if (letter.kind === 'liuBiaoBreak') {
+        resolveLiuBiaoBreakChoice(letter, choiceId, reports);
       } else if (letter.kind === 'plotEvent') {
         resolvePlotEventChoice(letter, choiceId, reports);
       } else {
@@ -5677,10 +6147,12 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.militaryOrders.push({ ...structuredClone(order), campaignId: campaign.id, status: 'marching', eta: travelTurns });
       gameState.campaigns.push(campaign);
       if (isBattle) {
+        const defenderFaction = cityController(target.id);
+        clearLiuBiaoProtectionForPlayerAttack(defenderFaction, reports);
         gameState.factionWarState ||= { lastAttackTurnByFaction: {}, recentWars: [] };
         gameState.factionWarState.recentWars.push({
           attacker: 'player',
-          defender: cityController(target.id),
+          defender: defenderFaction,
           source: source.id,
           target: target.id,
           turn: gameState.turn,
@@ -6205,6 +6677,19 @@ const MAX_MAP_ZOOM = 4.2;
       return score;
     }
 
+    function syncLiuBiaoProtectionWithPlayerAttacks(reports = null) {
+      if (!isStoryMode() || clamp(Number(gameState.player?.protection || 0), 0, 100) <= 0) return false;
+      const hasActiveAttack = (gameState.campaigns || []).some(campaign => (
+        campaign
+        && campaign.faction === 'player'
+        && campaign.type === 'attack'
+        && isActiveCampaign(campaign)
+        && cityController(campaign.target) === 'liubiao'
+      ));
+      if (!hasActiveAttack) return false;
+      return clearLiuBiaoProtectionForPlayerAttack('liubiao', reports || []);
+    }
+
     function liuBiaoProtectionWarDampener() {
       if (gameState.player?.independent) return 1;
       const protection = clamp(Number(gameState.player?.protection || 0), 0, 100);
@@ -6234,8 +6719,19 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function getNpcPlayerWarDesire(factionId) {
+      if (factionId === 'liubiao') syncLiuBiaoProtectionWithPlayerAttacks();
       const aggression = recentPlayerAggressionAgainst(factionId);
       const protection = clamp(Number(gameState.player?.protection || 0), 0, 100);
+      if (factionId === 'liubiao' && isStoryMode() && protection >= 60) {
+        return {
+          score: 0,
+          aggression: 0,
+          protection,
+          protectionDampener: liuBiaoProtectionWarDampener(),
+          historical: 0,
+          raw: 0
+        };
+      }
       const protectionDampener = liuBiaoProtectionWarDampener();
       const historical = aggression > 0 ? historicalPlayerWarPressure(factionId) * 0.35 : 0;
       const basePressure = isStoryMode()
@@ -6259,6 +6755,11 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function canNpcTargetPlayer(factionId) {
+      const breakState = liuBiaoBreakState();
+      if (factionId === 'liubiao' && (breakState?.status === 'war' || breakState?.stage === 'war')) return true;
+      if (breakState?.status === 'observing' && ['cao', 'sun'].includes(factionId) && gameState.turn <= Number(breakState.caoSunObserveUntil || 0)) {
+        return false;
+      }
       const desire = getNpcPlayerWarDesire(factionId);
       if (desire.aggression > 0) return desire.score >= 18;
       if (isStoryMode()) {
@@ -6318,6 +6819,8 @@ const MAX_MAP_ZOOM = 4.2;
       if ((factionA === 'player' && isPlayerAlliedWithFaction(factionB)) || (factionB === 'player' && isPlayerAlliedWithFaction(factionA))) return 80;
       if (factionA === 'player' || factionB === 'player') {
         const npcFaction = factionA === 'player' ? factionB : factionA;
+        const explicit = gameState.factionRelations?.player?.[npcFaction] ?? gameState.factionRelations?.[npcFaction]?.player;
+        if (Number.isFinite(Number(explicit))) return Number(explicit);
         const desire = getNpcPlayerWarDesire(npcFaction);
         return -clamp(12 + desire.score, 0, 100);
       }
@@ -8114,7 +8617,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (step === 3) {
         return `<div class="card">
           <h3>第一回合建议</h3>
-          <p>先整顿治安、安抚士族、屯田或训练郡兵。眼下不必急着开战。</p>
+          <p>先整顿治安、安抚士族、屯田或通过城政训练郡兵。眼下不必急着开战。</p>
           <div class="button-grid"><button data-tutorial-next="4">处理地方试探</button></div>
         </div>`;
       }
@@ -8182,7 +8685,7 @@ const MAX_MAP_ZOOM = 4.2;
     function renderHud() {
       const totals = cityTotals();
       const items = [
-        ['回合 / 日期', isGuideActive() ? '新手引导｜第' + gameState.tutorial.guidePhase + '回合' : '第' + gameState.turn + '回合｜' + formatDate()],
+        ['回合 / 日期', isGuideActive() ? '新手引导｜第' + gameState.tutorial.guidePhase + '回合' : '第' + gameState.turn + '回合｜' + formatDate(), 'turnDateHelp'],
         ['当前篇章', getActName()],
         ['当前目标', getDisplayedCurrentGoal(), 'currentGoalHelp'],
         ['粮草', fmt(totals.food)],
@@ -8968,7 +9471,7 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="tag-row"><span class="tag">态度：${escapeHtml(attitude)}</span>${valueTags}<span class="tag">${escapeHtml(style.register || '平实')}</span><span class="tag">${escapeHtml(style.rhythm || '平衡')}</span></div>
       </div>
       <div class="card"><h3>内心状态</h3>${renderNpcAgencyCard(character)}</div>
-      <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(memory.summary)}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
+      <div class="card"><h3>人物记忆</h3>${character.memory.length ? character.memory.slice(0, 5).map(memory => `<div class="memory-item">第 ${memory.turn} 回合｜${escapeHtml(repairDisplayText(memory.summary))}</div>`).join('') : '<div class="memory-item">尚无与你相关的记忆。</div>'}</div>
       <div class="card"><h3>可解锁谋略</h3>${renderCharacterSpecialSchemeList(character)}</div>`;
     }
 
@@ -9148,12 +9651,9 @@ const MAX_MAP_ZOOM = 4.2;
       const cityId = selectedCity && isControlledBy(selectedCity.id, 'player') ? selectedCity.id : (controlledCities()[0]?.id || '');
       return `<div class="card">
         <h3>军事整备</h3>
-        <p>对选中的己方城市执行军事整备命令，消耗 1 点军令点。</p>
+        <p>对选中的己方城市执行防务整备命令，消耗 1 点军令点。练兵请在城政中进行。</p>
         <div class="button-grid">
           <button data-military-order="drill" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>整军（士气 +5｜粮 -80）</button>
-          <button data-military-order="trainLand" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练陆兵</button>
-          <button data-military-order="trainCavalry" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练骑兵</button>
-          <button data-military-order="trainNavy" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>练水兵</button>
           <button data-military-order="defense" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>加固防线（城防 +4｜府库 -80）</button>
           <button data-military-order="reserve" data-military-city="${cityId}" ${cityId ? '' : 'disabled'}>预备队（城防 +2 士气 +2）</button>
         </div>
@@ -9484,7 +9984,7 @@ const MAX_MAP_ZOOM = 4.2;
     function summarizeAutoTask(task) {
       if (!task?.enabled) return '自动化关闭';
       const civilModes = Array.isArray(task.civilModes) ? task.civilModes : [];
-      const prepModes = Array.isArray(task.militaryPrepModes) ? task.militaryPrepModes : [];
+      const prepModes = getUniqueAutoTaskModes(task, 'militaryPrepModes', 'militaryPrepMode', MILITARY_PREP_MODE_LIST);
       const parts = [
         task.militaryMode && task.militaryMode !== 'none' ? autoTaskModeLabel(task.militaryMode) : '',
         civilModes.slice(0, 2).map(autoTaskModeLabel).join('、'),
@@ -9564,7 +10064,7 @@ const MAX_MAP_ZOOM = 4.2;
       const militaryOpts = [['none','不执行'],['recruit','自动征兵'],['train','自动练兵']];
       const civilOpts = [['relief','自动赈济'],['farming','自动屯田'],['defense','自动修城防'],['order','自动维护治安']];
       const policyOpts = [['none','不执行'],['taxLight','税率偏低'],['balanced','税粮平衡'],['grainHeavy','征粮偏高'],['publicFirst','民心优先']];
-      const prepOpts = [['drill','自动整军'],['trainLand','自动练陆兵'],['trainCavalry','自动练骑兵'],['trainNavy','自动练水兵'],['defense','自动加固防线'],['reserve','自动部署预备队']];
+      const prepOpts = [['drill','自动整军'],['defense','自动加固防线'],['reserve','自动部署预备队']];
 
       return `<div class="appointment-auto-controls">
         <h4>自动治理</h4>
@@ -10046,24 +10546,39 @@ const MAX_MAP_ZOOM = 4.2;
     function renderLiuBiaoPanel() {
       const liuBiao = gameState.characters.liuBiao;
       const level = protectionLevel();
+      const breakState = liuBiaoBreakState();
+      const showBreakControls = isStoryMode();
+      const attitude = liuBiaoAttitudeLabel();
+      const canDeclare = showBreakControls && !gameState.player.independent && breakState?.status !== 'war' && breakState?.status !== 'surrendered';
+      const oldLiuBiaoActionsDisabled = showBreakControls && (gameState.player.independent || breakState?.status === 'war');
       return `
         <div class="card">
           <h2>刘表：荆州牧</h2>
           <p>你受刘表密令赴任桂阳。庇护越强，豪强、士族与外部势力越不敢公开试探；但这份背书会被你的选择消耗。</p>
-          ${metric('刘表庇护', gameState.player.protection)}
+          ${breakState?.stage === 'war' || gameState.player.independent ? metric('刘表态度', attitude) : metric('刘表庇护', gameState.player.protection)}
           ${metric('刘表权威', liuBiao.authority)}
           ${metric('刘表信任', liuBiao.trust)}
-          <div class="tag-row"><span class="tag">${level.name}</span><span class="tag">密令：${liuBiao.order}</span></div>
+          <div class="tag-row"><span class="tag">${escapeHtml(attitude || level.name)}</span><span class="tag">密令：${escapeHtml(liuBiao.order)}</span></div>
         </div>
         <div class="card">
           <h3>襄阳往来</h3>
           <div class="button-grid">
-            <button data-liubiao-action="report" data-help="上报桂阳局势<br><span style=&quot;color:var(--good)&quot;>好处：维持刘表信任，提升合法性。</span><br><span style=&quot;color:var(--bad)&quot;>代价：可能暴露你的真实实力和野心。</span><br>消耗 1 外交点">上报桂阳局势</button>
-            <button data-liubiao-action="loyal" data-help="表明忠心<br><span style=&quot;color:var(--good)&quot;>好处：提高庇护和信任，降低外部势力敌意。</span><br><span style=&quot;color:var(--bad)&quot;>代价：短期不利于独立扩张路线。</span><br>消耗 1 外交点">表明忠心</button>
-            <button data-liubiao-action="supplies" data-help="请求兵粮<br><span style=&quot;color:var(--good)&quot;>好处：快速获得粮草或资源，帮助桂阳度过前期。</span><br><span style=&quot;color:var(--bad)&quot;>代价：可能消耗刘表信任或庇护，不能频繁使用。</span><br>消耗 1 外交点">请求兵粮</button>
-            <button data-liubiao-action="conceal" data-help="隐瞒扩张准备<br><span style=&quot;color:var(--good)&quot;>好处：避免刘表过早察觉你的独立意图。</span><br><span style=&quot;color:var(--bad)&quot;>代价：一旦被发现，信任暴跌。</span><br>消耗 1 外交点">隐瞒扩张准备</button>
+            <button data-liubiao-action="report" ${oldLiuBiaoActionsDisabled ? 'disabled' : ''} data-help="上报桂阳局势<br><span style=&quot;color:var(--good)&quot;>好处：维持刘表信任，提升合法性。</span><br><span style=&quot;color:var(--bad)&quot;>代价：可能暴露你的真实实力和野心。</span><br>消耗 1 外交点">上报桂阳局势</button>
+            <button data-liubiao-action="loyal" ${oldLiuBiaoActionsDisabled ? 'disabled' : ''} data-help="表明忠心<br><span style=&quot;color:var(--good)&quot;>好处：提高庇护和信任，降低外部势力敌意。</span><br><span style=&quot;color:var(--bad)&quot;>代价：短期不利于独立扩张路线。</span><br>消耗 1 外交点">表明忠心</button>
+            <button data-liubiao-action="supplies" ${oldLiuBiaoActionsDisabled ? 'disabled' : ''} data-help="请求兵粮<br><span style=&quot;color:var(--good)&quot;>好处：快速获得粮草或资源，帮助桂阳度过前期。</span><br><span style=&quot;color:var(--bad)&quot;>代价：可能消耗刘表信任或庇护，不能频繁使用。</span><br>消耗 1 外交点">请求兵粮</button>
+            <button data-liubiao-action="conceal" ${oldLiuBiaoActionsDisabled ? 'disabled' : ''} data-help="隐瞒扩张准备<br><span style=&quot;color:var(--good)&quot;>好处：避免刘表过早察觉你的独立意图。</span><br><span style=&quot;color:var(--bad)&quot;>代价：一旦被发现，信任暴跌。</span><br>消耗 1 外交点">隐瞒扩张准备</button>
+            ${showBreakControls ? `<button data-liubiao-declare-independent="1" ${canDeclare ? '' : 'disabled'} data-help="宣告自立<br><span style=&quot;color:var(--good)&quot;>庇护高时，刘表悲痛不解，曹操与孙权短期观望。</span><br><span style=&quot;color:var(--bad)&quot;>庇护较低时，会触发通牒甚至直接开战。</span>">宣告自立</button>` : ''}
           </div>
         </div>
+        ${breakState ? `<div class="card">
+          <h3>刘表态度</h3>
+          <p>${escapeHtml(attitude)}</p>
+          <div class="tag-row">
+            <span class="tag">阶段：${escapeHtml(String(breakState.stage || breakState.status || ''))}</span>
+            ${breakState.startedTurn ? `<span class="tag">起始回合：${breakState.startedTurn}</span>` : ''}
+            ${breakState.caoSunObserveUntil ? `<span class="tag">曹孙观望至第 ${breakState.caoSunObserveUntil} 回合</span>` : ''}
+          </div>
+        </div>` : ''}
         <div class="card">
           <h3>荆州人物</h3>
           <p>蔡瑁：${escapeHtml(characterStatusName(gameState.characters.caiMao.status))}｜蒯越：${escapeHtml(characterStatusName(gameState.characters.kuaiYue.status))}｜黄祖：${escapeHtml(characterStatusName(gameState.characters.huangZu.status))}｜文聘：${escapeHtml(characterStatusName(gameState.characters.wenPin.status))}</p>
@@ -10318,8 +10833,9 @@ const MAX_MAP_ZOOM = 4.2;
       if (!cityId || !action) return;
       const city = gameState.cities[cityId];
       if (!city || !isControlledBy(cityId, 'player')) return toast('只能对自己控制的城池下达军事整备命令');
+      if (SPECIAL_TRAINING_ACTIONS[action]) return toast('练兵请通过城政执行');
       if (!spendPoints('mil', 1)) return;
-      const labelMap = { drill: '整军', trainLand: '练陆兵', trainCavalry: '练骑兵', trainNavy: '练水兵', defense: '加固防线', reserve: '预备队' };
+      const labelMap = { drill: '整军', defense: '加固防线', reserve: '预备队' };
       gameState.orders.push({
         id: uid(),
         type: 'military',
@@ -10597,8 +11113,10 @@ const MAX_MAP_ZOOM = 4.2;
       processPublicSupportCrises(reports);
       processSubmissionInstability(reports);
       processAllianceDiplomacy(reports);
+      syncLiuBiaoProtectionWithPlayerAttacks(reports);
       runFactionAI(reports);
       runNpcWarAI(reports);
+      processLiuBiaoBreakdown(reports);
       processPlotLines(reports);
       checkStoryTriggers(reports);
       evaluateSpecialEvents();
@@ -10793,8 +11311,6 @@ const MAX_MAP_ZOOM = 4.2;
         city.morale = clamp(city.morale + 5, 0, 100);
         reports.push({ tone: 'good', text: city.name + '整军完成，士气 +5，消耗粮草 80。' });
         success = true;
-      } else if (SPECIAL_TRAINING_ACTIONS[action]) {
-        success = resolveSpecializedTraining(city, action, reports, 'auto');
       } else if (action === 'defense') {
         if (city.money < 80) {
           reports.push({ tone: 'bad', text: city.name + '府库不足，无法加固防线。' });
@@ -14107,7 +14623,7 @@ const MAX_MAP_ZOOM = 4.2;
           render();
           setTimeout(() => {
             setForceAction('clickTab', 'military');
-            highlightGuideElement('[data-tab="military"]', '切换到军事面板，训练郡兵');
+            highlightGuideElement('[data-tab="military"]', '切换到军事面板，整备防务');
           }, 100);
           return; // skip default flow
         case 4: // 高亮整军按钮
@@ -14156,7 +14672,7 @@ const MAX_MAP_ZOOM = 4.2;
           break;
         case 5: // 刘表tab
           setForceAction('clickTab', 'liubiao');
-          highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令', 'top');
+          highlightGuideElement('[data-tab="liubiao"]', '刘表是你的庇护者，查看密令');
           break;
         case 6: // 上报桂阳局势
           setForceAction('liubiaoAction', 'report');
@@ -14319,7 +14835,7 @@ const MAX_MAP_ZOOM = 4.2;
             <p>前期你只能使用<strong>【城政】</strong>和<strong>【军事】</strong>两个功能：</p>
             <ul>
               <li><strong>城政</strong>：稳定民心、治安、粮食和府库；</li>
-              <li><strong>军事</strong>：训练郡兵、整备防务、维持士气。</li>
+              <li><strong>军事</strong>：出阵作战、整备防务、维持士气；练兵通过城政进行。</li>
             </ul>
             <p>等桂阳稳定后，<strong>刘表、亲信、调兵、谋略和外交</strong>会逐步解锁。</p>`,
           choices: [
@@ -14335,7 +14851,7 @@ const MAX_MAP_ZOOM = 4.2;
               <li><strong>治安</strong>低会增加叛乱和豪强坐大的风险；</li>
               <li><strong>粮食</strong>和<strong>府库</strong>决定你能不能长期作战。</li>
             </ul>
-            <p>军事不仅是进攻。前期军事的核心是<strong>训练郡兵、维持士气、补足守军</strong>。</p>
+            <p>军事不仅是进攻。前期军事的核心是<strong>整备防务、维持士气、补足守军</strong>；练兵请从城政下令。</p>
             <p>桂阳兵力不足时贸然出征，会导致本城空虚，也会降低刘表对你的信任。</p>`,
           choices: [
             { id: 'accept', label: '明白了，开始治理', action: 'accept' },
@@ -14569,6 +15085,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     // ===================== 长悬停 tooltip =====================
     const HELP_TEXT = {
+      turnDateHelp: getTurnDateHelpText,
       currentGoalHelp: getCurrentGoalHelpText,
       protectionHelp: '<strong>刘表庇护</strong><br>代表刘表名义上给予你的背书与保护。<br><span style="color:var(--good)">数值越高，外部势力越不敢轻易攻击、离间或试探桂阳；外交也更容易解锁。</span><br><span style="color:var(--bad)">擅自扩张、越权外交、隐瞒军备或荆南士族疑心过高，都会消耗这份庇护。</span>',
       gentrySuspicionHelp: '<strong>士族疑心</strong><br>代表荆南士族对你是否守礼、守信、能安民的怀疑程度。<br><span style="color:var(--good)">疑心越低，士族更愿意荐才、维持清议支持，地方局势更稳。</span><br><span style="color:var(--bad)">疑心过高会带来流言、观望与掣肘，并可能拖累刘表庇护。</span>',
@@ -14593,9 +15110,51 @@ const MAX_MAP_ZOOM = 4.2;
     function showTooltip(text, x, y) {
       initTooltip();
       tooltipState.el.innerHTML = text;
+      tooltipState.el.style.visibility = 'visible';
       tooltipState.el.style.left = x + 'px';
       tooltipState.el.style.top = y + 'px';
       tooltipState.el.classList.add('show');
+      tooltipState.visible = true;
+    }
+
+    function showTooltipForTarget(text, target) {
+      initTooltip();
+      tooltipState.el.innerHTML = text;
+      tooltipState.el.style.visibility = 'hidden';
+      tooltipState.el.style.left = '0px';
+      tooltipState.el.style.top = '0px';
+      tooltipState.el.classList.add('show');
+
+      const rect = target.getBoundingClientRect();
+      const preferred = target.getAttribute('data-tooltip-position')
+        || (target.getAttribute('data-tab') === 'liubiao' ? 'right' : 'bottom');
+      const margin = 10;
+      const width = tooltipState.el.offsetWidth || 280;
+      const height = tooltipState.el.offsetHeight || 80;
+      let left = rect.left;
+      let top = rect.bottom + 6;
+
+      if (preferred === 'right') {
+        left = rect.right + margin;
+        top = rect.top + rect.height / 2 - height / 2;
+        if (left + width > window.innerWidth - margin) {
+          left = rect.left - width - margin;
+        }
+      } else if (preferred === 'left') {
+        left = rect.left - width - margin;
+        top = rect.top + rect.height / 2 - height / 2;
+      } else if (preferred === 'top') {
+        left = rect.left;
+        top = rect.top - height - 6;
+      } else if (top + height > window.innerHeight - margin) {
+        top = rect.top - height - 6;
+      }
+
+      left = clamp(left, margin, Math.max(margin, window.innerWidth - width - margin));
+      top = clamp(top, margin, Math.max(margin, window.innerHeight - height - margin));
+      tooltipState.el.style.left = left + 'px';
+      tooltipState.el.style.top = top + 'px';
+      tooltipState.el.style.visibility = 'visible';
       tooltipState.visible = true;
     }
 
@@ -14621,8 +15180,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (!text) { hideTooltip(); return; }
       clearTimeout(tooltipState.timer);
       tooltipState.timer = setTimeout(() => {
-        const rect = target.getBoundingClientRect();
-        showTooltip(text, rect.left, rect.bottom + 6);
+        showTooltipForTarget(text, target);
       }, 1000);
     }
 
@@ -14643,6 +15201,68 @@ const MAX_MAP_ZOOM = 4.2;
         .replace(/'/g, '&#39;')
         .replace(/`/g, '&#96;')
         .replace(/\//g, '&#47;');
+    }
+
+    function repairDisplayText(value) {
+      const text = decodeDisplayEntities(String(value || '').trim());
+      if (!text) return '';
+      if (!looksLikeMojibake(text)) return text;
+
+      const replacements = [
+        ['鍒樿〃', '刘表'],
+        ['鍓ф儏', '剧情'],
+        ['鐩爣', '目标'],
+        ['妗傞槼', '桂阳'],
+        ['瑗勯槼', '襄阳'],
+        ['鑽嗗窞', '荆州'],
+        ['鍩庢睜', '城池'],
+        ['绾垮', '线'],
+        ['瀹岀粨', '完结'],
+        ['杩涘叆', '进入'],
+        ['鑷敱', '自由'],
+        ['搴囨姢', '庇护'],
+        ['淇′换', '信任'],
+        ['澹版湜', '声望'],
+        ['鍚堟硶鎬', '合法性'],
+        ['鍥炲悎', '回合'],
+        ['浣犻', '你'],
+        ['浣犲', '你'],
+        ['銆', '。'],
+        ['锛', '，'],
+        ['锝', '｜']
+      ];
+      let repaired = text;
+      replacements.forEach(([from, to]) => {
+        repaired = repaired.split(from).join(to);
+      });
+      repaired = repaired
+        .replace(/[?？]{2,}/g, '？')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return looksLikeMojibake(repaired)
+        ? '旧版本记忆：原文编码损坏，已隐藏乱码。'
+        : repaired;
+    }
+
+    function looksLikeMojibake(value) {
+      const text = String(value || '');
+      const hits = (text.match(/鍒|鍓|鐩|绾|搴|妗|槼|瑗|鑽|荆|銆|锛|锝|||||/g) || []).length;
+      return hits >= 2 || /�/.test(text);
+    }
+
+    function decodeDisplayEntities(value) {
+      return String(value || '')
+        .replace(/&amp;quot;/g, '"')
+        .replace(/&amp;apos;/g, "'")
+        .replace(/&amp;#34;/g, '"')
+        .replace(/&amp;#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&#34;/g, '"')
+        .replace(/&#x22;/gi, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/gi, "'")
+        .replace(/&amp;/g, '&');
     }
 
     function toggleCalibrationMode() {
@@ -15051,8 +15671,7 @@ const MAX_MAP_ZOOM = 4.2;
             const val = HELP_TEXT[helpKey];
             const text = typeof val === 'function' ? val() : (val || '');
             if (text) {
-              const rect = hudHelpItem.getBoundingClientRect();
-              showTooltip(text, rect.left, rect.bottom + 6);
+              showTooltipForTarget(text, hudHelpItem);
             }
             advanceGuideStep();
             return;
@@ -15290,6 +15909,10 @@ const MAX_MAP_ZOOM = 4.2;
             removeGuideOverlay();
             advanceGuideStep();
           }
+          return;
+        }
+        if (event.target.closest('[data-liubiao-declare-independent]')) {
+          declareIndependenceFromLiuBiao();
           return;
         }
         const defense = event.target.closest('[data-defense-choice]');
