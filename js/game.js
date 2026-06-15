@@ -5886,8 +5886,19 @@ const MAX_MAP_ZOOM = 4.2;
       cinematicRoot.classList.add('show');
       cinematicRoot.innerHTML = `<div class="letter-cinematic-frame" data-letter-cinematic-frame="${letter.id}" aria-label="${escapeHtml(cinematic.title || letter.title)}">
         <button class="letter-cinematic-skip" data-finish-letter-cinematic="${letter.id}">跳过动画</button>
-        <video class="letter-cinematic-video" data-letter-cinematic-video="${letter.id}" src="${escapeHtml(cinematic.src)}" autoplay muted playsinline></video>
+        <video class="letter-cinematic-video" data-letter-cinematic-video="${letter.id}" src="${escapeHtml(cinematic.src)}" autoplay playsinline preload="auto"></video>
       </div>`;
+      playLetterCinematicVideo(letter.id);
+    }
+
+    function playLetterCinematicVideo(letterId) {
+      const video = Array.from(document.querySelectorAll('[data-letter-cinematic-video]')).find(item => item.getAttribute('data-letter-cinematic-video') === letterId);
+      if (!video) return;
+      video.muted = false;
+      video.defaultMuted = false;
+      video.volume = 1;
+      const playback = video.play();
+      if (playback && typeof playback.catch === 'function') playback.catch(() => {});
     }
 
     function finishLetterCinematic(letterId) {
