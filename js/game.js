@@ -2877,7 +2877,7 @@ const MAX_MAP_ZOOM = 4.2;
         militaryPlanner: { sourceId: null, targetId: null, route: 'official' },
         tutorial: {
           skipped: false,
-          guideSeen: { introStart: false, cityMilitary: false, liubiao: false, inner: false, transfer: false, scheme: false, diplomacy: false },
+          guideSeen: { introStart: false, liubiao: false, inner: false, transfer: false, scheme: false, diplomacy: false },
           tasks: [
             { id: 'inspectGuiyang', label: '查看桂阳局势', completed: false, description: '点击桂阳城，查看人口、驻军、粮食与治安概况。', nextHint: '完成后将开启城政教学。' },
             { id: 'firstCityOrder', label: '完成一次城政', completed: false, description: '在城政面板下达任意城政命令（征兵、练兵、修城防、屯田、赈济或整顿治安）。', nextHint: '完成城政后需再做一次军事调整。' },
@@ -15231,10 +15231,6 @@ const MAX_MAP_ZOOM = 4.2;
         if (tabId === 'characters') {
           gameState.characterProfileId = null;
         }
-        // 城政/军事首次打开时触发 cityMilitary 教学（但强制引导期间跳过）
-        if ((tabId === 'city' || tabId === 'military') && !gameState.tutorial.guideSeen.cityMilitary && !gameState.tutorial.skipped && !isGuideActive()) {
-          gameState.activeModal = { type: 'tutorialGuide', guideId: 'cityMilitary' };
-        }
         // 刘表 tab 首次打开完成 visitLiuBiao 任务
         if (tabId === 'liubiao' && !getTutorialTask('visitLiuBiao').completed) {
           completeTutorialTask('visitLiuBiao');
@@ -15442,7 +15438,6 @@ const MAX_MAP_ZOOM = 4.2;
       markGuideSeen(guideId);
       const taskMap = {
         introStart: 'inspectGuiyang',
-        cityMilitary: 'firstCityOrder',
         liubiao: 'visitLiuBiao',
         inner: 'organizeRetinue',
         transfer: null,
@@ -15712,6 +15707,7 @@ const MAX_MAP_ZOOM = 4.2;
         orders: JSON.parse(JSON.stringify(gameState.orders)),
         letters: JSON.parse(JSON.stringify(gameState.letters)),
         armies: JSON.parse(JSON.stringify(gameState.armies)),
+        campaigns: JSON.parse(JSON.stringify(gameState.campaigns || [])),
         turnEvents: JSON.parse(JSON.stringify(gameState.turnEvents || [])),
         news: JSON.parse(JSON.stringify(gameState.news || [])),
         regionControllers
@@ -15745,6 +15741,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.orders = snap.orders;
       gameState.letters = snap.letters;
       gameState.armies = snap.armies;
+      gameState.campaigns = snap.campaigns;
       gameState.turnEvents = snap.turnEvents;
       gameState.news = snap.news;
       gameState.tutorial._guideSnapshot = null;
