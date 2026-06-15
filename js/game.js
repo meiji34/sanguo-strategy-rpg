@@ -2844,6 +2844,9 @@ const MAX_MAP_ZOOM = 4.2;
           localTrialResolved: false,
           jingnanOpening: true,
           liuBiaoBreak: null,
+          attackedLiuBiao: false,
+          voluntarilyBrokeWithLiuBiao: false,
+          liuBiaoLoyalActions: { report: 0, loyal: 0, supplies: 0, conceal: 0 },
           plagueState: { activeByCity: {}, lastCheckTurn: 0, lastOutbreakTurn: 0 },
           redemptionLines: {},
           yuanDisarm: false,
@@ -3871,6 +3874,8 @@ const MAX_MAP_ZOOM = 4.2;
       if (!isStoryMode() || defenderFaction !== 'liubiao') return false;
       const before = clamp(Number(gameState.player?.protection || 0), 0, 100);
       if (before <= 0) return false;
+      gameState.storyFlags ||= {};
+      gameState.storyFlags.attackedLiuBiao = true;
       gameState.player.protection = 0;
       const item = { tone: 'bad', level: 'critical', text: '你已主动攻击刘表势力，刘表庇护清零。' };
       if (reports) reports.push(item);
@@ -4069,6 +4074,8 @@ const MAX_MAP_ZOOM = 4.2;
       if (!isStoryMode()) return toast('宣告自立只在剧情模式中可用');
       const protection = clamp(Number(gameState.player.protection || 0), 0, 100);
       const reports = [];
+      gameState.storyFlags ||= {};
+      gameState.storyFlags.voluntarilyBrokeWithLiuBiao = true;
       gameState.player.independent = true;
       gameState.player.faction = 'player';
       gameState.player.prestige = clamp(Number(gameState.player.prestige || 0) + 6, 0, 100);
@@ -4141,23 +4148,99 @@ const MAX_MAP_ZOOM = 4.2;
 
     function isPlayerLiuBiaoLoyalHeirCandidate() {
       if (!isStoryMode()) return false;
-      const breakState = liuBiaoBreakState();
+      const inputs = getLiuBiaoSuccessionInputs();
+      return inputs.loyalLine
+        && !inputs.attackedLiuBiao
+        && !inputs.voluntarilyBroke
+        && inputs.protection >= 80
+        && inputs.liuBiaoTrust >= 68
+        && inputs.prestige >= 45
+        && inputs.legitimacy >= 58
+        && inputs.guiyangStable
+        && inputs.supportEventCount >= 3
+        && inputs.ambition <= 45
+        && !inputs.breakCrisis;
+    }
+
+    function getLiuBiaoSuccessionInputs() {
       const liuBiao = gameState.characters.liuBiao || {};
-      return !gameState.player.independent
-        && gameState.player.faction === 'liubiao'
-        && Number(gameState.player.protection || 0) >= 70
-        && Number(liuBiao.trust || 0) >= 68
-        && Number(gameState.player.legitimacy || 0) >= 55
-        && Number(gameState.player.ambition || 0) <= 45
-        && !['war', 'ultimatum'].includes(String(breakState?.status || ''));
+      const breakState = liuBiaoBreakState();
+      const guiyang = gameState.cities.guiyang || {};
+      const lines = redemptionState();
+      const loyalActions = gameState.storyFlags?.liuBiaoLoyalActions || {};
+      const supportEventCount = [
+        Number(loyalActions.report || 0) >= 1,
+        Number(loyalActions.loyal || 0) >= 1,
+        Number(loyalActions.supplies || 0) >= 1,
+        lines.huangZu?.choice === 'redeem',
+        ['escort', 'support'].includes(lines.liuQi?.choice),
+        ['oath', 'frontier'].includes(lines.wenPin?.choice),
+        ['accept', 'promise'].includes(lines.kuaiYue?.choice),
+        hasPlotNode(gameState.plotLineStates?.liu_biao, 'lb_1_3'),
+        hasPlotNode(gameState.plotLineStates?.liu_biao, 'lb_2_3')
+      ].filter(Boolean).length;
+      const liuQiProtected = ['escort', 'support'].includes(lines.liuQi?.choice)
+        || ['出镇江夏', '公开受援'].includes(gameState.characters.liuQi?.status);
+      const caiCompromise = lines.caiMao?.choice === 'bargain'
+        || gameState.characters.caiMao?.status === '保族交权';
+      const successionIntervened = !!lines.liuQi?.resolved
+        || !!lines.caiMao?.resolved
+        || !!lines.kuaiYue?.resolved
+        || hasPlotNode(gameState.plotLineStates?.liu_biao, 'lb_3_4');
+      const conservativeForces = caiCompromise
+        || (Number(gameState.characters.caiMao?.suspicion || 0) <= 34 && Number(gameState.characters.jingnanGentry?.suspicion || 0) <= 44)
+        || (Number(gameState.characters.caiMao?.suspicion || 0) < Number(gameState.characters.kuaiYue?.trust || 0) - 18);
+      const unresolvedCaiMilitaryConflict = Number(gameState.characters.caiMao?.suspicion || 0) >= 62
+        && Number(gameState.characters.wenPin?.trust || 0) < 55
+        && !lines.caiMao?.resolved
+        && !lines.wenPin?.resolved;
+      const warPressure = activeCampaignSlotCount() >= Math.max(2, Number(gameState.player.commandSlots || 2) - 1)
+        || activeCampaignsTargetingCity('guiyang').length > 0
+        || (gameState.factionWarState?.recentWars || []).filter(war => war && gameState.turn - Number(war.turn || 0) <= 6).length >= 2;
+      const sonsConflictWorsened = hasPlotNode(gameState.plotLineStates?.liu_biao, 'lb_3_2')
+        && Number(gameState.characters.caiMao?.suspicion || 0) >= 58
+        && !liuQiProtected
+        && !caiCompromise;
+      return {
+        protection: Number(gameState.player.protection || 0),
+        liuBiaoTrust: Number(liuBiao.trust || 0),
+        prestige: Number(gameState.player.prestige || 0),
+        legitimacy: Number(gameState.player.legitimacy || 0),
+        ambition: Number(gameState.player.ambition || 0),
+        guiyangStable: Number(guiyang.order || 0) >= 60 && Number(guiyang.publicSupport || 0) >= 55,
+        supportEventCount,
+        liuQiProtected,
+        caiCompromise,
+        successionIntervened,
+        conservativeForces,
+        unresolvedCaiMilitaryConflict,
+        warPressure,
+        sonsConflictWorsened,
+        attackedLiuBiao: !!gameState.storyFlags?.attackedLiuBiao,
+        voluntarilyBroke: !!gameState.storyFlags?.voluntarilyBrokeWithLiuBiao,
+        loyalLine: !gameState.player.independent && gameState.player.faction === 'liubiao',
+        breakCrisis: ['war', 'ultimatum'].includes(String(breakState?.status || '')) || breakState?.stage === 'war'
+      };
+    }
+
+    function isLiuBiaoWillAmbiguous(inputs) {
+      return inputs.protection < 45
+        || inputs.breakCrisis
+        || inputs.attackedLiuBiao
+        || inputs.voluntarilyBroke
+        || (inputs.ambition > 58 && inputs.protection < 70)
+        || inputs.warPressure
+        || inputs.sonsConflictWorsened
+        || inputs.unresolvedCaiMilitaryConflict;
     }
 
     function chooseLiuBiaoHeir() {
+      const inputs = getLiuBiaoSuccessionInputs();
       if (isPlayerLiuBiaoLoyalHeirCandidate()) return 'player';
-      const caiSuspicion = Number(gameState.characters.caiMao?.suspicion || 0);
-      const kuaiTrust = Number(gameState.characters.kuaiYue?.trust || 0);
-      const protection = Number(gameState.player.protection || 0);
-      if (kuaiTrust >= 50 && protection >= 45 && caiSuspicion < 55) return 'liuQi';
+      if (isLiuBiaoWillAmbiguous(inputs)) return 'ambiguous';
+      if ((inputs.loyalLine && inputs.protection >= 55 && inputs.prestige < 45) || inputs.liuQiProtected) return 'liuQi';
+      if (inputs.caiCompromise || (!inputs.successionIntervened && inputs.conservativeForces)) return 'liuCong';
+      if (inputs.protection >= 45 && Number(gameState.characters.kuaiYue?.trust || 0) >= 50 && Number(gameState.characters.caiMao?.suspicion || 0) < 55) return 'liuQi';
       return 'liuCong';
     }
 
@@ -4165,6 +4248,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (heir === 'player') return gameState.player.name || '你';
       if (heir === 'liuQi') return '刘琦';
       if (heir === 'liuCong') return '刘琮';
+      if (heir === 'ambiguous') return '遗命未明';
       return '未定';
     }
 
@@ -4172,6 +4256,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (heir === 'player') return 'player_inherits_jingzhou';
       if (heir === 'liuQi') return 'support_liu_qi';
       if (heir === 'liuCong') return 'recognize_liu_cong';
+      if (heir === 'ambiguous') return 'ambiguous_will';
       return 'undecided';
     }
 
@@ -4180,6 +4265,7 @@ const MAX_MAP_ZOOM = 4.2;
       const inherited = ending === 'player_inherits_jingzhou';
       const supportedLiuQi = ending === 'support_liu_qi';
       const recognizedLiuCong = ending === 'recognize_liu_cong';
+      const ambiguousWill = ending === 'ambiguous_will';
       const independent = ending === 'independent_jingzhou' || gameState.player.independent;
       if (inherited) {
         return {
@@ -4200,6 +4286,13 @@ const MAX_MAP_ZOOM = 4.2;
           name: '蔡氏刘琮',
           summary: '刘琮在蔡氏拥立下承继荆州，你选择承认襄阳新秩序。刘表篇在“保守继位、暗流未息”的格局中阶段结算。',
           next: '后续剧情线可以接入蔡氏牵制、曹操南下和降曹压力，你需要决定继续忍耐还是趁势改局。'
+        };
+      }
+      if (ambiguousWill) {
+        return {
+          name: '遗命模糊',
+          summary: '刘表病逝前未能留下足以压服诸派的明晰遗命。二子之争、蔡氏与军方裂痕、外部战压一并涌上台面，荆州进入多方争名的危险格局。',
+          next: '后续剧情线可以围绕争诏、夺府、辅立或自保展开：你需要先稳住已有领地，再决定是否接管襄阳乱局。'
         };
       }
       if (independent) {
@@ -4413,8 +4506,8 @@ const MAX_MAP_ZOOM = 4.2;
       if (stage === 4) {
         return {
           name: '病榻择嗣',
-          focus: '若想被刘表指定继承荆州，要保持忠臣路线：高庇护、高信任、高合法性、低野心。',
-          avoid: '不要自立、不要让庇护崩溃，也不要让刘表信任跌破继承门槛。',
+          focus: '若想被刘表指定继承荆州，要保持忠臣路线：刘表庇护 80 以上，未攻打刘表，未主动断绝，声望够高，桂阳治理稳定，并完成足够多救援或表忠事件。',
+          avoid: '不要自立、攻打刘表、让庇护崩溃，或让二子之争、蔡氏与军方冲突在战乱压力下失控。',
           next: '刘表遗命公布后，荆州会进入继承余响。'
         };
       }
@@ -4433,7 +4526,7 @@ const MAX_MAP_ZOOM = 4.2;
         openingGoal: '剧情目标：稳住桂阳，等待襄阳后续来信。',
         completedGoal: '剧情目标：刘表篇已阶段结算，整顿荆州内政、人物关系与边境防务，等待下一条剧情线接续。',
         nodes: [
-          { id: 'lb_1_1', stage: 1, title: '密令入匣', minTurn: 1, senderId: 'liuBiao', body: '刘表密令入匣，桂阳名义上仍属荆州，实权却已交到你手中。先稳住治安、粮草与军心，襄阳会继续观察。', goal: '剧情目标：稳定桂阳，治安、粮草、守军缺一不可。', auto: true },
+          { id: 'lb_1_1', stage: 1, title: '密令入匣', minTurn: 1, senderId: 'liuBiao', body: '刘表密令入匣，桂阳名义上仍属荆州，实权却已交到你手中。先稳住治安、粮草与军心，襄阳会继续观察。', goal: '剧情目标：稳定桂阳，治安、粮草、守军缺一不可。', auto: true, cinematic: { src: './assets/opening/miling-ru-xia.mp4', title: '密令入匣' } },
           { id: 'lb_1_2', stage: 1, title: '襄阳来信', minTurn: 5, senderId: 'liuBiao', body: '襄阳问桂阳近日安抚成效。刘表并未催逼扩张，只要你能让地方不乱，这份庇护便仍然有效。', goal: '剧情目标：维持刘表庇护，继续安抚桂阳。' },
           { id: 'lb_1_3', stage: 1, title: '蒯越巡视', minTurn: 12, senderId: 'kuaiYue', body: '蒯越奉命巡视桂阳。他看重的不是豪言，而是治安与守军是否足以压住地方。', goal: '剧情目标：向荆州证明桂阳已经可以自守。', condition: () => {
             const guiyang = gameState.cities.guiyang;
@@ -4458,11 +4551,13 @@ const MAX_MAP_ZOOM = 4.2;
             const heir = state.variables.liuBiaoHeir || 'undecided';
             if (heir === 'player') return '刘表于病榻前召集近臣，明言桂阳之臣能守礼、能安民、能承荆州。他没有把州印交给宗子，而是将荆州托付给你。';
             if (heir === 'liuQi') return '刘表病中留下遗命，命刘琦承接荆州名分，并要诸臣以安民为先。荆州诸派仍有暗流，却暂有名义可循。';
-            return '刘表病中留下遗命，承认刘琮继位。蔡氏一门暂掌襄阳，荆州的保守秩序压过了所有变数。';
+            if (heir === 'liuCong') return '刘表病中留下遗命，承认刘琮继位。蔡氏一门暂掌襄阳，荆州的保守秩序压过了所有变数。';
+            return '刘表病榻前几度欲言，州印、宗子、蔡氏与军方各执一辞。庇护已薄，战事压境，二子之争又无定论，遗命终究未能明白压服诸派。';
           }, goal: '剧情目标：等待荆州易主。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
             const heir = chooseLiuBiaoHeir();
             state.variables.liuBiaoHeir = heir;
             state.variables.liuBiaoHeirName = liuBiaoHeirName(heir);
+            state.variables.liuBiaoSuccessionInputs = getLiuBiaoSuccessionInputs();
             gameState.characters.liuBiao.alive = false;
             gameState.characters.liuBiao.status = '病逝';
             gameState.characters.liuBiao.authority = 0;
@@ -4471,7 +4566,8 @@ const MAX_MAP_ZOOM = 4.2;
             const heir = state.variables.liuBiaoHeir || 'undecided';
             if (heir === 'player') return '州府遗命公布：刘表以荆州托付于你。襄阳、江陵、江夏、长沙诸郡改奉新主，荆州全境归入你的麾下。';
             if (heir === 'liuQi') return '刘表已逝，刘琦承继荆州名分。你仍是荆南重臣，但州府继承不再由你决定。';
-            return '刘表已逝，刘琮在蔡氏拥立下承继荆州。襄阳名义暂稳，而新的权力格局将更保守、更猜疑。';
+            if (heir === 'liuCong') return '刘表已逝，刘琮在蔡氏拥立下承继荆州。襄阳名义暂稳，而新的权力格局将更保守、更猜疑。';
+            return '刘表已逝，襄阳未能拿出压服众人的明诏。刘琦、刘琮、蔡氏、军府与外敌压力同时撕扯荆州，州府名分陷入模糊。';
           }, goal: '剧情目标：刘表线进入继承余响。', condition: state => hasPlotNode(state, 'lb_4_2') && turnsSincePlotNode(state, 'lb_4_2') >= 1, onTrigger: state => {
             const heir = state.variables.liuBiaoHeir || chooseLiuBiaoHeir();
             state.variables.liuBiaoHeir = heir;
@@ -4480,9 +4576,16 @@ const MAX_MAP_ZOOM = 4.2;
             state.variables.supportedLiuQi = heir === 'liuQi';
             state.variables.recognizedLiuCong = heir === 'liuCong';
             state.variables.playerInheritedJingzhou = heir === 'player';
+            state.variables.ambiguousWill = heir === 'ambiguous';
             if (heir === 'player') transferJingzhouToPlayerByWill(state);
             if (heir === 'liuQi') gameState.characters.kuaiYue.trust = clamp(Number(gameState.characters.kuaiYue.trust || 0) + 8, 0, 100);
             if (heir === 'liuCong') gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) - 8, 0, 100);
+            if (heir === 'ambiguous') {
+              gameState.characters.caiMao.suspicion = clamp(Number(gameState.characters.caiMao.suspicion || 0) + 10, 0, 100);
+              gameState.characters.wenPin.trust = clamp(Number(gameState.characters.wenPin.trust || 0) - 6, 0, 100);
+              gameState.characters.kuaiYue.status = '争诏未定';
+              gameState.characters.wenPin.status = '军令观望';
+            }
           } },
           { id: 'lb_5_branch', stage: 5, title: '阶段结局', minTurn: 50, senderId: 'kuaiYue', body: state => {
             const info = getLiuBiaoStageEndingInfo(state);
@@ -4746,7 +4849,7 @@ const MAX_MAP_ZOOM = 4.2;
         body: nodeBody || node.title,
         critical: true,
         kind: 'plotEvent',
-        meta: { lineId, nodeId: node.id },
+        meta: Object.assign({ lineId, nodeId: node.id }, node.cinematic ? { cinematic: node.cinematic } : {}),
         choices: node.choices || [{ id: 'ack', label: node.final ? '收下阶段结局' : '知晓' }]
       });
       return true;
@@ -5767,6 +5870,36 @@ const MAX_MAP_ZOOM = 4.2;
       letter.read = true;
       gameState.activeModal = { type: 'letter', letterId };
       renderModal();
+    }
+
+    function hideLetterCinematicOverlay() {
+      const cinematicRoot = document.getElementById('letterCinematicRoot');
+      if (!cinematicRoot) return;
+      cinematicRoot.classList.remove('show');
+      cinematicRoot.innerHTML = '';
+    }
+
+    function showLetterCinematicOverlay(letter) {
+      const cinematicRoot = document.getElementById('letterCinematicRoot');
+      const cinematic = letter?.meta?.cinematic;
+      if (!cinematicRoot || !letter || !cinematic?.src) return;
+      cinematicRoot.classList.add('show');
+      cinematicRoot.innerHTML = `<div class="letter-cinematic-frame" data-letter-cinematic-frame="${letter.id}" aria-label="${escapeHtml(cinematic.title || letter.title)}">
+        <button class="letter-cinematic-skip" data-finish-letter-cinematic="${letter.id}">跳过动画</button>
+        <video class="letter-cinematic-video" data-letter-cinematic-video="${letter.id}" src="${escapeHtml(cinematic.src)}" autoplay muted playsinline></video>
+      </div>`;
+    }
+
+    function finishLetterCinematic(letterId) {
+      const letter = gameState.letters.find(item => item.id === letterId);
+      if (!letter) return;
+      letter.meta ||= {};
+      letter.meta.cinematicWatched = true;
+      saveToStorage(false);
+      hideLetterCinematicOverlay();
+      if (gameState.activeModal?.type === 'letter' && gameState.activeModal.letterId === letterId) {
+        renderModal();
+      }
     }
 
     function resolveNpcLetterChoice(letter, choiceId, reports = []) {
@@ -8526,6 +8659,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function closeActiveModal() {
+      hideLetterCinematicOverlay();
       if (gameState.activeModal?.type === 'urgent') {
         const matter = gameState.urgentMatters.find(item => item.id === gameState.activeModal.matterId);
         if (matter) matter.deferred = true;
@@ -8764,6 +8898,11 @@ const MAX_MAP_ZOOM = 4.2;
       const root = document.getElementById('gameModalRoot');
       if (!root) return;
       const modal = gameState.activeModal;
+      const cinematicLetter = modal?.type === 'letter'
+        ? gameState.letters.find(item => item.id === modal.letterId)
+        : null;
+      const shouldShowLetterCinematic = !!(cinematicLetter?.meta?.cinematic?.src && !cinematicLetter.meta.cinematicWatched);
+      if (!shouldShowLetterCinematic) hideLetterCinematicOverlay();
       root.classList.toggle('show', Boolean(modal));
       root.classList.toggle('letter-open', modal?.type === 'letter');
       if (!modal) {
@@ -8796,9 +8935,15 @@ const MAX_MAP_ZOOM = 4.2;
         return;
       }
       if (modal.type === 'letter') {
-        const letter = gameState.letters.find(item => item.id === modal.letterId);
+        const letter = cinematicLetter || gameState.letters.find(item => item.id === modal.letterId);
         if (!letter) return closeActiveModal();
         letter.read = true;
+        if (shouldShowLetterCinematic) {
+          root.classList.remove('show', 'letter-open');
+          root.innerHTML = '';
+          showLetterCinematicOverlay(letter);
+          return;
+        }
         const letterPayloadId = 'letter_' + letter.id + '_' + gameState.turn;
         gameState.aiContentPayloads ||= {};
         gameState.aiContentPayloads[letterPayloadId] ||= {
@@ -12225,6 +12370,9 @@ const MAX_MAP_ZOOM = 4.2;
       const liuBiao = gameState.characters.liuBiao;
       const guiyang = gameState.cities.guiyang;
       const gentry = gameState.characters.jingnanGentry;
+      gameState.storyFlags ||= {};
+      gameState.storyFlags.liuBiaoLoyalActions ||= { report: 0, loyal: 0, supplies: 0, conceal: 0 };
+      gameState.storyFlags.liuBiaoLoyalActions[action] = Number(gameState.storyFlags.liuBiaoLoyalActions[action] || 0) + 1;
       if (action === 'report') {
         liuBiao.trust = clamp(liuBiao.trust + 5, 0, 100);
         gameState.player.protection = clamp(gameState.player.protection + 4, 0, 100);
@@ -15001,6 +15149,20 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.npcInitiativeState ||= { lastTurnByNpc: {}, recent: [] };
       migrated.specialEventState ||= { triggered: {}, cooldowns: {}, queue: [] };
       migrated.letters ||= [];
+      migrated.storyFlags ||= {};
+      const milingCinematic = { src: './assets/opening/miling-ru-xia.mp4', title: '密令入匣' };
+      if (!migrated.storyFlags.milingCinematicFullscreenMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_1_1') return;
+          letter.meta.cinematic = milingCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.milingCinematicFullscreenMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId === 'lb_1_1') letter.meta.cinematic ||= milingCinematic;
+        });
+      }
       migrated.militaryOrders ||= [];
       migrated.campaigns ||= [];
       migrated.urgentMatters ||= [];
@@ -15009,7 +15171,9 @@ const MAX_MAP_ZOOM = 4.2;
       migrated.visualEffects ||= [];
       migrated.gameMode = migrated.gameMode === 'story' ? 'story' : 'sandbox';
       migrated.plotLineStates ||= {};
-      migrated.storyFlags ||= {};
+      migrated.storyFlags.attackedLiuBiao ||= false;
+      migrated.storyFlags.voluntarilyBrokeWithLiuBiao ||= false;
+      migrated.storyFlags.liuBiaoLoyalActions ||= { report: 0, loyal: 0, supplies: 0, conceal: 0 };
       migrated.storyFlags.plagueState ||= { activeByCity: {}, lastCheckTurn: 0, lastOutbreakTurn: 0 };
       migrated.storyFlags.plagueState.activeByCity ||= {};
       migrated.storyFlags.redemptionLines ||= {};
@@ -15467,6 +15631,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.tutorial.tasks.forEach(task => { task.completed = true; });
       gameState.tutorial.trackedTaskId = null;
       saveToStorage(false);
+      openNextCriticalModal();
       render();
     }
 
@@ -15769,6 +15934,7 @@ const MAX_MAP_ZOOM = 4.2;
       gameState.tutorial.trackedTaskId = null;
       updateTabLockStates();
       saveToStorage(false);
+      openNextCriticalModal();
       render();
     }
 
@@ -16814,6 +16980,11 @@ const MAX_MAP_ZOOM = 4.2;
           openLetterModal(openLetter.getAttribute('data-open-letter'));
           return;
         }
+        const finishCinematic = event.target.closest('[data-finish-letter-cinematic]');
+        if (finishCinematic) {
+          finishLetterCinematic(finishCinematic.getAttribute('data-finish-letter-cinematic'));
+          return;
+        }
         const aiContentButton = event.target.closest('[data-ai-content-type]');
         if (aiContentButton) {
           const aiType = aiContentButton.getAttribute('data-ai-content-type');
@@ -17230,6 +17401,12 @@ const MAX_MAP_ZOOM = 4.2;
           showIntroPlayButton('视频未能加载，继续创建角色', true);
         });
       }
+
+      document.addEventListener('ended', event => {
+        const video = event.target instanceof Element ? event.target.closest('[data-letter-cinematic-video]') : null;
+        if (!video) return;
+        finishLetterCinematic(video.getAttribute('data-letter-cinematic-video'));
+      }, true);
 
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && gameState.activeModal?.type === 'portraitView') {
