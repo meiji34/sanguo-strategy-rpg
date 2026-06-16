@@ -5414,6 +5414,27 @@
       color: #5c4f3a;
     }
 
+    /* 音乐播放/暂停按钮 */
+    .music-toggle {
+      font-size: 1.25rem;
+      line-height: 1;
+      min-width: 38px;
+      background: rgba(90, 80, 60, 0.18);
+      border-color: rgba(205, 190, 135, 0.2);
+      transition: all 0.25s;
+      cursor: pointer;
+    }
+    .music-toggle:hover {
+      background: rgba(140, 120, 80, 0.35);
+      border-color: rgba(205, 190, 135, 0.5);
+    }
+    .music-toggle.playing {
+      background: rgba(120, 160, 100, 0.28);
+      border-color: rgba(150, 200, 120, 0.45);
+      color: #b8d8a0;
+      box-shadow: 0 0 8px rgba(140, 200, 100, 0.2);
+    }
+
     /* Tab 锁定样式 */
     [data-tab].tab-locked {
       opacity: 0.52;

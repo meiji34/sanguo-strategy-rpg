@@ -8,6 +8,7 @@ const MAX_MAP_ZOOM = 4.2;
     const BACKEND_SESSION_KEY = 'sanguo_backend_session_v1';
     const BACKEND_DEVICE_KEY = 'sanguo_backend_device_id_v1';
     const BACKEND_SAVE_SLOT = 'default';
+    let bgMusicPlaying = false; // 背景音乐播放状态
     const BACKEND_API_BASE_URL = window.SANGUO_API_BASE_URL || (window.location.protocol === 'file:' ? 'http://localhost:3001' : '');
     const GAME_SCHEMA_VERSION = 6;
     const MAP_EDITOR_STORAGE_KEY = 'sg-map-editor-data:v1';
@@ -5892,6 +5893,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function playLetterCinematicVideo(letterId) {
+      pauseBgm(); // 进入信件动画时暂停背景音乐
       const video = Array.from(document.querySelectorAll('[data-letter-cinematic-video]')).find(item => item.getAttribute('data-letter-cinematic-video') === letterId);
       if (!video) return;
       video.muted = false;
@@ -5908,6 +5910,7 @@ const MAX_MAP_ZOOM = 4.2;
       letter.meta.cinematicWatched = true;
       saveToStorage(false);
       hideLetterCinematicOverlay();
+      resumeBgm(); // 信件动画结束后恢复背景音乐
       if (gameState.activeModal?.type === 'letter' && gameState.activeModal.letterId === letterId) {
         renderModal();
       }
@@ -7888,6 +7891,64 @@ const MAX_MAP_ZOOM = 4.2;
       }
     }
 
+    // ===================== 背景音乐系统 =====================
+
+    function updateMusicButtonUI() {
+      const btn = document.getElementById('btnMusic');
+      if (!btn) return;
+      if (bgMusicPlaying) {
+        btn.textContent = '♪';
+        btn.title = '暂停音乐';
+        btn.classList.add('playing');
+      } else {
+        btn.textContent = '♫';
+        btn.title = '播放音乐';
+        btn.classList.remove('playing');
+      }
+    }
+
+    function getBgMusic() {
+      return document.getElementById('bgMusic');
+    }
+
+    function pauseBgm() {
+      const audio = getBgMusic();
+      if (!audio || audio.paused) return;
+      audio.pause();
+    }
+
+    function resumeBgm() {
+      if (!bgMusicPlaying) return;
+      const audio = getBgMusic();
+      if (!audio || !audio.paused) return;
+      audio.play().catch(() => {});
+    }
+
+    function toggleMusic() {
+      const audio = getBgMusic();
+      if (!audio) return;
+      if (bgMusicPlaying) {
+        audio.pause();
+        bgMusicPlaying = false;
+      } else {
+        audio.volume = 0.3;
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.then(() => {
+            bgMusicPlaying = true;
+            updateMusicButtonUI();
+          }).catch(() => {
+            bgMusicPlaying = false;
+            updateMusicButtonUI();
+          });
+          updateMusicButtonUI();
+          return;
+        }
+        bgMusicPlaying = true;
+      }
+      updateMusicButtonUI();
+    }
+
     // ===================== NPC势力战争系统 =====================
 
     function isCampaignVisibleOnMap(campaign) {
@@ -8671,6 +8732,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function closeActiveModal() {
       hideLetterCinematicOverlay();
+      resumeBgm(); // 关闭弹窗时恢复背景音乐（如信件动画正在播放）
       if (gameState.activeModal?.type === 'urgent') {
         const matter = gameState.urgentMatters.find(item => item.id === gameState.activeModal.matterId);
         if (matter) matter.deferred = true;
@@ -11802,7 +11864,7 @@ const MAX_MAP_ZOOM = 4.2;
         <div class="card">
           <h2>${source.name} → ${target.name}</h2>
           <p>路线：${route ? route.path.map(regionName).join(' → ') : '无可用路线'}。预计行军 ${Number.isFinite(eta) ? eta : '-'} 回合，抵达后至少围城 2 回合。</p>
-          <div class="form-row"><span>参战兵力</span><input data-draft-input="troops" type="number" min="100" max="${max}" step="100" value="${draft.troops}"></div>
+          <div class="form-row"><span>参战兵力</span><input data-draft-input="troops" type="text" inputmode="numeric" pattern="[0-9]*" value="${draft.troops}" data-draft-min="100" data-draft-max="${max}"></div>
           <div class="form-row" data-help="${battleRouteHelp(draft.route).help}"><span>出兵路线</span><select data-draft-field="route">
             ${selectOption('official', '正面官道', draft.route)}
             ${selectOption('river', '沿河推进', draft.route)}
@@ -11859,7 +11921,7 @@ const MAX_MAP_ZOOM = 4.2;
           <div class="form-row"><span>目标城</span><select data-transfer-field="target">
             ${targets.map(id => selectOption(id, gameState.cities[id].name, draft.target)).join('') || `<option value="${source.id}">无相邻友城</option>`}
           </select></div>
-          <div class="form-row"><span>兵力</span><input data-transfer-input="troops" type="number" min="100" max="${Math.max(0, realTroops(source.garrison) - 300 - pendingTroopsFrom(source.id))}" step="100" value="${draft.troops}"></div>
+          <div class="form-row"><span>兵力</span><input data-transfer-input="troops" type="text" inputmode="numeric" pattern="[0-9]*" value="${draft.troops}"></div>
           <div class="button-grid">
             <button data-queue-transfer="${source.id}" ${targets.length ? '' : 'disabled'}>加入调兵令</button>
           </div>
@@ -16729,6 +16791,7 @@ const MAX_MAP_ZOOM = 4.2;
     function playIntroVideo() {
       const video = document.getElementById('introVideo');
       if (!video) return;
+      pauseBgm(); // 进入动画时暂停背景音乐
       const playback = video.play();
       if (playback && typeof playback.catch === 'function') {
         playback
@@ -16826,6 +16889,7 @@ const MAX_MAP_ZOOM = 4.2;
 
     function finishIntro() {
       stopIntroVideo();
+      resumeBgm(); // 动画结束后恢复背景音乐
       gameState.storyFlags.introSeen = true;
       beginOpeningTransition('audience');
     }
@@ -17149,6 +17213,7 @@ const MAX_MAP_ZOOM = 4.2;
             if (loaded && isGuideActive()) processGuidePhase();
           }
           if (action === 'reset') resetGame();
+          if (action === 'music') { toggleMusic(); return; }
           return;
         }
         const map = event.target.closest('[data-map]');
@@ -17466,15 +17531,17 @@ const MAX_MAP_ZOOM = 4.2;
         }
         const draftInput = event.target.closest('[data-draft-input]');
         if (draftInput && gameState.draftBattle) {
-          gameState.draftBattle[draftInput.getAttribute('data-draft-input')] = Number(draftInput.value);
-          renderMap();
-          renderRightPanel();
+          const rawVal = draftInput.value.replace(/[^0-9]/g, '');
+          draftInput.value = rawVal;
+          gameState.draftBattle[draftInput.getAttribute('data-draft-input')] = Number(rawVal) || 100;
           return;
         }
         const transferInput = event.target.closest('[data-transfer-input]');
         if (transferInput && gameState.draftTransfer) {
-          gameState.draftTransfer[transferInput.getAttribute('data-transfer-input')] = Number(transferInput.value);
-          renderRightPanel();
+          const rawVal = transferInput.value.replace(/[^0-9]/g, '');
+          transferInput.value = rawVal;
+          gameState.draftTransfer[transferInput.getAttribute('data-transfer-input')] = Number(rawVal) || 100;
+          return;
         }
       });
 
@@ -17501,10 +17568,37 @@ const MAX_MAP_ZOOM = 4.2;
           renderRightPanel();
           return;
         }
+        // 参战兵力输入：校验并钳制到可调兵力范围
+        const draftInputC = event.target.closest('[data-draft-input]');
+        if (draftInputC && gameState.draftBattle) {
+          const source = gameState.cities[gameState.draftBattle.source];
+          const maxTroops = Math.max(100, realTroops(source.garrison) - 300 - pendingTroopsFrom(source.id));
+          let val = Number(draftInputC.value.replace(/[^0-9]/g, '')) || 100;
+          if (val < 100) val = 100;
+          if (val > maxTroops) val = maxTroops;
+          gameState.draftBattle.troops = val;
+          renderMap();
+          renderRightPanel();
+          return;
+        }
         const transferField = event.target.closest('[data-transfer-field]');
         if (transferField && gameState.draftTransfer) {
           gameState.draftTransfer[transferField.getAttribute('data-transfer-field')] = transferField.value;
           renderRightPanel();
+        }
+        // 调兵兵力输入：校验并钳制
+        const transferInputC = event.target.closest('[data-transfer-input]');
+        if (transferInputC && gameState.draftTransfer) {
+          const srcCity = gameState.cities[gameState.draftTransfer.source] || controlledCities()[0];
+          if (srcCity) {
+            const maxTroops = Math.max(100, realTroops(srcCity.garrison) - 300 - pendingTroopsFrom(srcCity.id));
+            let val = Number(transferInputC.value.replace(/[^0-9]/g, '')) || 100;
+            if (val < 100) val = 100;
+            if (val > maxTroops) val = maxTroops;
+            gameState.draftTransfer.troops = val;
+            renderRightPanel();
+            return;
+          }
         }
         const plannerField = event.target.closest('[data-military-planner-field]');
         if (plannerField) {
