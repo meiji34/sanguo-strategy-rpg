@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="frame-ancestors 'none';">
   <title>乱世执棋 - 三国战略 RPG 原型</title>
-    <link rel="stylesheet" href="./css/main.css?v=security-center-v2">
+    <link rel="stylesheet" href="./css/main.css?v=player-ui-v2">
     <style>
       .character-create.stage-arrival {
         --creation-bg-image: url("./assets/opening/opening_arrival_landscape.png");
@@ -323,7 +323,6 @@
         <button data-tab="inner" data-locked="1" data-help="亲信：整肃亲兵、安插府衙亲信、掌握粮道、联络郡兵、扩展情报网络。需要先查看刘表密令后解锁。（消耗 1 亲信点）">亲信</button>
         <button data-tab="characters" data-locked="1" data-help="人物：查看荆州及周边重要人物关系。跟随亲信 tab 一起解锁。（消耗 1 外交点）">人物</button>
         <button data-tab="appointments" data-locked="1" data-help="任命：集中管理城市官员、自动治理、军事整备和战役主将。需要人物系统解锁后开放。">任命</button>
-        <button data-tab="security" data-locked="0" data-help="天机司：查看玩家身份、AI Agent、云端存档和异常行为的安全态势。">天机司</button>
         <button data-tab="liubiao" data-locked="1" data-tooltip-position="right" data-help="刘表：你的名义主君与保护伞。完成一次城政和一次军事调整后解锁。（消耗 1 外交点）">刘表</button>
       </div>
       <div class="end-turn-box">
@@ -339,7 +338,7 @@
   <div class="letter-cinematic-root" id="letterCinematicRoot" aria-live="polite"></div>
 
   <script src="./js/data/mapData.js?v=special-schemes-v3"></script>
-  <script src="./js/game.js?v=public-support-rebalance-v2"></script>
+  <script src="./js/game.js?v=player-ui-v2"></script>
   <audio id="bgMusic" loop preload="auto" src="./影像素材/sanguo_opening_video_package_v10/背景音乐.mp3"></audio>
 
 </body>
