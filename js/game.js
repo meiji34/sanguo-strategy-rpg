@@ -2734,7 +2734,19 @@ const MAX_MAP_ZOOM = 4.2;
         city.publicSupport = preserveExisting ? Math.max(Number(city.publicSupport || 50), recalculated) : recalculated;
         city.publicSupportProfileApplied = true;
       });
-      state.publicSupportSystemVersion = 2;
+      state.publicSupportSystemVersion = 3;
+      return state;
+    }
+
+    function applyPublicSupportRebalanceProfiles(state) {
+      Object.values(state.cities || {}).forEach(city => {
+        if (isRemovedCityId(city.id)) return;
+        const ps = Number(city.publicSupport || 0);
+        const highPressure = Number(city.warDamage || 0) >= 35 || Number(city.grainRate || 0) >= 80 || Number(city.taxRate || 0) >= 82;
+        const floor = highPressure ? 42 : 60;
+        if (ps < floor) city.publicSupport = Math.min(100, Math.max(ps, floor + (stableHash(city.id) % 5) - 2));
+      });
+      state.publicSupportSystemVersion = 3;
       return state;
     }
 
@@ -12282,11 +12294,11 @@ const MAX_MAP_ZOOM = 4.2;
 
     function getPublicSupportEconomyModifier(city) {
       const ps = Number(city.publicSupport || 0);
-      if (ps >= 70) return { food: 1.08, tax: 1.05, recruit: 1.05, publicDelta: 0.4, orderDelta: 0.4, label: '民心稳固' };
+      if (ps >= 70) return { food: 1.08, tax: 1.05, recruit: 1.05, publicDelta: 0.2, orderDelta: 0.3, label: '民心稳固' };
       if (ps >= 50) return { food: 1, tax: 1, recruit: 1, publicDelta: 0, orderDelta: 0, label: '民心尚可' };
-      if (ps >= 30) return { food: 0.86, tax: 0.9, recruit: 0.82, publicDelta: -0.4, orderDelta: -0.8, label: '民心不安' };
-      if (ps >= 10) return { food: 0.66, tax: 0.72, recruit: 0.58, publicDelta: -1.2, orderDelta: -2.2, label: '民怨积压' };
-      if (ps > 0) return { food: 0.48, tax: 0.52, recruit: 0.35, publicDelta: -2.5, orderDelta: -4.2, label: '民变边缘' };
+      if (ps >= 30) return { food: 0.88, tax: 0.92, recruit: 0.84, publicDelta: 0, orderDelta: -0.5, label: '民心不安' };
+      if (ps >= 10) return { food: 0.7, tax: 0.76, recruit: 0.62, publicDelta: -0.35, orderDelta: -1.4, label: '民怨积压' };
+      if (ps > 0) return { food: 0.52, tax: 0.56, recruit: 0.4, publicDelta: -0.8, orderDelta: -2.5, label: '民变边缘' };
       return { food: 0.25, tax: 0.25, recruit: 0.12, publicDelta: -5, orderDelta: -8, label: '民心崩溃' };
     }
 
@@ -12333,6 +12345,26 @@ const MAX_MAP_ZOOM = 4.2;
         orderDelta: tax.order + grain.order + publicMod.orderDelta + (realTroops(city.garrison) > city.population * 0.035 ? -0.8 : 0),
         growth: tax.growth * grain.growth
       };
+    }
+
+    function publicSupportStabilityDelta(city, eco) {
+      const ps = Number(city.publicSupport || 0);
+      const order = Number(city.order || 0);
+      const warDamage = Number(city.warDamage || 0);
+      const foodStress = eco.foodProduction < eco.foodConsumption;
+      let recovery = 0;
+      if (ps < 60 && order >= 35) recovery += clamp((60 - ps) / 22, 0.25, 2.2);
+      if (ps < 45 && order >= 45 && !foodStress) recovery += 0.8;
+      if (ps > 76 && (city.taxRate > 55 || city.grainRate > 55)) recovery -= clamp((ps - 76) / 24, 0, 0.8);
+      if (warDamage > 25) recovery -= clamp(warDamage / 60, 0.3, 1.2);
+      return recovery;
+    }
+
+    function applyEconomicPublicSupportDelta(city, eco) {
+      const rawDelta = Number(eco.publicDelta || 0) + publicSupportStabilityDelta(city, eco);
+      const ps = Number(city.publicSupport || 0);
+      const minDelta = ps >= 60 ? -2.8 : ps >= 45 ? -1.6 : ps >= 25 ? -0.9 : -0.4;
+      city.publicSupport = clamp(ps + Math.max(rawDelta, minDelta), 0, 100);
     }
 
     function processNpcCityRecruitment(city, eco, reports) {
@@ -13490,11 +13522,12 @@ const MAX_MAP_ZOOM = 4.2;
 
     function triggerPublicSupportCrisis(city, reports, context = {}) {
       const ps = Number(city.publicSupport || 0);
+      const isPlayerCity = cityController(city.id) === 'player';
       let triggered = false;
       if (ps <= 0) {
         const roll = Math.random();
-        if (roll < 0.35) triggerCityUprising(city, reports, context);
-        else if (roll < 0.62) triggerIntelligenceLeak(city, reports, context);
+        if (isPlayerCity && roll < 0.35) triggerCityUprising(city, reports, context);
+        else if (roll < (isPlayerCity ? 0.62 : 0.5)) triggerIntelligenceLeak(city, reports, context);
         else triggerLocalDefectionRisk(city, reports, context);
         triggered = true;
       } else if (ps < 10) {
@@ -13523,7 +13556,11 @@ const MAX_MAP_ZOOM = 4.2;
         if (level === 'stable') return;
         const last = unrest.lastCrisisTurnByCity[city.id] ?? -99;
         if (gameState.turn - last < 3) return;
-        const chance = { unstable: 0.08, danger: 0.18, explosive: 0.34, collapse: 0.65 }[level];
+        const playerCity = cityController(city.id) === 'player';
+        const chanceTable = playerCity
+          ? { unstable: 0.08, danger: 0.18, explosive: 0.34, collapse: 0.65 }
+          : { unstable: 0.025, danger: 0.07, explosive: 0.14, collapse: 0.28 };
+        const chance = chanceTable[level];
         if (Math.random() < chance) {
           const triggered = triggerPublicSupportCrisis(city, reports, { reason: level });
           if (triggered) triggeredCount += 1;
@@ -13536,7 +13573,7 @@ const MAX_MAP_ZOOM = 4.2;
         const eco = calculateCityEconomy(city);
         city.food = Math.max(0, city.food + eco.netFood);
         city.money = Math.max(0, city.money + eco.taxIncome - eco.grainCost);
-        city.publicSupport = clamp(city.publicSupport + eco.publicDelta, 0, 100);
+        applyEconomicPublicSupportDelta(city, eco);
         city.order = clamp(city.order + eco.orderDelta, 0, 100);
         city.agriculture = clamp(city.agriculture + (eco.growth - 1) * 0.45 - city.warDamage * 0.006, 0, 100);
         city.commerce = clamp(city.commerce + (eco.commerceFactor - 1) * 0.55 - city.warDamage * 0.008, 0, 100);
@@ -13544,7 +13581,7 @@ const MAX_MAP_ZOOM = 4.2;
         processNpcCityRecruitment(city, eco, reports);
         if (city.food <= 0) {
           city.morale = clamp(city.morale - 7, 0, 100);
-          city.publicSupport = clamp(city.publicSupport - 4, 0, 100);
+          city.publicSupport = clamp(city.publicSupport - (Number(city.publicSupport || 0) < 35 ? 1.5 : 2.5), 0, 100);
           if (isControlledBy(city.id, 'player')) reports.push({ tone: 'bad', text: city.name + '缺粮，军心与民心同步下降。' });
         }
         if (city.publicSupport < 25 && city.order < 35 && Math.random() < 0.18) {
@@ -15537,6 +15574,9 @@ const MAX_MAP_ZOOM = 4.2;
       if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 2) {
         applyInitialPublicSupportProfiles(normalized, true);
       }
+      if (!normalized.publicSupportSystemVersion || normalized.publicSupportSystemVersion < 3) {
+        applyPublicSupportRebalanceProfiles(normalized);
+      }
       ensureCityLink(normalized.cities.guiyang, 'yuzhang', { road: true });
       ensureCityLink(normalized.cities.yuzhang, 'guiyang', { road: true });
       ensureRoutePair(ROUTES, 'changsha', 'guiyang');
@@ -15551,6 +15591,10 @@ const MAX_MAP_ZOOM = 4.2;
       const rows = Object.values(gameState.cities || {}).map(city => {
         const eco = calculateCityEconomy(city);
         const mod = getPublicSupportEconomyModifier(city);
+        const projectedDelta = Math.max(
+          Number(eco.publicDelta || 0) + publicSupportStabilityDelta(city, eco),
+          Number(city.publicSupport || 0) >= 60 ? -2.8 : Number(city.publicSupport || 0) >= 45 ? -1.6 : Number(city.publicSupport || 0) >= 25 ? -0.9 : -0.4
+        );
         const rebellion = unrest.rebellionCities?.[city.id] || null;
         const leaks = (unrest.intelligenceLeaks || []).filter(l => l.cityId === city.id);
         return {
@@ -15561,6 +15605,8 @@ const MAX_MAP_ZOOM = 4.2;
           order: Math.round(city.order || 0),
           label: publicSupportLabel(city),
           publicDelta: Number(eco.publicDelta?.toFixed(2) || 0),
+          stabilizedPublicDelta: Number(projectedDelta.toFixed(2)),
+          projectedPublicSupport: Number(clamp(Number(city.publicSupport || 0) + projectedDelta, 0, 100).toFixed(2)),
           orderDelta: Number(eco.orderDelta?.toFixed(2) || 0),
           foodMod: mod.food,
           taxMod: mod.tax,
@@ -15581,8 +15627,18 @@ const MAX_MAP_ZOOM = 4.2;
             : null
         };
       });
+      const activeRows = rows.filter(row => !isRemovedCityId(row.id));
+      const summary = {
+        cities: activeRows.length,
+        supportAtLeast60: activeRows.filter(row => row.publicSupport >= 60).length,
+        supportAtLeast60Pct: Number((activeRows.filter(row => row.publicSupport >= 60).length / Math.max(1, activeRows.length) * 100).toFixed(1)),
+        below45: activeRows.filter(row => row.publicSupport < 45).length,
+        projectedBelow45: activeRows.filter(row => row.projectedPublicSupport < 45).length,
+        collapseCities: activeRows.filter(row => row.publicSupport <= 0).length
+      };
+      console.table([summary]);
       console.table(rows);
-      return rows;
+      return { summary, rows };
     }
 
     function setCityPublicSupport(cityId, value) {
@@ -17600,6 +17656,21 @@ const MAX_MAP_ZOOM = 4.2;
           gameState.activeModal = null;
           render();
           toast('主将任命完成');
+          return;
+        }
+        const removeCityOfficialBtn = event.target.closest('[data-remove-city-official]');
+        if (removeCityOfficialBtn) {
+          const cityId = removeCityOfficialBtn.getAttribute('data-remove-city-official-city');
+          const slot = removeCityOfficialBtn.getAttribute('data-remove-city-official-slot');
+          const characterId = removeCityOfficialBtn.getAttribute('data-remove-city-official-character');
+          removeCityOfficial(cityId, slot, characterId);
+          toast('已撤任');
+          return;
+        }
+        const removeCommanderBtn = event.target.closest('[data-remove-campaign-commander]');
+        if (removeCommanderBtn) {
+          removeCampaignCommander(removeCommanderBtn.getAttribute('data-remove-campaign-commander'));
+          toast('主将已撤任');
           return;
         }
         const yuan = event.target.closest('[data-yuan-action]');
