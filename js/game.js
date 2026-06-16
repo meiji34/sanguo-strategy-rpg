@@ -8,7 +8,8 @@ const MAX_MAP_ZOOM = 4.2;
     const BACKEND_SESSION_KEY = 'sanguo_backend_session_v1';
     const BACKEND_DEVICE_KEY = 'sanguo_backend_device_id_v1';
     const BACKEND_SAVE_SLOT = 'default';
-    let bgMusicPlaying = false; // 背景音乐播放状态
+    let bgMusicPlaying = false; // Starts after entering a game flow.
+    let bgmPlaybackToken = 0;
     const BACKEND_API_BASE_URL = window.SANGUO_API_BASE_URL || (window.location.protocol === 'file:' ? 'http://localhost:3001' : '');
     const GAME_SCHEMA_VERSION = 6;
     const MAP_EDITOR_STORAGE_KEY = 'sg-map-editor-data:v1';
@@ -7912,6 +7913,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function pauseBgm() {
+      bgmPlaybackToken += 1;
       const audio = getBgMusic();
       if (!audio || audio.paused) return;
       audio.pause();
@@ -7919,32 +7921,94 @@ const MAX_MAP_ZOOM = 4.2;
 
     function resumeBgm() {
       if (!bgMusicPlaying) return;
+      if (isBgmLockedForAnimation()) return;
+      const token = ++bgmPlaybackToken;
       const audio = getBgMusic();
       if (!audio || !audio.paused) return;
-      audio.play().catch(() => {});
+      audio.play()
+        .then(() => {
+          if (token !== bgmPlaybackToken || isBgmLockedForAnimation()) audio.pause();
+        })
+        .catch(() => {});
+    }
+
+    function playBgm({ keepEnabledOnFailure = false } = {}) {
+      if (isBgmLockedForAnimation() || !canPlayBgmOnCurrentScreen()) {
+        pauseBgm();
+        return Promise.resolve(false);
+      }
+      const token = ++bgmPlaybackToken;
+      const audio = getBgMusic();
+      if (!audio) return Promise.resolve(false);
+      audio.volume = 0.3;
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        return playPromise
+          .then(() => {
+            if (token !== bgmPlaybackToken || isBgmLockedForAnimation() || !canPlayBgmOnCurrentScreen()) {
+              audio.pause();
+              return false;
+            }
+            bgMusicPlaying = true;
+            updateMusicButtonUI();
+            return true;
+          })
+          .catch(() => {
+            if (!keepEnabledOnFailure) bgMusicPlaying = false;
+            updateMusicButtonUI();
+            return false;
+          });
+      }
+      bgMusicPlaying = true;
+      updateMusicButtonUI();
+      return Promise.resolve(true);
+    }
+
+    function startDefaultBgm() {
+      bgMusicPlaying = true;
+      updateMusicButtonUI();
+      if (canPlayBgmOnCurrentScreen()) playBgm({ keepEnabledOnFailure: true });
+      document.addEventListener('click', unlockDefaultBgmOnInteraction, true);
+      document.addEventListener('keydown', unlockDefaultBgmOnInteraction, true);
+    }
+
+    function canPlayBgmOnCurrentScreen() {
+      return launchScreen === 'game' || launchScreen === 'character';
+    }
+
+    function isBgmLockedForAnimation() {
+      return ['intro', 'transition', 'commissioning', 'handoff'].includes(launchScreen)
+        || Boolean(openingTransitionTimer)
+        || Boolean(officeHandoffTimer)
+        || Boolean(document.querySelector('[data-letter-cinematic-video]'));
+    }
+
+    function unlockDefaultBgmOnInteraction(event) {
+      if (event?.target instanceof Element && event.target.closest('#btnMusic')) return;
+      if (!canPlayBgmOnCurrentScreen()) return;
+      const audio = getBgMusic();
+      if (!bgMusicPlaying || !audio || !audio.paused) return;
+      playBgm({ keepEnabledOnFailure: true }).then(started => {
+        if (!started) return;
+        document.removeEventListener('click', unlockDefaultBgmOnInteraction, true);
+        document.removeEventListener('keydown', unlockDefaultBgmOnInteraction, true);
+      });
+    }
+
+    function enforceBgmAnimationLock() {
+      if (!isBgmLockedForAnimation()) return;
+      pauseBgm();
     }
 
     function toggleMusic() {
       const audio = getBgMusic();
       if (!audio) return;
-      if (bgMusicPlaying) {
+      if (bgMusicPlaying && !audio.paused) {
         audio.pause();
         bgMusicPlaying = false;
       } else {
-        audio.volume = 0.3;
-        const playPromise = audio.play();
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.then(() => {
-            bgMusicPlaying = true;
-            updateMusicButtonUI();
-          }).catch(() => {
-            bgMusicPlaying = false;
-            updateMusicButtonUI();
-          });
-          updateMusicButtonUI();
-          return;
-        }
-        bgMusicPlaying = true;
+        playBgm();
+        return;
       }
       updateMusicButtonUI();
     }
@@ -8731,6 +8795,10 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function closeActiveModal() {
+      if (isForcedGuideDialogueThinking()) {
+        toast('请等待对方回应。');
+        return;
+      }
       hideLetterCinematicOverlay();
       resumeBgm(); // 关闭弹窗时恢复背景音乐（如信件动画正在播放）
       if (gameState.activeModal?.type === 'urgent') {
@@ -8767,6 +8835,13 @@ const MAX_MAP_ZOOM = 4.2;
       saveToStorage(false);
       openNextCriticalModal();
       render();
+    }
+
+    function isForcedGuideDialogueThinking() {
+      return isGuideActive()
+        && gameState.activeModal?.type === 'dialogue'
+        && gameState.activeModal.loading === true
+        && Boolean(gameState.tutorial?.forceAction);
     }
 
     function canUseAiContentApi() {
@@ -8995,8 +9070,9 @@ const MAX_MAP_ZOOM = 4.2;
       }
       if (modal.type === 'dialogue') {
         const npc = gameState.characterRoster[modal.characterId];
+        const closeButton = isForcedGuideDialogueThinking() ? '' : '<button class="ghost-btn" data-close-modal="1">关闭</button>';
         root.innerHTML = `<div class="game-modal">
-          <div class="modal-head"><h2>${npc.name}｜${CONVERSATION_ACTIONS[modal.conversationType]?.label || '会谈'}</h2><button class="ghost-btn" data-close-modal="1">关闭</button></div>
+          <div class="modal-head"><h2>${npc.name}｜${CONVERSATION_ACTIONS[modal.conversationType]?.label || '会谈'}</h2>${closeButton}</div>
           <div class="dialogue-layout"><div class="dialogue-portrait">${escapeHtml(npc.portraitPlaceholder)}</div>
           <div><div class="dialogue-text">${modal.loading ? '对方沉思片刻……' : escapeHtml(modal.dialogue.npcText)}</div>
           ${modal.loading ? '' : `<div class="tag-row"><span class="tag">${modal.dialogue.emotionalShift}</span><span class="tag">信任 ${npc.trustPlayer}</span><span class="tag">怀疑 ${npc.suspicionOfPlayer}</span></div>`}</div></div>
@@ -9921,6 +9997,7 @@ const MAX_MAP_ZOOM = 4.2;
       startAutosaveTimer();
       updateAutosaveDisplay();
       render();
+      startDefaultBgm();
       if (isGuideActive()) processGuidePhase();
       return true;
     }
@@ -9981,6 +10058,7 @@ const MAX_MAP_ZOOM = 4.2;
       startAutosaveTimer();
       updateAutosaveDisplay();
       render();
+      startDefaultBgm();
       const showIntroGuide = () => {
         if (launchScreen !== 'game' || !gameState.storyFlags.characterCreated) return;
         initTutorialGuide();
@@ -16846,6 +16924,7 @@ const MAX_MAP_ZOOM = 4.2;
     function beginOpeningTransition(mode = 'audience') {
       stopOpeningTransition();
       stopOfficeHandoffTransition();
+      pauseBgm();
       openingTransitionMode = mode;
       launchScreen = mode === 'departure' ? 'commissioning' : 'transition';
       const kicker = document.getElementById('transitionKicker');
@@ -16927,6 +17006,7 @@ const MAX_MAP_ZOOM = 4.2;
           if (targetStep === 'identity' && !characterDraft.name) characterDraft.name = randomChineseName();
           characterCreationStep = targetStep;
           updateCharacterCreation();
+          if (targetStep === 'identity') startDefaultBgm();
           return;
         }
         const creationRetreat = event.target.closest('[data-creation-retreat]');
@@ -16939,6 +17019,7 @@ const MAX_MAP_ZOOM = 4.2;
         if (identity) {
           characterDraft.identity = identity.getAttribute('data-identity');
           updateCharacterCreation();
+          startDefaultBgm();
           return;
         }
         if (event.target.closest('[data-random-name]')) {
@@ -16957,6 +17038,7 @@ const MAX_MAP_ZOOM = 4.2;
           return;
         }
         if (event.target.closest('[data-complete-transition]')) {
+          if (openingTransitionMode === 'departure' && openingTransitionTimer) return;
           completeOpeningTransition();
           return;
         }
@@ -17710,6 +17792,9 @@ const MAX_MAP_ZOOM = 4.2;
 
     applyEmbeddedMapImage();
     bindEvents();
+    document.addEventListener('pointerdown', enforceBgmAnimationLock, true);
+    document.addEventListener('click', enforceBgmAnimationLock, true);
+    document.addEventListener('keydown', enforceBgmAnimationLock, true);
     // 长悬停 tooltip 事件
     document.addEventListener('mouseover', event => { handleHelpHover(event); });
     document.addEventListener('mouseleave', event => {

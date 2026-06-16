@@ -2578,6 +2578,7 @@
       bottom: 22px;
       z-index: 2;
       opacity: 0;
+      pointer-events: none;
       border-color: rgba(218, 216, 198, 0.24);
       background: rgba(10, 14, 12, 0.56);
       color: rgba(232, 228, 210, 0.76);

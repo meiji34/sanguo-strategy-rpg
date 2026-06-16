@@ -375,6 +375,7 @@ function contentTypeFor(filePath) {
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml',
     '.webp': 'image/webp',
+    '.mp3': 'audio/mpeg',
     '.mp4': 'video/mp4',
     '.ttf': 'font/ttf',
     '.txt': 'text/plain; charset=utf-8',
