@@ -158,7 +158,18 @@ const MAX_MAP_ZOOM = 4.2;
       huangChengYan: './assets/characters/huang-cheng-yan.jpg',
       pangDeGong: './assets/characters/pang-de-gong.jpg',
       xuShao: './assets/characters/xu-shao.jpg',
-      qiaoXuan: './assets/characters/qiao-xuan.jpg'
+      qiaoXuan: './assets/characters/qiao-xuan.jpg',
+      yuanShao: './assets/characters/yuan-shao.png',
+      juShou: './assets/characters/ju-shou.png',
+      tianFeng: './assets/characters/tian-feng.png',
+      xuYou: './assets/characters/xu-you.png',
+      shenPei: './assets/characters/shen-pei.png',
+      guoTu: './assets/characters/guo-tu.png',
+      fengJi: './assets/characters/feng-ji.png',
+      yanLiang: './assets/characters/yan-liang.png',
+      wenChou: './assets/characters/wen-chou.png',
+      zhangHe: './assets/characters/zhang-he.png',
+      gaoLan: './assets/characters/gao-lan.png'
     };
 
     const PLAYER_IDENTITIES = {
