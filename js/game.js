@@ -1627,7 +1627,7 @@ const MAX_MAP_ZOOM = 4.2;
       caoCao: characterBlueprint('caoCao', '曹操', { faction: 'cao', location: 'xuchang', role: '兖豫诸侯', type: '谋士', status: 'hidden', rarity: '传奇', summary: '中原强势诸侯。' }),
       sunQuan: characterBlueprint('sunQuan', '孙权', { faction: 'sun', location: 'jianye', role: '江东之主', type: '政务', status: 'hidden', rarity: '传奇', summary: '江东后续的重要势力。' }),
       liuBei: characterBlueprint('liuBei', '刘备', { faction: 'liu', location: 'xiaopei', role: '汉室宗亲', type: '武将', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' }),
-      yuanShao: characterBlueprint('yuanShao', '袁绍', { faction: 'yuan', location: 'yecheng', role: '河北诸侯', type: '政务', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' })
+      yuanShao: characterBlueprint('yuanShao', '袁绍', { faction: 'yuan', location: 'yecheng', role: '河北之主', title: '大将军', type: '政务', status: 'hidden', rarity: '传奇', portraitUrl: './assets/characters/yuan-shao.png', summary: '四世三公，雄踞河北，兵多将广却优柔寡断，官渡一战后走向覆灭。', stats: { command: 72, strategy: 68, politics: 82, charm: 84, loyalty: 58, ambition: 86 }, personality: { brave: 48, cautious: 38, greedy: 52, loyal: 52, proud: 88, ruthless: 44, idealistic: 32 }, values: ['门第', '声望', '权势'], boundaries: ['不受屈辱', '不容人轻视'], longTermGoal: '以袁氏门第威望统一北方', privateAgenda: '证明四世三公之后才是天下正统', speechStyle: { register: '傲慢', rhythm: '迟缓', habit: '好谋无断', metaphor: '旗与势' }, specialSchemes: ['联络豪强', '讨伐檄文'], passiveBonuses: ['麾下武将初始忠诚度较高'], weaknesses: ['优柔寡断', '宠信佞臣', '不纳忠谏'], recruitmentDifficulty: 95, defectionTriggers: [] })
     };
 
     const HISTORICAL_CHARACTER_PACKS = {
