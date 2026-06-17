@@ -81,7 +81,7 @@ PORT=3001
 HOST=127.0.0.1
 DATABASE_PATH=./data/sanguo.sqlite
 SESSION_SECRET=change-me
-CORS_ORIGIN=*
+CORS_ORIGIN=https://game.yddsfj.uk
 
 DEEPSEEK_API_KEY=your-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com

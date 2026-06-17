@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
+const defaultCorsOrigin = 'https://game.yddsfj.uk';
 
 loadEnv(path.join(rootDir, '.env'));
 
@@ -15,14 +16,16 @@ const config = {
   port: Number(process.env.PORT || 3001),
   databasePath: path.resolve(rootDir, process.env.DATABASE_PATH || './data/sanguo.sqlite'),
   sessionSecret: process.env.SESSION_SECRET || 'dev-session-secret',
-  corsOrigin: process.env.CORS_ORIGIN || '*',
+  corsOrigin: process.env.CORS_ORIGIN || defaultCorsOrigin,
+  allowAnyCors: /^(1|true|yes)$/i.test(process.env.ALLOW_ANY_CORS || ''),
   deepseekBaseUrl: (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, ''),
   deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
   deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
   deepseekThinking: process.env.DEEPSEEK_THINKING || 'disabled',
   deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 12000),
   maxBodyBytes: Number(process.env.MAX_BODY_BYTES || 12 * 1024 * 1024),
-  authRateLimit: Number(process.env.AUTH_RATE_LIMIT || 10),
+  authRateLimit: Number(process.env.AUTH_RATE_LIMIT || 5),
+  accountAuthRateLimit: Number(process.env.ACCOUNT_AUTH_RATE_LIMIT || 8),
   aiRateLimit: Number(process.env.AI_RATE_LIMIT || 30),
   saveRateLimit: Number(process.env.SAVE_RATE_LIMIT || 40)
 };
@@ -154,7 +157,7 @@ const rateBuckets = new Map();
 
 const server = createServer(async (request, response) => {
   try {
-    setCorsHeaders(response);
+    setCorsHeaders(request, response);
     setSecurityHeaders(response);
     if (request.method === 'OPTIONS') {
       response.writeHead(204);
@@ -177,9 +180,7 @@ const server = createServer(async (request, response) => {
     if (route === '/api/health' && request.method === 'GET') {
       sendJson(response, 200, {
         ok: true,
-        database: path.relative(rootDir, config.databasePath),
-        deepseekConfigured: Boolean(config.deepseekApiKey),
-        model: config.deepseekModel
+        deepseekConfigured: Boolean(config.deepseekApiKey)
       });
       return;
     }
@@ -187,15 +188,11 @@ const server = createServer(async (request, response) => {
     if (route === '/api/auth/guest' && request.method === 'POST') {
       if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
-      const deviceId = cleanTokenPart(body.deviceId || randomBytes(12).toString('hex'));
-      const username = `guest:${deviceId}`;
+      const username = createGuestUsername();
       const displayName = safeString(body.displayName, 40) || 'Guest';
-      let user = statements.findUserByUsername.get(username);
-      if (!user) {
-        const now = nowIso();
-        statements.createUser.run(username, displayName, null, 1, now, now);
-        user = statements.findUserByUsername.get(username);
-      }
+      const now = nowIso();
+      statements.createUser.run(username, displayName, null, 1, now, now);
+      const user = statements.findUserByUsername.get(username);
       sendJson(response, 200, createSessionPayload(user));
       return;
     }
@@ -204,6 +201,7 @@ const server = createServer(async (request, response) => {
       if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
       const username = cleanUsername(body.username);
+      if (username && !checkRateLimit(request, response, `auth-account:${username}`, config.accountAuthRateLimit, 15 * 60_000, 'auth_account_rate_limit', route)) return;
       const password = String(body.password || '');
       const displayName = safeString(body.displayName || username, 40);
       if (!username || password.length < 6) {
@@ -225,6 +223,7 @@ const server = createServer(async (request, response) => {
       if (!checkRateLimit(request, response, `auth:${clientIpHash(request)}`, config.authRateLimit, 60_000, 'auth_rate_limit', route)) return;
       const body = await readJsonBody(request);
       const username = cleanUsername(body.username);
+      if (username && !checkRateLimit(request, response, `auth-account:${username}`, config.accountAuthRateLimit, 15 * 60_000, 'auth_account_rate_limit', route)) return;
       const password = String(body.password || '');
       const user = username ? statements.findUserByUsername.get(username) : null;
       if (!user || !user.password_hash || !verifyPassword(password, user.password_hash)) {
@@ -405,7 +404,11 @@ const server = createServer(async (request, response) => {
     sendJson(response, 404, { error: 'NOT_FOUND' });
   } catch (error) {
     console.error(error);
-    sendJson(response, 500, { error: 'INTERNAL_ERROR', message: error.message });
+    const status = Number(error.statusCode || 500);
+    sendJson(response, status, {
+      error: status === 400 ? 'INVALID_JSON' : status === 413 ? 'REQUEST_BODY_TOO_LARGE' : 'INTERNAL_ERROR',
+      message: status >= 500 ? 'Internal server error' : error.message
+    });
   }
 });
 
@@ -432,10 +435,24 @@ function normalizeRoute(pathname) {
   return decoded.length > 1 ? decoded.replace(/\/+$/, '') : decoded;
 }
 
-function setCorsHeaders(response) {
-  response.setHeader('Access-Control-Allow-Origin', config.corsOrigin);
+function setCorsHeaders(request, response) {
+  const origin = allowedCorsOrigin(request);
+  response.setHeader('Vary', 'Origin');
+  response.setHeader('Access-Control-Allow-Origin', origin);
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+function allowedCorsOrigin(request) {
+  const configured = String(config.corsOrigin || '').trim();
+  if (configured === '*' && config.allowAnyCors) return '*';
+  const origins = configured
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(origin => origin && origin !== '*');
+  const allowed = origins.length ? origins : [defaultCorsOrigin];
+  const requestOrigin = String(request.headers.origin || '').trim();
+  return requestOrigin && allowed.includes(requestOrigin) ? requestOrigin : allowed[0];
 }
 
 function setSecurityHeaders(response) {
@@ -752,13 +769,23 @@ async function readJsonBody(request) {
   for await (const chunk of request) {
     size += chunk.length;
     if (size > config.maxBodyBytes) {
-      throw new Error('Request body too large');
+      throwHttpError(413, 'Request body too large');
     }
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
   const raw = Buffer.concat(chunks).toString('utf8');
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throwHttpError(400, 'Malformed JSON request body');
+  }
+}
+
+function throwHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
 }
 
 function nowIso() {
@@ -782,12 +809,16 @@ function cleanUsername(value) {
   return username;
 }
 
-function cleanTokenPart(value) {
-  return String(value || '').replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 80);
-}
-
 function cleanSlot(value) {
   return String(value || '').replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 40);
+}
+
+function createGuestUsername() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const username = `guest:${randomBytes(18).toString('base64url')}`;
+    if (!statements.findUserByUsername.get(username)) return username;
+  }
+  throw new Error('Unable to allocate guest identity');
 }
 
 function safeString(value, maxLength) {
@@ -815,7 +846,7 @@ function verifyPassword(password, encoded) {
 
 function createSessionPayload(user) {
   statements.deleteExpiredSessions.run(nowIso());
-  const token = `${randomBytes(24).toString('base64url')}.${user.id}`;
+  const token = randomBytes(32).toString('base64url');
   const tokenHash = sha256(token);
   const createdAt = nowIso();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();

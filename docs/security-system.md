@@ -145,7 +145,7 @@ GET /api/security/overview
 ```bash
 curl -s -X POST http://127.0.0.1:3001/api/auth/guest \
   -H "Content-Type: application/json" \
-  -d "{\"deviceId\":\"security-demo\",\"displayName\":\"Tester\"}"
+  -d "{\"displayName\":\"Tester\"}"
 ```
 
 把返回的 `token` 保存为变量：

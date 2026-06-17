@@ -6,7 +6,6 @@ const MAX_MAP_ZOOM = 4.2;
     const SAVE_KEY_BACKUP = 'luanshi_zhiqi_v4_backup';
     const AUTH_SESSION_KEY = 'luanshi_zhiqi_auth_session_v1';
     const BACKEND_SESSION_KEY = 'sanguo_backend_session_v1';
-    const BACKEND_DEVICE_KEY = 'sanguo_backend_device_id_v1';
     const BACKEND_SAVE_SLOT = 'default';
     let bgMusicPlaying = false; // Starts after entering a game flow.
     let bgmPlaybackToken = 0;
@@ -9852,7 +9851,6 @@ const MAX_MAP_ZOOM = 4.2;
         const result = await backendFetch('/api/auth/guest', {
           method: 'POST',
           body: JSON.stringify({
-            deviceId: getBackendDeviceId(),
             displayName: '游客'
           })
         }, { skipAuth: true });
@@ -14399,17 +14397,6 @@ const MAX_MAP_ZOOM = 4.2;
       localStorage.setItem(BACKEND_SESSION_KEY, JSON.stringify(session));
     }
 
-    function getBackendDeviceId() {
-      let id = localStorage.getItem(BACKEND_DEVICE_KEY);
-      if (!id) {
-        id = window.crypto?.randomUUID
-          ? window.crypto.randomUUID()
-          : String(Date.now()) + Math.random().toString(16).slice(2);
-        localStorage.setItem(BACKEND_DEVICE_KEY, id);
-      }
-      return id;
-    }
-
     async function backendFetch(path, options = {}, meta = {}) {
       const headers = Object.assign({}, options.headers || {});
       if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
@@ -14446,7 +14433,6 @@ const MAX_MAP_ZOOM = 4.2;
       const payload = await backendFetch('/api/auth/guest', {
         method: 'POST',
         body: JSON.stringify({
-          deviceId: getBackendDeviceId(),
           displayName: gameState?.player?.name || authUser?.displayName || 'Player'
         })
       }, { skipAuth: true });
