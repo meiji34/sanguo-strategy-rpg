@@ -3096,11 +3096,13 @@ const MAX_MAP_ZOOM = 4.2;
       const initialRoster = createCharacterRoster(seed);
       const mergedRoster = { ...initialRoster };
       Object.entries(savedRoster || {}).forEach(([id, record]) => {
-        mergedRoster[id] = {
-          ...(initialRoster[id] || {}),
-          ...(record || {}),
-          id
-        };
+        const blueprint = initialRoster[id] || {};
+        const merged = { ...blueprint, ...(record || {}), id };
+        // Prefer blueprint's portraitUrl if the saved value is empty
+        if (!merged.portraitUrl && blueprint.portraitUrl) {
+          merged.portraitUrl = blueprint.portraitUrl;
+        }
+        mergedRoster[id] = merged;
       });
       return mergedRoster;
     }
