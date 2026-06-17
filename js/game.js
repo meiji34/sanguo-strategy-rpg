@@ -8953,6 +8953,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function openNextCriticalModal() {
+      if (checkDefeatEnding()) return;
       if (gameState.activeModal) return renderModal();
       const urgent = gameState.urgentMatters.find(item => !item.resolved && !item.deferred);
       if (urgent) gameState.activeModal = { type: 'urgent', matterId: urgent.id };
@@ -9638,7 +9639,7 @@ const MAX_MAP_ZOOM = 4.2;
       if (options.select !== false) gameState.selectedCityId = regionId;
       syncMapDataFromGameState();
       if (oldController !== controller) playCityCapturedEffect(regionId, oldController, controller);
-      checkDefeatEnding();
+      const defeatedAfterCapture = checkDefeatEnding();
       if (reports) {
         const nominalText = region.nominalOwner === 'player'
           ? '归属势力：' + gameState.player.name
@@ -9648,7 +9649,9 @@ const MAX_MAP_ZOOM = 4.2;
           text: region.name + '已由' + (FACTIONS[controller]?.name || controller) + '实际控制。' + (controller === 'player' ? nominalText : '')
         });
       }
-      if (arguments.length <= 2 || options.render === true) {
+      if (defeatedAfterCapture && options.render !== false) {
+        render();
+      } else if (arguments.length <= 2 || options.render === true) {
         render();
         addNews(controller === 'player' ? 'good' : 'warn', `${region.name} 已由 ${FACTIONS[controller]?.name || controller} 实际控制`);
         toast(region.name + '控制权已更新');
@@ -9703,6 +9706,10 @@ const MAX_MAP_ZOOM = 4.2;
       return Boolean(gameState.storyFlags?.defeatEnding?.active);
     }
 
+    function canTriggerDefeatEnding() {
+      return launchScreen === 'game' || Boolean(gameState.storyFlags?.characterCreated);
+    }
+
     function renderDefeatEnding() {
       const root = document.getElementById('defeatEndingRoot');
       if (!root) return;
@@ -9710,7 +9717,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function triggerDefeatEnding(reason = 'allCitiesLost') {
-      if (!gameState.storyFlags?.characterCreated) return false;
+      if (!canTriggerDefeatEnding()) return false;
       if (isDefeatEndingActive()) {
         renderDefeatEnding();
         return true;
@@ -9732,7 +9739,7 @@ const MAX_MAP_ZOOM = 4.2;
     }
 
     function checkDefeatEnding() {
-      if (!gameState.storyFlags?.characterCreated || isDefeatEndingActive()) {
+      if (!canTriggerDefeatEnding() || isDefeatEndingActive()) {
         renderDefeatEnding();
         return isDefeatEndingActive();
       }
@@ -12968,6 +12975,16 @@ const MAX_MAP_ZOOM = 4.2;
       unlockTabsByTutorialProgress();
       enforceBenevolentDefensiveCampaignRules(reports);
       advanceCampaigns(reports);
+      if (checkDefeatEnding()) {
+        reports.forEach(item => {
+          addNews(item.tone, item.text);
+          gameState.turnEvents.push({ id: uid(), turn: gameState.turn, level: item.level || 'important', tone: item.tone, text: item.text });
+        });
+        saveToStorage(false);
+        render();
+        toast('城池尽失，败局已定');
+        return;
+      }
       processEconomy(reports);
       processPublicSupportCrises(reports);
       processStoryPlague(reports);
