@@ -1,4 +1,4 @@
-const MAP_SIZE = { width: 1448, height: 1086 };
+﻿const MAP_SIZE = { width: 1448, height: 1086 };
 const MIN_MAP_ZOOM = 1;
 const MAX_MAP_ZOOM = 4.2;
     const TURN_DAYS = 5;
@@ -158,7 +158,18 @@ const MAX_MAP_ZOOM = 4.2;
       huangChengYan: './assets/characters/huang-cheng-yan.jpg',
       pangDeGong: './assets/characters/pang-de-gong.jpg',
       xuShao: './assets/characters/xu-shao.jpg',
-      qiaoXuan: './assets/characters/qiao-xuan.jpg'
+      qiaoXuan: './assets/characters/qiao-xuan.jpg',
+      yuanShao: './assets/characters/yuan-shao.png',
+      juShou: './assets/characters/ju-shou.png',
+      tianFeng: './assets/characters/tian-feng.png',
+      xuYou: './assets/characters/xu-you.png',
+      shenPei: './assets/characters/shen-pei.png',
+      guoTu: './assets/characters/guo-tu.png',
+      fengJi: './assets/characters/feng-ji.png',
+      yanLiang: './assets/characters/yan-liang.png',
+      wenChou: './assets/characters/wen-chou.png',
+      zhangHe: './assets/characters/zhang-he.png',
+      gaoLan: './assets/characters/gao-lan.png'
     };
 
     const PLAYER_IDENTITIES = {
@@ -1616,7 +1627,7 @@ const MAX_MAP_ZOOM = 4.2;
       caoCao: characterBlueprint('caoCao', '曹操', { faction: 'cao', location: 'xuchang', role: '兖豫诸侯', type: '谋士', status: 'hidden', rarity: '传奇', summary: '中原强势诸侯。' }),
       sunQuan: characterBlueprint('sunQuan', '孙权', { faction: 'sun', location: 'jianye', role: '江东之主', type: '政务', status: 'hidden', rarity: '传奇', summary: '江东后续的重要势力。' }),
       liuBei: characterBlueprint('liuBei', '刘备', { faction: 'liu', location: 'xiaopei', role: '汉室宗亲', type: '武将', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' }),
-      yuanShao: characterBlueprint('yuanShao', '袁绍', { faction: 'yuan', location: 'yecheng', role: '河北诸侯', type: '政务', status: 'hidden', rarity: '传奇', summary: '暂未进入你的交涉圈。' })
+      yuanShao: characterBlueprint('yuanShao', '袁绍', { faction: 'yuan', location: 'yecheng', role: '河北之主', title: '大将军', type: '政务', status: 'hidden', rarity: '传奇', portraitUrl: './assets/characters/yuan-shao.png', summary: '四世三公，雄踞河北，兵多将广却优柔寡断，官渡一战后走向覆灭。', stats: { command: 72, strategy: 68, politics: 82, charm: 84, loyalty: 58, ambition: 86 }, personality: { brave: 48, cautious: 38, greedy: 52, loyal: 52, proud: 88, ruthless: 44, idealistic: 32 }, values: ['门第', '声望', '权势'], boundaries: ['不受屈辱', '不容人轻视'], longTermGoal: '以袁氏门第威望统一北方', privateAgenda: '证明四世三公之后才是天下正统', speechStyle: { register: '傲慢', rhythm: '迟缓', habit: '好谋无断', metaphor: '旗与势' }, specialSchemes: ['联络豪强', '讨伐檄文'], passiveBonuses: ['麾下武将初始忠诚度较高'], weaknesses: ['优柔寡断', '宠信佞臣', '不纳忠谏'], recruitmentDifficulty: 95, defectionTriggers: [] })
     };
 
     const HISTORICAL_CHARACTER_PACKS = {
@@ -1654,16 +1665,16 @@ const MAX_MAP_ZOOM = 4.2;
         { id: 'chenQun', name: '陈群', faction: 'cao', originFaction: 'cao', possibleFactions: ['cao'], location: 'xuchang', role: '制度之臣', title: '司空', type: '政务', status: 'hidden', rarity: '良才', summary: '陈群创九品中正制，为曹魏定选官之法。', stats: { command: 30, strategy: 72, politics: 90, charm: 68, loyalty: 78, ambition: 42 }, personality: { brave: 24, cautious: 80, greedy: 30, loyal: 76, proud: 56, ruthless: 34, idealistic: 38 }, values: ['制度', '秩序', '门第'], boundaries: ['不破坏等级秩序', '不逾越本分'], longTermGoal: '建立完善的选官制度', privateAgenda: '为士族争取制度性保障', speechStyle: { register: '端方', rhythm: '条理', habit: '引制度论事', metaphor: '尺与度' }, specialSchemes: ['九品中正制', '制礼作乐'], passiveBonuses: ['政务效率提高'], weaknesses: ['过于维护士族利益', '缺乏军事才能'], recruitmentDifficulty: 50, defectionTriggers: [] }
       ],
       yuan: [
-        { id: 'juShou', name: '沮授', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '首席谋臣', title: '监军', type: '谋士', status: 'hidden', rarity: '名将', summary: '沮授智谋出众，屡谏袁绍不听，终被俘殉主。', stats: { command: 52, strategy: 90, politics: 82, charm: 58, loyalty: 88, ambition: 28 }, personality: { brave: 50, cautious: 76, greedy: 12, loyal: 90, proud: 46, ruthless: 30, idealistic: 64 }, values: ['忠义', '大局', '谋略'], boundaries: ['不背旧主', '不随波逐流'], longTermGoal: '辅佐袁绍统一河北', privateAgenda: '纠正袁绍的决策失误', speechStyle: { register: '恳切', rhythm: '长句', habit: '反复劝谏', metaphor: '舟与舵' }, specialSchemes: ['缓进耗曹'], passiveBonuses: ['战略规划效果提高'], weaknesses: ['谏言不被采纳', '过于执着忠义'], recruitmentDifficulty: 72, defectionTriggers: [] },
-        { id: 'tianFeng', name: '田丰', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '直谏之臣', title: '别驾', type: '谋士', status: 'hidden', rarity: '名将', summary: '田丰刚直敢谏，因反对南征被下狱，后被袁绍所杀。', stats: { command: 46, strategy: 88, politics: 76, charm: 40, loyalty: 84, ambition: 24 }, personality: { brave: 58, cautious: 72, greedy: 8, loyal: 86, proud: 62, ruthless: 22, idealistic: 72 }, values: ['直谏', '大义', '正确决策'], boundaries: ['不阿谀奉承', '不畏惧获罪'], longTermGoal: '阻止袁绍犯致命错误', privateAgenda: '以死谏证明忠心', speechStyle: { register: '激烈', rhythm: '紧迫', habit: '言辞尖锐不留情', metaphor: '霜与剑' }, specialSchemes: ['急攻许都'], passiveBonuses: ['谏言被采纳时效果加倍'], weaknesses: ['过于刚直', '不谙人情世故'], recruitmentDifficulty: 68, defectionTriggers: [] },
-        { id: 'xuYou', name: '许攸', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '贪功谋士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '许攸因家属犯罪而投曹操，献计火烧乌巢。', stats: { command: 38, strategy: 78, politics: 56, charm: 48, loyalty: 36, ambition: 62 }, personality: { brave: 34, cautious: 32, greedy: 72, loyal: 32, proud: 76, ruthless: 48, idealistic: 18 }, values: ['功名', '利益', '报复'], boundaries: ['不受屈辱', '不放过获利机会'], longTermGoal: '以谋略获取最大功名', privateAgenda: '谁给我更多就投谁', speechStyle: { register: '刻薄', rhythm: '急切', habit: '居功自傲', metaphor: '火与粮' }, specialSchemes: ['火烧乌巢'], passiveBonuses: ['截获敌方粮草时效果提高'], weaknesses: ['贪功傲慢', '忠诚度极低'], recruitmentDifficulty: 40, defectionTriggers: ['家属犯罪被抓', '不被重用', '受到屈辱'] },
-        { id: 'shenPei', name: '审配', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '忠烈之臣', title: '治中', type: '政务', status: 'hidden', rarity: '良才', summary: '审配坚守邺城，城破殉主，忠烈可嘉。', stats: { command: 60, strategy: 68, politics: 78, charm: 38, loyalty: 92, ambition: 30 }, personality: { brave: 72, cautious: 60, greedy: 14, loyal: 94, proud: 58, ruthless: 52, idealistic: 50 }, values: ['忠诚', '坚守', '法度'], boundaries: ['不投降', '不背袁氏'], longTermGoal: '死守邺城保全袁氏基业', privateAgenda: '以死殉主证明忠节', speechStyle: { register: '严厉', rhythm: '坚定', habit: '以法纪约束众人', metaphor: '城与义' }, specialSchemes: ['坚守邺城'], passiveBonuses: ['守城时士卒不溃散'], weaknesses: ['过于固执', '不善变通'], recruitmentDifficulty: 65, defectionTriggers: [] },
-        { id: 'guoTu', name: '郭图', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '党争谋士', title: '军师', type: '谋士', status: 'hidden', rarity: '良才', summary: '郭图党同伐异，屡进谗言，为袁绍集团内耗推手。', stats: { command: 36, strategy: 66, politics: 64, charm: 52, loyalty: 42, ambition: 68 }, personality: { brave: 28, cautious: 40, greedy: 58, loyal: 40, proud: 64, ruthless: 62, idealistic: 14 }, values: ['权位', '党争', '私利'], boundaries: ['不放过打击对手机会', '不做不利己之事'], longTermGoal: '在袁绍集团中争得最大话语权', privateAgenda: '打压异己，巩固自身地位', speechStyle: { register: '阴柔', rhythm: '迂回', habit: '进谗不露痕迹', metaphor: '暗与影' }, specialSchemes: ['谗言害人', '党争夺权'], passiveBonuses: ['党争中胜率提高'], weaknesses: ['不顾大局', '军略有限'], recruitmentDifficulty: 35, defectionTriggers: ['主公势败', '有更好靠山'] },
-        { id: 'fengJi', name: '逢纪', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '阴谋之士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '逢纪善阴谋，矫诏立袁尚，加剧袁氏内斗。', stats: { command: 34, strategy: 72, politics: 66, charm: 38, loyalty: 50, ambition: 64 }, personality: { brave: 30, cautious: 48, greedy: 52, loyal: 48, proud: 58, ruthless: 72, idealistic: 12 }, values: ['阴谋', '权力', '私利'], boundaries: ['不做无利益之事', '不忠于已败之主'], longTermGoal: '在袁氏内斗中获利', privateAgenda: '操控继承人之争谋利', speechStyle: { register: '阴沉', rhythm: '低语', habit: '暗中进言', metaphor: '刀与背' }, specialSchemes: ['矫诏立嗣', '暗害异己'], passiveBonuses: ['密谋成功率提高'], weaknesses: ['不得人心', '过于阴险'], recruitmentDifficulty: 38, defectionTriggers: ['主公势败'] },
-        { id: 'yanLiang', name: '颜良', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北上将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '颜良勇冠三军，为袁绍麾下头号猛将。', stats: { command: 82, strategy: 42, politics: 24, charm: 48, loyalty: 78, ambition: 44 }, personality: { brave: 92, cautious: 18, greedy: 34, loyal: 76, proud: 72, ruthless: 52, idealistic: 28 }, values: ['勇武', '战功', '颜面'], boundaries: ['不畏惧任何对手', '不退缩'], longTermGoal: '以武勇扬名河北', privateAgenda: '证明自己天下无双', speechStyle: { register: '傲慢', rhythm: '短促', habit: '轻视对手', metaphor: '矛与力' }, specialSchemes: ['河北冲锋', '先阵突杀'], passiveBonuses: ['首战攻击力大幅提高'], weaknesses: ['过于轻敌', '不防暗算'], recruitmentDifficulty: 62, defectionTriggers: [] },
-        { id: 'wenChou', name: '文丑', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '文丑与颜良齐名，并称袁绍双璧。', stats: { command: 80, strategy: 38, politics: 22, charm: 44, loyalty: 76, ambition: 42 }, personality: { brave: 90, cautious: 16, greedy: 36, loyal: 74, proud: 68, ruthless: 50, idealistic: 26 }, values: ['勇武', '义气', '战功'], boundaries: ['不弃战友', '不避强敌'], longTermGoal: '与颜良并肩征战天下', privateAgenda: '为颜良之死复仇', speechStyle: { register: '粗猛', rhythm: '急切', habit: '怒吼冲锋', metaphor: '铁与风' }, specialSchemes: ['追击破敌', '河北骑突'], passiveBonuses: ['骑兵冲锋效果提高'], weaknesses: ['冲动易怒', '不善谋略'], recruitmentDifficulty: 60, defectionTriggers: [] },
-        { id: 'zhangHe', name: '张郃', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '张郃以巧变闻名，官渡后归曹操，为五子良将之一。', stats: { command: 86, strategy: 72, politics: 44, charm: 56, loyalty: 58, ambition: 46 }, personality: { brave: 72, cautious: 68, greedy: 28, loyal: 56, proud: 48, ruthless: 38, idealistic: 36 }, values: ['巧变', '生存', '功名'], boundaries: ['不做无意义的牺牲', '不拘泥于一种战术'], longTermGoal: '在乱世中以巧变立身', privateAgenda: '找到真正值得效力的明主', speechStyle: { register: '务实', rhythm: '灵活', habit: '因地制宜', metaphor: '水与势' }, specialSchemes: ['巧变设伏', '山地游击'], passiveBonuses: ['地形适应力提高'], weaknesses: ['忠诚度随局势摇摆', '过于审时度势'], recruitmentDifficulty: 58, defectionTriggers: ['袁绍猜忌', '官渡压力', '曹操招降'] },
-        { id: 'gaoLan', name: '高览', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北将领', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '高览与张郃齐名，官渡后同降曹操。', stats: { command: 74, strategy: 54, politics: 36, charm: 48, loyalty: 56, ambition: 38 }, personality: { brave: 70, cautious: 52, greedy: 24, loyal: 54, proud: 42, ruthless: 34, idealistic: 30 }, values: ['功名', '生存', '战友'], boundaries: ['不盲从错误命令', '不做无谓牺牲'], longTermGoal: '在乱世中找到出路', privateAgenda: '随张郃寻找更好的归宿', speechStyle: { register: '沉稳', rhythm: '平实', habit: '不多说话', metaphor: '盾与守' }, specialSchemes: ['阵地防御'], passiveBonuses: ['防御阵型效果提高'], weaknesses: ['随波逐流', '缺乏主见'], recruitmentDifficulty: 42, defectionTriggers: ['主公势败', '同僚投降'] }
+        { id: 'juShou', name: '沮授', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '首席谋臣', title: '监军', type: '谋士', status: 'hidden', rarity: '名将', summary: '沮授智谋出众，屡谏袁绍不听，终被俘殉主。', stats: { command: 52, strategy: 90, politics: 82, charm: 58, loyalty: 88, ambition: 28 }, personality: { brave: 50, cautious: 76, greedy: 12, loyal: 90, proud: 46, ruthless: 30, idealistic: 64 }, values: ['忠义', '大局', '谋略'], boundaries: ['不背旧主', '不随波逐流'], longTermGoal: '辅佐袁绍统一河北', privateAgenda: '纠正袁绍的决策失误', speechStyle: { register: '恳切', rhythm: '长句', habit: '反复劝谏', metaphor: '舟与舵' }, specialSchemes: ['缓进耗曹'], passiveBonuses: ['战略规划效果提高'], weaknesses: ['谏言不被采纳', '过于执着忠义'], recruitmentDifficulty: 72, defectionTriggers: [], portraitUrl: './assets/characters/ju-shou.png' },
+        { id: 'tianFeng', name: '田丰', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '直谏之臣', title: '别驾', type: '谋士', status: 'hidden', rarity: '名将', summary: '田丰刚直敢谏，因反对南征被下狱，后被袁绍所杀。', stats: { command: 46, strategy: 88, politics: 76, charm: 40, loyalty: 84, ambition: 24 }, personality: { brave: 58, cautious: 72, greedy: 8, loyal: 86, proud: 62, ruthless: 22, idealistic: 72 }, values: ['直谏', '大义', '正确决策'], boundaries: ['不阿谀奉承', '不畏惧获罪'], longTermGoal: '阻止袁绍犯致命错误', privateAgenda: '以死谏证明忠心', speechStyle: { register: '激烈', rhythm: '紧迫', habit: '言辞尖锐不留情', metaphor: '霜与剑' }, specialSchemes: ['急攻许都'], passiveBonuses: ['谏言被采纳时效果加倍'], weaknesses: ['过于刚直', '不谙人情世故'], recruitmentDifficulty: 68, defectionTriggers: [], portraitUrl: './assets/characters/tian-feng.png' },
+        { id: 'xuYou', name: '许攸', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '贪功谋士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '许攸因家属犯罪而投曹操，献计火烧乌巢。', stats: { command: 38, strategy: 78, politics: 56, charm: 48, loyalty: 36, ambition: 62 }, personality: { brave: 34, cautious: 32, greedy: 72, loyal: 32, proud: 76, ruthless: 48, idealistic: 18 }, values: ['功名', '利益', '报复'], boundaries: ['不受屈辱', '不放过获利机会'], longTermGoal: '以谋略获取最大功名', privateAgenda: '谁给我更多就投谁', speechStyle: { register: '刻薄', rhythm: '急切', habit: '居功自傲', metaphor: '火与粮' }, specialSchemes: ['火烧乌巢'], passiveBonuses: ['截获敌方粮草时效果提高'], weaknesses: ['贪功傲慢', '忠诚度极低'], recruitmentDifficulty: 40, defectionTriggers: ['家属犯罪被抓', '不被重用', '受到屈辱'], portraitUrl: './assets/characters/xu-you.png' },
+        { id: 'shenPei', name: '审配', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '忠烈之臣', title: '治中', type: '政务', status: 'hidden', rarity: '良才', summary: '审配坚守邺城，城破殉主，忠烈可嘉。', stats: { command: 60, strategy: 68, politics: 78, charm: 38, loyalty: 92, ambition: 30 }, personality: { brave: 72, cautious: 60, greedy: 14, loyal: 94, proud: 58, ruthless: 52, idealistic: 50 }, values: ['忠诚', '坚守', '法度'], boundaries: ['不投降', '不背袁氏'], longTermGoal: '死守邺城保全袁氏基业', privateAgenda: '以死殉主证明忠节', speechStyle: { register: '严厉', rhythm: '坚定', habit: '以法纪约束众人', metaphor: '城与义' }, specialSchemes: ['坚守邺城'], passiveBonuses: ['守城时士卒不溃散'], weaknesses: ['过于固执', '不善变通'], recruitmentDifficulty: 65, defectionTriggers: [], portraitUrl: './assets/characters/shen-pei.png' },
+        { id: 'guoTu', name: '郭图', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '党争谋士', title: '军师', type: '谋士', status: 'hidden', rarity: '良才', summary: '郭图党同伐异，屡进谗言，为袁绍集团内耗推手。', stats: { command: 36, strategy: 66, politics: 64, charm: 52, loyalty: 42, ambition: 68 }, personality: { brave: 28, cautious: 40, greedy: 58, loyal: 40, proud: 64, ruthless: 62, idealistic: 14 }, values: ['权位', '党争', '私利'], boundaries: ['不放过打击对手机会', '不做不利己之事'], longTermGoal: '在袁绍集团中争得最大话语权', privateAgenda: '打压异己，巩固自身地位', speechStyle: { register: '阴柔', rhythm: '迂回', habit: '进谗不露痕迹', metaphor: '暗与影' }, specialSchemes: ['谗言害人', '党争夺权'], passiveBonuses: ['党争中胜率提高'], weaknesses: ['不顾大局', '军略有限'], recruitmentDifficulty: 35, defectionTriggers: ['主公势败', '有更好靠山'], portraitUrl: './assets/characters/guo-tu.png' },
+        { id: 'fengJi', name: '逢纪', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '阴谋之士', title: '谋士', type: '谋士', status: 'hidden', rarity: '良才', summary: '逢纪善阴谋，矫诏立袁尚，加剧袁氏内斗。', stats: { command: 34, strategy: 72, politics: 66, charm: 38, loyalty: 50, ambition: 64 }, personality: { brave: 30, cautious: 48, greedy: 52, loyal: 48, proud: 58, ruthless: 72, idealistic: 12 }, values: ['阴谋', '权力', '私利'], boundaries: ['不做无利益之事', '不忠于已败之主'], longTermGoal: '在袁氏内斗中获利', privateAgenda: '操控继承人之争谋利', speechStyle: { register: '阴沉', rhythm: '低语', habit: '暗中进言', metaphor: '刀与背' }, specialSchemes: ['矫诏立嗣', '暗害异己'], passiveBonuses: ['密谋成功率提高'], weaknesses: ['不得人心', '过于阴险'], recruitmentDifficulty: 38, defectionTriggers: ['主公势败'], portraitUrl: './assets/characters/feng-ji.png' },
+        { id: 'yanLiang', name: '颜良', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北上将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '颜良勇冠三军，为袁绍麾下头号猛将。', stats: { command: 82, strategy: 42, politics: 24, charm: 48, loyalty: 78, ambition: 44 }, personality: { brave: 92, cautious: 18, greedy: 34, loyal: 76, proud: 72, ruthless: 52, idealistic: 28 }, values: ['勇武', '战功', '颜面'], boundaries: ['不畏惧任何对手', '不退缩'], longTermGoal: '以武勇扬名河北', privateAgenda: '证明自己天下无双', speechStyle: { register: '傲慢', rhythm: '短促', habit: '轻视对手', metaphor: '矛与力' }, specialSchemes: ['河北冲锋', '先阵突杀'], passiveBonuses: ['首战攻击力大幅提高'], weaknesses: ['过于轻敌', '不防暗算'], recruitmentDifficulty: 62, defectionTriggers: [], portraitUrl: './assets/characters/yan-liang.png' },
+        { id: 'wenChou', name: '文丑', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '文丑与颜良齐名，并称袁绍双璧。', stats: { command: 80, strategy: 38, politics: 22, charm: 44, loyalty: 76, ambition: 42 }, personality: { brave: 90, cautious: 16, greedy: 36, loyal: 74, proud: 68, ruthless: 50, idealistic: 26 }, values: ['勇武', '义气', '战功'], boundaries: ['不弃战友', '不避强敌'], longTermGoal: '与颜良并肩征战天下', privateAgenda: '为颜良之死复仇', speechStyle: { register: '粗猛', rhythm: '急切', habit: '怒吼冲锋', metaphor: '铁与风' }, specialSchemes: ['追击破敌', '河北骑突'], passiveBonuses: ['骑兵冲锋效果提高'], weaknesses: ['冲动易怒', '不善谋略'], recruitmentDifficulty: 60, defectionTriggers: [], portraitUrl: './assets/characters/wen-chou.png' },
+        { id: 'zhangHe', name: '张郃', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北名将', title: '将军', type: '武将', status: 'hidden', rarity: '名将', summary: '张郃以巧变闻名，官渡后归曹操，为五子良将之一。', stats: { command: 86, strategy: 72, politics: 44, charm: 56, loyalty: 58, ambition: 46 }, personality: { brave: 72, cautious: 68, greedy: 28, loyal: 56, proud: 48, ruthless: 38, idealistic: 36 }, values: ['巧变', '生存', '功名'], boundaries: ['不做无意义的牺牲', '不拘泥于一种战术'], longTermGoal: '在乱世中以巧变立身', privateAgenda: '找到真正值得效力的明主', speechStyle: { register: '务实', rhythm: '灵活', habit: '因地制宜', metaphor: '水与势' }, specialSchemes: ['巧变设伏', '山地游击'], passiveBonuses: ['地形适应力提高'], weaknesses: ['忠诚度随局势摇摆', '过于审时度势'], recruitmentDifficulty: 58, defectionTriggers: ['袁绍猜忌', '官渡压力', '曹操招降'], portraitUrl: './assets/characters/zhang-he.png' },
+        { id: 'gaoLan', name: '高览', faction: 'yuan', originFaction: 'yuan', possibleFactions: ['yuan', 'cao'], location: 'yecheng', role: '河北将领', title: '将军', type: '武将', status: 'hidden', rarity: '良才', summary: '高览与张郃齐名，官渡后同降曹操。', stats: { command: 74, strategy: 54, politics: 36, charm: 48, loyalty: 56, ambition: 38 }, personality: { brave: 70, cautious: 52, greedy: 24, loyal: 54, proud: 42, ruthless: 34, idealistic: 30 }, values: ['功名', '生存', '战友'], boundaries: ['不盲从错误命令', '不做无谓牺牲'], longTermGoal: '在乱世中找到出路', privateAgenda: '随张郃寻找更好的归宿', speechStyle: { register: '沉稳', rhythm: '平实', habit: '不多说话', metaphor: '盾与守' }, specialSchemes: ['阵地防御'], passiveBonuses: ['防御阵型效果提高'], weaknesses: ['随波逐流', '缺乏主见'], recruitmentDifficulty: 42, defectionTriggers: ['主公势败', '同僚投降'], portraitUrl: './assets/characters/gao-lan.png' }
       ],
       sun: [
         { id: 'sunCe', name: '孙策', faction: 'sun', originFaction: 'sun', possibleFactions: ['sun'], location: 'jianye', role: '小霸王', title: '讨逆将军', type: '武将', status: 'hidden', rarity: '传奇', summary: '孙策小霸王，以猛锐平定江东，英年早逝。', stats: { command: 94, strategy: 68, politics: 52, charm: 86, loyalty: 88, ambition: 74 }, personality: { brave: 98, cautious: 28, greedy: 24, loyal: 86, proud: 78, ruthless: 52, idealistic: 58 }, values: ['武勇', '江东基业', '父亲遗志'], boundaries: ['不辱孙氏之名', '不惧任何对手'], longTermGoal: '继承父志，平定江东', privateAgenda: '以武力证明孙氏不可辱', speechStyle: { register: '豪爽', rhythm: '快捷', habit: '先战再说', metaphor: '枪与风' }, specialSchemes: ['横扫江东', '太史慈单挑'], passiveBonuses: ['进攻时攻击力大幅提高'], weaknesses: ['好杀降', '轻信易中计'], recruitmentDifficulty: 92, defectionTriggers: [] },
@@ -3085,11 +3096,13 @@ const MAX_MAP_ZOOM = 4.2;
       const initialRoster = createCharacterRoster(seed);
       const mergedRoster = { ...initialRoster };
       Object.entries(savedRoster || {}).forEach(([id, record]) => {
-        mergedRoster[id] = {
-          ...(initialRoster[id] || {}),
-          ...(record || {}),
-          id
-        };
+        const blueprint = initialRoster[id] || {};
+        const merged = { ...blueprint, ...(record || {}), id };
+        // Prefer blueprint's portraitUrl if the saved value is empty
+        if (!merged.portraitUrl && blueprint.portraitUrl) {
+          merged.portraitUrl = blueprint.portraitUrl;
+        }
+        mergedRoster[id] = merged;
       });
       return mergedRoster;
     }
@@ -4643,7 +4656,13 @@ const MAX_MAP_ZOOM = 4.2;
             if (heir === 'liuQi') return '刘表病中留下遗命，命刘琦承接荆州名分，并要诸臣以安民为先。荆州诸派仍有暗流，却暂有名义可循。';
             if (heir === 'liuCong') return '刘表病中留下遗命，承认刘琮继位。蔡氏一门暂掌襄阳，荆州的保守秩序压过了所有变数。';
             return '刘表病榻前几度欲言，州印、宗子、蔡氏与军方各执一辞。庇护已薄，战事压境，二子之争又无定论，遗命终究未能明白压服诸派。';
-          }, goal: '剧情目标：等待荆州易主。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
+          }, goal: '剧情目标：等待荆州易主。', cinematic: state => {
+            if (state.variables.liuBiaoHeir === 'player') return { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
+            if (state.variables.liuBiaoHeir === 'liuQi') return { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
+            if (state.variables.liuBiaoHeir === 'liuCong') return { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+            if (state.variables.liuBiaoHeir === 'ambiguous') return { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
+            return null;
+          }, condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
             const heir = chooseLiuBiaoHeir();
             state.variables.liuBiaoHeir = heir;
             state.variables.liuBiaoHeirName = liuBiaoHeirName(heir);
@@ -4932,6 +4951,7 @@ const MAX_MAP_ZOOM = 4.2;
       const title = PLOT_LINE_BLUEPRINTS[lineId]?.title || '剧情线';
       const text = title + '｜' + node.title + '：' + nodeBody;
       reports.push({ tone: node.final ? 'good' : 'warn', level: 'important', text });
+      const nodeCinematic = typeof node.cinematic === 'function' ? node.cinematic(state) : node.cinematic;
 
       createLetter({
         senderId: node.senderId || 'liuBiao',
@@ -4939,7 +4959,7 @@ const MAX_MAP_ZOOM = 4.2;
         body: nodeBody || node.title,
         critical: true,
         kind: 'plotEvent',
-        meta: Object.assign({ lineId, nodeId: node.id }, node.cinematic ? { cinematic: node.cinematic } : {}),
+        meta: Object.assign({ lineId, nodeId: node.id }, nodeCinematic ? { cinematic: nodeCinematic } : {}),
         choices: node.choices || [{ id: 'ack', label: node.final ? '收下阶段结局' : '知晓' }]
       });
       return true;
@@ -15722,6 +15742,10 @@ const MAX_MAP_ZOOM = 4.2;
       const xiangyangLetterCinematic = { src: './assets/opening/xiangyang-lai-xin.mp4?v=raw-v1', title: '襄阳来信' };
       const kuaiYueInspectionCinematic = { src: './assets/opening/kuai-yue-xun-shi.mp4?v=raw-v1', title: '蒯越巡视' };
       const sonsConflictCinematic = { src: './assets/opening/er-zi-zhi-zheng.mp4?v=raw-v1', title: '二子之争' };
+      const loyalEntrustmentCinematic = { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
+      const liuQiOrthodoxCinematic = { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
+      const caiLiuCongCinematic = { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+      const ambiguousWillCinematic = { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
       const xiangyangRainCinematic = { src: './assets/opening/xiangyang-ye-yu.mp4', title: '襄阳夜雨' };
       if (!migrated.storyFlags.milingCinematicFullscreenMigrated) {
         migrated.letters.forEach(letter => {
@@ -15772,6 +15796,74 @@ const MAX_MAP_ZOOM = 4.2;
       } else {
         migrated.letters.forEach(letter => {
           if (letter?.meta?.nodeId === 'lb_3_2') letter.meta.cinematic ||= sonsConflictCinematic;
+        });
+      }
+      if (!migrated.storyFlags.loyalEntrustmentCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'player') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = loyalEntrustmentCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.loyalEntrustmentCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'player') letter.meta.cinematic ||= loyalEntrustmentCinematic;
+        });
+      }
+      if (!migrated.storyFlags.liuQiOrthodoxCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'liuQi') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = liuQiOrthodoxCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.liuQiOrthodoxCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'liuQi') letter.meta.cinematic ||= liuQiOrthodoxCinematic;
+        });
+      }
+      if (!migrated.storyFlags.caiLiuCongCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'liuCong') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = caiLiuCongCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.caiLiuCongCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'liuCong') letter.meta.cinematic ||= caiLiuCongCinematic;
+        });
+      }
+      if (!migrated.storyFlags.ambiguousWillCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'ambiguous') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = ambiguousWillCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.ambiguousWillCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'ambiguous') letter.meta.cinematic ||= ambiguousWillCinematic;
         });
       }
       if (!migrated.storyFlags.xiangyangRainCinematicMigrated) {
@@ -16080,6 +16172,41 @@ const MAX_MAP_ZOOM = 4.2;
         text: hint.desc + ' 当前尚未解锁：' + hint.condition + ' ' + trackedLabel
       };
       render();
+    }
+
+    const GAME_KEYBOARD_TAB_SHORTCUTS = {
+      '1': 'city',
+      '2': 'military',
+      '3': 'scheme',
+      '4': 'diplomacy',
+      '5': 'inner',
+      '6': 'characters',
+      '7': 'appointments',
+      '8': 'liubiao'
+    };
+
+    function shouldIgnoreGameKeyboardShortcut(event) {
+      if (launchScreen !== 'game' || event.repeat || event.isComposing) return true;
+      if (event.ctrlKey || event.metaKey || event.altKey) return true;
+      if (gameState.activeModal || document.querySelector('[data-letter-cinematic-video]')) return true;
+      const target = event.target;
+      return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"]'));
+    }
+
+    function handleGameKeyboardShortcut(event) {
+      if (shouldIgnoreGameKeyboardShortcut(event)) return;
+      const tabId = GAME_KEYBOARD_TAB_SHORTCUTS[event.key];
+      if (tabId) {
+        event.preventDefault();
+        if (checkForceAction('clickTab', tabId)) return;
+        tryOpenTab(tabId);
+        if (isGuideActive() && isForceAction('clickTab', tabId)) advanceGuideStep();
+        return;
+      }
+      if (event.code !== 'Space') return;
+      event.preventDefault();
+      if (checkForceAction('endTurn', 'endTurn')) return;
+      endTurn();
     }
 
     function unlockTabByTutorial(tabId) {
@@ -18118,6 +18245,8 @@ const MAX_MAP_ZOOM = 4.2;
       }, true);
 
       document.addEventListener('keydown', event => {
+        handleGameKeyboardShortcut(event);
+        if (event.defaultPrevented) return;
         if (event.key === 'Escape' && gameState.activeModal?.type === 'portraitView') {
           event.preventDefault();
           closeActiveModal();
