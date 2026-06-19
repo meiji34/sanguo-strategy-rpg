@@ -4734,6 +4734,47 @@
       background: #020202;
     }
 
+    .media-loading {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: #020202;
+      color: rgba(238, 232, 210, 0.78);
+    }
+
+    .letter-cinematic-frame.is-loading .media-loading,
+    .intro.is-loading .media-loading {
+      display: flex;
+    }
+
+    .media-loading-spinner {
+      width: 42px;
+      height: 42px;
+      border: 3px solid rgba(238, 232, 210, 0.18);
+      border-top-color: rgba(238, 232, 210, 0.82);
+      border-radius: 50%;
+      animation: media-loading-spin 0.9s linear infinite;
+    }
+
+    .media-loading-label {
+      font-size: 13px;
+      letter-spacing: 0.22em;
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.92);
+    }
+
+    @keyframes media-loading-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .media-loading-spinner { animation-duration: 2.4s; }
+    }
+
     .letter-cinematic-skip {
       position: absolute;
       top: 16px;
