@@ -4656,7 +4656,13 @@ const MAX_MAP_ZOOM = 4.2;
             if (heir === 'liuQi') return '刘表病中留下遗命，命刘琦承接荆州名分，并要诸臣以安民为先。荆州诸派仍有暗流，却暂有名义可循。';
             if (heir === 'liuCong') return '刘表病中留下遗命，承认刘琮继位。蔡氏一门暂掌襄阳，荆州的保守秩序压过了所有变数。';
             return '刘表病榻前几度欲言，州印、宗子、蔡氏与军方各执一辞。庇护已薄，战事压境，二子之争又无定论，遗命终究未能明白压服诸派。';
-          }, goal: '剧情目标：等待荆州易主。', condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
+          }, goal: '剧情目标：等待荆州易主。', cinematic: state => {
+            if (state.variables.liuBiaoHeir === 'player') return { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
+            if (state.variables.liuBiaoHeir === 'liuQi') return { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
+            if (state.variables.liuBiaoHeir === 'liuCong') return { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+            if (state.variables.liuBiaoHeir === 'ambiguous') return { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
+            return null;
+          }, condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
             const heir = chooseLiuBiaoHeir();
             state.variables.liuBiaoHeir = heir;
             state.variables.liuBiaoHeirName = liuBiaoHeirName(heir);
@@ -4945,6 +4951,7 @@ const MAX_MAP_ZOOM = 4.2;
       const title = PLOT_LINE_BLUEPRINTS[lineId]?.title || '剧情线';
       const text = title + '｜' + node.title + '：' + nodeBody;
       reports.push({ tone: node.final ? 'good' : 'warn', level: 'important', text });
+      const nodeCinematic = typeof node.cinematic === 'function' ? node.cinematic(state) : node.cinematic;
 
       createLetter({
         senderId: node.senderId || 'liuBiao',
@@ -4952,7 +4959,7 @@ const MAX_MAP_ZOOM = 4.2;
         body: nodeBody || node.title,
         critical: true,
         kind: 'plotEvent',
-        meta: Object.assign({ lineId, nodeId: node.id }, node.cinematic ? { cinematic: node.cinematic } : {}),
+        meta: Object.assign({ lineId, nodeId: node.id }, nodeCinematic ? { cinematic: nodeCinematic } : {}),
         choices: node.choices || [{ id: 'ack', label: node.final ? '收下阶段结局' : '知晓' }]
       });
       return true;
@@ -15735,6 +15742,10 @@ const MAX_MAP_ZOOM = 4.2;
       const xiangyangLetterCinematic = { src: './assets/opening/xiangyang-lai-xin.mp4?v=raw-v1', title: '襄阳来信' };
       const kuaiYueInspectionCinematic = { src: './assets/opening/kuai-yue-xun-shi.mp4?v=raw-v1', title: '蒯越巡视' };
       const sonsConflictCinematic = { src: './assets/opening/er-zi-zhi-zheng.mp4?v=raw-v1', title: '二子之争' };
+      const loyalEntrustmentCinematic = { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
+      const liuQiOrthodoxCinematic = { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
+      const caiLiuCongCinematic = { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+      const ambiguousWillCinematic = { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
       const xiangyangRainCinematic = { src: './assets/opening/xiangyang-ye-yu.mp4', title: '襄阳夜雨' };
       if (!migrated.storyFlags.milingCinematicFullscreenMigrated) {
         migrated.letters.forEach(letter => {
@@ -15785,6 +15796,74 @@ const MAX_MAP_ZOOM = 4.2;
       } else {
         migrated.letters.forEach(letter => {
           if (letter?.meta?.nodeId === 'lb_3_2') letter.meta.cinematic ||= sonsConflictCinematic;
+        });
+      }
+      if (!migrated.storyFlags.loyalEntrustmentCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'player') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = loyalEntrustmentCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.loyalEntrustmentCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'player') letter.meta.cinematic ||= loyalEntrustmentCinematic;
+        });
+      }
+      if (!migrated.storyFlags.liuQiOrthodoxCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'liuQi') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = liuQiOrthodoxCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.liuQiOrthodoxCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'liuQi') letter.meta.cinematic ||= liuQiOrthodoxCinematic;
+        });
+      }
+      if (!migrated.storyFlags.caiLiuCongCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'liuCong') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = caiLiuCongCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.caiLiuCongCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'liuCong') letter.meta.cinematic ||= caiLiuCongCinematic;
+        });
+      }
+      if (!migrated.storyFlags.ambiguousWillCinematicMigrated) {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir !== 'ambiguous') return;
+          letter.meta ||= {};
+          letter.meta.cinematic = ambiguousWillCinematic;
+          delete letter.meta.cinematicWatched;
+        });
+        migrated.storyFlags.ambiguousWillCinematicMigrated = true;
+      } else {
+        migrated.letters.forEach(letter => {
+          if (letter?.meta?.nodeId !== 'lb_4_2') return;
+          const lineState = migrated.plotLineStates?.liu_biao;
+          if (lineState?.variables?.liuBiaoHeir === 'ambiguous') letter.meta.cinematic ||= ambiguousWillCinematic;
         });
       }
       if (!migrated.storyFlags.xiangyangRainCinematicMigrated) {
@@ -16093,6 +16172,41 @@ const MAX_MAP_ZOOM = 4.2;
         text: hint.desc + ' 当前尚未解锁：' + hint.condition + ' ' + trackedLabel
       };
       render();
+    }
+
+    const GAME_KEYBOARD_TAB_SHORTCUTS = {
+      '1': 'city',
+      '2': 'military',
+      '3': 'scheme',
+      '4': 'diplomacy',
+      '5': 'inner',
+      '6': 'characters',
+      '7': 'appointments',
+      '8': 'liubiao'
+    };
+
+    function shouldIgnoreGameKeyboardShortcut(event) {
+      if (launchScreen !== 'game' || event.repeat || event.isComposing) return true;
+      if (event.ctrlKey || event.metaKey || event.altKey) return true;
+      if (gameState.activeModal || document.querySelector('[data-letter-cinematic-video]')) return true;
+      const target = event.target;
+      return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"]'));
+    }
+
+    function handleGameKeyboardShortcut(event) {
+      if (shouldIgnoreGameKeyboardShortcut(event)) return;
+      const tabId = GAME_KEYBOARD_TAB_SHORTCUTS[event.key];
+      if (tabId) {
+        event.preventDefault();
+        if (checkForceAction('clickTab', tabId)) return;
+        tryOpenTab(tabId);
+        if (isGuideActive() && isForceAction('clickTab', tabId)) advanceGuideStep();
+        return;
+      }
+      if (event.code !== 'Space') return;
+      event.preventDefault();
+      if (checkForceAction('endTurn', 'endTurn')) return;
+      endTurn();
     }
 
     function unlockTabByTutorial(tabId) {
@@ -18131,6 +18245,8 @@ const MAX_MAP_ZOOM = 4.2;
       }, true);
 
       document.addEventListener('keydown', event => {
+        handleGameKeyboardShortcut(event);
+        if (event.defaultPrevented) return;
         if (event.key === 'Escape' && gameState.activeModal?.type === 'portraitView') {
           event.preventDefault();
           closeActiveModal();
