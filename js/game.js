@@ -5994,9 +5994,13 @@ const MAX_MAP_ZOOM = 4.2;
       const cinematic = letter?.meta?.cinematic;
       if (!cinematicRoot || !letter || !cinematic?.src) return;
       cinematicRoot.classList.add('show');
-      cinematicRoot.innerHTML = `<div class="letter-cinematic-frame" data-letter-cinematic-frame="${letter.id}" aria-label="${escapeHtml(cinematic.title || letter.title)}">
+      cinematicRoot.innerHTML = `<div class="letter-cinematic-frame is-loading" data-letter-cinematic-frame="${letter.id}" aria-label="${escapeHtml(cinematic.title || letter.title)}">
         <button class="letter-cinematic-skip" data-finish-letter-cinematic="${letter.id}">跳过动画</button>
-        <video class="letter-cinematic-video" data-letter-cinematic-video="${letter.id}" src="${escapeHtml(cinematic.src)}" autoplay playsinline preload="auto"></video>
+        <div class="media-loading" data-letter-cinematic-loading="${letter.id}">
+          <div class="media-loading-spinner"></div>
+          <span class="media-loading-label">画面加载中…</span>
+        </div>
+        <video class="letter-cinematic-video" data-letter-cinematic-video="${letter.id}" src="${escapeHtml(cinematic.src)}" playsinline preload="auto"></video>
       </div>`;
       playLetterCinematicVideo(letter.id);
     }
@@ -6008,8 +6012,34 @@ const MAX_MAP_ZOOM = 4.2;
       video.muted = false;
       video.defaultMuted = false;
       video.volume = 1;
-      const playback = video.play();
-      if (playback && typeof playback.catch === 'function') playback.catch(() => {});
+      const frame = video.closest('.letter-cinematic-frame');
+      const startPlayback = () => {
+        if (frame) frame.classList.remove('is-loading');
+        const playback = video.play();
+        if (playback && typeof playback.catch === 'function') playback.catch(() => {});
+      };
+      // 等到可以流畅播完再开始；超时兜底防止网络太慢一直卡 loading
+      whenMediaReady(video, startPlayback);
+    }
+
+    // 等待媒体缓冲到可流畅播放（canplaythrough），带超时兜底
+    function whenMediaReady(media, onReady, timeoutMs = 8000) {
+      if (!media) return onReady();
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        media.removeEventListener('canplaythrough', finish);
+        media.removeEventListener('error', finish);
+        onReady();
+      };
+      // 已经缓冲到可流畅播放
+      if (media.readyState >= 4) return finish();
+      media.addEventListener('canplaythrough', finish, { once: true });
+      media.addEventListener('error', finish, { once: true });
+      const timer = setTimeout(finish, timeoutMs);
+      try { media.load(); } catch (_) {}
     }
 
     function finishLetterCinematic(letterId) {
@@ -17504,12 +17534,18 @@ const MAX_MAP_ZOOM = 4.2;
       const video = document.getElementById('introVideo');
       if (!video) return;
       pauseBgm(); // 进入动画时暂停背景音乐
-      const playback = video.play();
-      if (playback && typeof playback.catch === 'function') {
-        playback
-          .then(hideIntroPlayButton)
-          .catch(() => showIntroPlayButton());
-      }
+      const intro = document.getElementById('intro');
+      if (intro) intro.classList.add('is-loading');
+      const start = () => {
+        if (intro) intro.classList.remove('is-loading');
+        const playback = video.play();
+        if (playback && typeof playback.catch === 'function') {
+          playback
+            .then(hideIntroPlayButton)
+            .catch(() => showIntroPlayButton());
+        }
+      };
+      whenMediaReady(video, start);
     }
 
     function stopIntroVideo() {
@@ -17518,6 +17554,7 @@ const MAX_MAP_ZOOM = 4.2;
         video.pause();
         video.currentTime = 0;
       }
+      document.getElementById('intro')?.classList.remove('is-loading');
       hideIntroPlayButton();
     }
 
