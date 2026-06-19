@@ -4658,8 +4658,8 @@ const MAX_MAP_ZOOM = 4.2;
             return '刘表病榻前几度欲言，州印、宗子、蔡氏与军方各执一辞。庇护已薄，战事压境，二子之争又无定论，遗命终究未能明白压服诸派。';
           }, goal: '剧情目标：等待荆州易主。', cinematic: state => {
             if (state.variables.liuBiaoHeir === 'player') return { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
-            if (state.variables.liuBiaoHeir === 'liuQi') return { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
-            if (state.variables.liuBiaoHeir === 'liuCong') return { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+            if (state.variables.liuBiaoHeir === 'liuQi') return { src: './assets/opening/liu-qi-zheng-tong.mp4?v=replace-v3', title: '刘琦正统' };
+            if (state.variables.liuBiaoHeir === 'liuCong') return { src: './assets/opening/cai-shi-liu-cong.mp4?v=replace-v2', title: '蔡氏刘琮' };
             if (state.variables.liuBiaoHeir === 'ambiguous') return { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
             return null;
           }, condition: state => hasPlotNode(state, 'lb_4_1') && turnsSincePlotNode(state, 'lb_4_1') >= 1, onTrigger: state => {
@@ -15773,8 +15773,8 @@ const MAX_MAP_ZOOM = 4.2;
       const kuaiYueInspectionCinematic = { src: './assets/opening/kuai-yue-xun-shi.mp4?v=raw-v1', title: '蒯越巡视' };
       const sonsConflictCinematic = { src: './assets/opening/er-zi-zhi-zheng.mp4?v=raw-v1', title: '二子之争' };
       const loyalEntrustmentCinematic = { src: './assets/opening/zhong-chen-tuo-gu.mp4', title: '忠臣托孤' };
-      const liuQiOrthodoxCinematic = { src: './assets/opening/liu-qi-zheng-tong.mp4', title: '刘琦正统' };
-      const caiLiuCongCinematic = { src: './assets/opening/cai-shi-liu-cong.mp4', title: '蔡氏刘琮' };
+      const liuQiOrthodoxCinematic = { src: './assets/opening/liu-qi-zheng-tong.mp4?v=replace-v3', title: '刘琦正统' };
+      const caiLiuCongCinematic = { src: './assets/opening/cai-shi-liu-cong.mp4?v=replace-v2', title: '蔡氏刘琮' };
       const ambiguousWillCinematic = { src: './assets/opening/yi-ming-mo-hu.mp4', title: '遗命模糊' };
       const xiangyangRainCinematic = { src: './assets/opening/xiangyang-ye-yu.mp4', title: '襄阳夜雨' };
       if (!migrated.storyFlags.milingCinematicFullscreenMigrated) {
