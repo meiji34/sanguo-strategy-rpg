@@ -5982,9 +5982,42 @@ const MAX_MAP_ZOOM = 4.2;
       renderModal();
     }
 
+    const pendingMediaReadyCancels = new WeakMap();
+    const activeLetterCinematicMedia = new Set();
+    let letterCinematicPlaybackToken = 0;
+
+    function cancelPendingMediaReady(media) {
+      const cancel = media && pendingMediaReadyCancels.get(media);
+      if (typeof cancel === 'function') cancel();
+    }
+
+    function stopMediaPlayback(media, { unload = false } = {}) {
+      if (!media) return;
+      cancelPendingMediaReady(media);
+      try { media.pause(); } catch (_) {}
+      activeLetterCinematicMedia.delete(media);
+      if (!unload) return;
+      media.muted = true;
+      media.defaultMuted = true;
+      media.volume = 0;
+      media.removeAttribute('src');
+      try { media.load(); } catch (_) {}
+    }
+
+    function stopAllLetterCinematicMedia() {
+      letterCinematicPlaybackToken += 1;
+      const media = new Set([
+        ...activeLetterCinematicMedia,
+        ...document.querySelectorAll('[data-letter-cinematic-video]')
+      ]);
+      media.forEach(video => stopMediaPlayback(video, { unload: true }));
+      activeLetterCinematicMedia.clear();
+    }
+
     function hideLetterCinematicOverlay() {
       const cinematicRoot = document.getElementById('letterCinematicRoot');
       if (!cinematicRoot) return;
+      stopAllLetterCinematicMedia();
       cinematicRoot.classList.remove('show');
       cinematicRoot.innerHTML = '';
     }
@@ -5993,6 +6026,7 @@ const MAX_MAP_ZOOM = 4.2;
       const cinematicRoot = document.getElementById('letterCinematicRoot');
       const cinematic = letter?.meta?.cinematic;
       if (!cinematicRoot || !letter || !cinematic?.src) return;
+      stopAllLetterCinematicMedia();
       cinematicRoot.classList.add('show');
       cinematicRoot.innerHTML = `<div class="letter-cinematic-frame is-loading" data-letter-cinematic-frame="${letter.id}" aria-label="${escapeHtml(cinematic.title || letter.title)}">
         <button class="letter-cinematic-skip" data-finish-letter-cinematic="${letter.id}">跳过动画</button>
@@ -6009,14 +6043,39 @@ const MAX_MAP_ZOOM = 4.2;
       pauseBgm(); // 进入信件动画时暂停背景音乐
       const video = Array.from(document.querySelectorAll('[data-letter-cinematic-video]')).find(item => item.getAttribute('data-letter-cinematic-video') === letterId);
       if (!video) return;
-      video.muted = false;
-      video.defaultMuted = false;
-      video.volume = 1;
+      const playbackToken = ++letterCinematicPlaybackToken;
+      activeLetterCinematicMedia.add(video);
+      // 加载和首帧绘制期间保持静音，避免“画面加载中”时先听到声音。
+      video.muted = true;
+      video.defaultMuted = true;
+      video.volume = 0;
       const frame = video.closest('.letter-cinematic-frame');
-      const startPlayback = () => {
+      const isCurrentPlayback = () => playbackToken === letterCinematicPlaybackToken
+        && activeLetterCinematicMedia.has(video)
+        && video.isConnected
+        && Boolean(video.closest('#letterCinematicRoot.show'));
+      const revealAndUnmuteAfterPaint = () => {
+        if (!isCurrentPlayback()) return;
         if (frame) frame.classList.remove('is-loading');
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!isCurrentPlayback() || video.paused) return;
+            // 首帧已经绘制后再次锁住背景音乐，再开启动画声音。
+            pauseBgm();
+            video.volume = 1;
+            video.defaultMuted = false;
+            video.muted = false;
+          });
+        });
+      };
+      const startPlayback = () => {
+        if (!isCurrentPlayback()) return;
         const playback = video.play();
-        if (playback && typeof playback.catch === 'function') playback.catch(() => {});
+        if (playback && typeof playback.then === 'function') {
+          playback.then(revealAndUnmuteAfterPaint).catch(() => {});
+        } else {
+          revealAndUnmuteAfterPaint();
+        }
       };
       // 等到可以流畅播完再开始；超时兜底防止网络太慢一直卡 loading
       whenMediaReady(video, startPlayback);
@@ -6024,27 +6083,55 @@ const MAX_MAP_ZOOM = 4.2;
 
     // 等待媒体缓冲到可流畅播放（canplaythrough），带超时兜底
     function whenMediaReady(media, onReady, timeoutMs = 8000) {
-      if (!media) return onReady();
+      if (!media) {
+        onReady();
+        return () => {};
+      }
+      cancelPendingMediaReady(media);
       let done = false;
+      let timer = null;
+      let cancel = null;
+      const cleanup = () => {
+        if (timer !== null) clearTimeout(timer);
+        media.removeEventListener('canplaythrough', finish);
+        media.removeEventListener('error', finish);
+        if (pendingMediaReadyCancels.get(media) === cancel) {
+          pendingMediaReadyCancels.delete(media);
+        }
+      };
       const finish = () => {
         if (done) return;
         done = true;
-        clearTimeout(timer);
-        media.removeEventListener('canplaythrough', finish);
-        media.removeEventListener('error', finish);
+        cleanup();
         onReady();
       };
+      cancel = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+      };
+      pendingMediaReadyCancels.set(media, cancel);
       // 已经缓冲到可流畅播放
-      if (media.readyState >= 4) return finish();
+      if (media.readyState >= 4) {
+        finish();
+        return cancel;
+      }
       media.addEventListener('canplaythrough', finish, { once: true });
       media.addEventListener('error', finish, { once: true });
-      const timer = setTimeout(finish, timeoutMs);
+      timer = setTimeout(finish, timeoutMs);
       try { media.load(); } catch (_) {}
+      return cancel;
     }
 
     function finishLetterCinematic(letterId) {
+      // 无论信件状态是否仍存在，跳过/结束事件一到就先彻底断开全部动画声音。
+      stopAllLetterCinematicMedia();
       const letter = gameState.letters.find(item => item.id === letterId);
-      if (!letter) return;
+      if (!letter) {
+        hideLetterCinematicOverlay();
+        resumeBgm();
+        return;
+      }
       letter.meta ||= {};
       letter.meta.cinematicWatched = true;
       saveToStorage(false);
@@ -17536,12 +17623,26 @@ const MAX_MAP_ZOOM = 4.2;
       pauseBgm(); // 进入动画时暂停背景音乐
       const intro = document.getElementById('intro');
       if (intro) intro.classList.add('is-loading');
+      video.muted = true;
+      video.defaultMuted = true;
+      video.volume = 0;
       const start = () => {
-        if (intro) intro.classList.remove('is-loading');
         const playback = video.play();
         if (playback && typeof playback.catch === 'function') {
           playback
-            .then(hideIntroPlayButton)
+            .then(() => {
+              if (intro) intro.classList.remove('is-loading');
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  if (!video.isConnected || video.paused || launchScreen !== 'intro') return;
+                  pauseBgm();
+                  video.volume = 1;
+                  video.defaultMuted = false;
+                  video.muted = false;
+                  hideIntroPlayButton();
+                });
+              });
+            })
             .catch(() => showIntroPlayButton());
         }
       };
@@ -17551,7 +17652,11 @@ const MAX_MAP_ZOOM = 4.2;
     function stopIntroVideo() {
       const video = document.getElementById('introVideo');
       if (video) {
+        cancelPendingMediaReady(video);
         video.pause();
+        video.muted = true;
+        video.defaultMuted = true;
+        video.volume = 0;
         video.currentTime = 0;
       }
       document.getElementById('intro')?.classList.remove('is-loading');
